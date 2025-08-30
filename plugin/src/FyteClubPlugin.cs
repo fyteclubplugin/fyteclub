@@ -775,19 +775,65 @@ namespace FyteClub
             {
                 // Connection status
                 var clientStatus = plugin.isConnected ? "Connected" : "Disconnected";
-                Dalamud.Interface.ImGuiHelpers.SafeTextColoredWrapped(plugin.isConnected ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Daemon: {clientStatus}");
-                Dalamud.Interface.ImGuiHelpers.SafeTextColoredWrapped(plugin.isPenumbraAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Penumbra: {(plugin.isPenumbraAvailable ? "Available" : "Unavailable")}");
-                Dalamud.Interface.ImGuiHelpers.SafeTextWrapped($"Tracking: {plugin.playerMods.Count} players");
+                ImGuiNET.ImGui.TextColored(plugin.isConnected ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Daemon: {clientStatus}");
+                ImGuiNET.ImGui.TextColored(plugin.isPenumbraAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Penumbra: {(plugin.isPenumbraAvailable ? "Available" : "Unavailable")}");
+                ImGuiNET.ImGui.Text($"Tracking: {plugin.playerMods.Count} players");
+                ImGuiNET.ImGui.Separator();
                 
                 // Add new server section
-                Dalamud.Interface.ImGuiHelpers.SafeTextWrapped("Add New Server:");
+                ImGuiNET.ImGui.Text("Add New Server:");
+                ImGuiNET.ImGui.InputText("Address (IP:Port)", ref newServerAddress, 100);
+                ImGuiNET.ImGui.InputText("Name", ref newServerName, 50);
+                
+                if (ImGuiNET.ImGui.Button("Add Server"))
+                {
+                    if (!string.IsNullOrEmpty(newServerAddress))
+                    {
+                        var serverName = string.IsNullOrEmpty(newServerName) ? newServerAddress : newServerName;
+                        plugin.AddServer(newServerAddress, serverName);
+                        newServerAddress = "";
+                        newServerName = "";
+                    }
+                }
+                
+                ImGuiNET.ImGui.Separator();
                 
                 // Server list
-                Dalamud.Interface.ImGuiHelpers.SafeTextWrapped("Servers:");
+                ImGuiNET.ImGui.Text("Servers:");
+                for (int i = 0; i < plugin.servers.Count; i++)
+                {
+                    var server = plugin.servers[i];
+                    
+                    // Checkbox for enable/disable
+                    bool enabled = server.Enabled;
+                    if (ImGuiNET.ImGui.Checkbox($"##server_{i}", ref enabled))
+                    {
+                        server.Enabled = enabled;
+                        plugin.UpdateServerStatus(server);
+                    }
+                    
+                    ImGuiNET.ImGui.SameLine();
+                    
+                    // Connection status indicator
+                    var statusColor = server.Connected ? new Vector4(0, 1, 0, 1) : new Vector4(0.5f, 0.5f, 0.5f, 1);
+                    ImGuiNET.ImGui.TextColored(statusColor, "●");
+                    ImGuiNET.ImGui.SameLine();
+                    
+                    // Server name and address
+                    ImGuiNET.ImGui.Text($"{server.Name} ({server.Address})");
+                    
+                    // Remove button
+                    ImGuiNET.ImGui.SameLine();
+                    if (ImGuiNET.ImGui.Button($"Remove##server_{i}"))
+                    {
+                        plugin.RemoveServer(i);
+                        break;
+                    }
+                }
                 
                 if (plugin.servers.Count == 0)
                 {
-                    Dalamud.Interface.ImGuiHelpers.SafeTextColoredWrapped(new Vector4(0.7f, 0.7f, 0.7f, 1), "No servers added yet.");
+                    ImGuiNET.ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No servers added yet.");
                 }
             }
         }
