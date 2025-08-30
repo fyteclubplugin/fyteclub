@@ -33,6 +33,7 @@ class FyteClubDaemon {
             
             this.isRunning = true;
             this.startFFXIVMonitor();
+            this.startReconnectTimer();
             console.log('✅ FyteClub daemon ready');
             console.log('🔌 Waiting for FFXIV plugin to connect...');
             
@@ -236,6 +237,33 @@ class FyteClubDaemon {
         
         console.log('👁️  Monitoring FFXIV process...');
     }
+    
+    startReconnectTimer() {
+        this.reconnectTimer = setInterval(async () => {
+            const serverStatus = this.serverManager.connection.getStatus();
+            
+            if (serverStatus.status !== 'connected') {
+                // Try to reconnect to enabled servers
+                const enabledServers = Array.from(this.serverManager.savedServers.values())
+                    .filter(server => server.enabled && !server.connected);
+                
+                if (enabledServers.length > 0) {
+                    console.log('🔄 Attempting to reconnect to enabled servers...');
+                    for (const server of enabledServers) {
+                        try {
+                            await this.serverManager.switchToServer(server.id);
+                            console.log(`✅ Reconnected to ${sanitizeForLog(server.name)}`);
+                            break; // Only connect to one server at a time
+                        } catch (error) {
+                            console.log(`⚠️  Failed to reconnect to ${sanitizeForLog(server.name)}`);
+                        }
+                    }
+                }
+            }
+        }, 120000); // 2 minutes
+        
+        console.log('🔄 Auto-reconnect timer started (2 min intervals)');
+    }
 
     async handleAddServer(message) {
         const { address, name, enabled } = message;
@@ -287,6 +315,10 @@ class FyteClubDaemon {
         
         if (this.ffxivMonitor) {
             clearInterval(this.ffxivMonitor);
+        }
+        
+        if (this.reconnectTimer) {
+            clearInterval(this.reconnectTimer);
         }
         
         console.log('👋 FyteClub daemon stopped');

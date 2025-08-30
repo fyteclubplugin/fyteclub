@@ -26,7 +26,9 @@ class ServerManager {
             port: serverInfo.port,
             addedAt: Date.now(),
             lastConnected: null,
-            favorite: false
+            favorite: false,
+            enabled: true,
+            connected: false
         };
 
         this.savedServers.set(serverId, serverData);
@@ -246,11 +248,16 @@ class ServerManager {
             return;
         }
         
+        server.enabled = enabled;
+        this.saveToDisk();
+        
         if (enabled) {
             try {
                 await this.switchToServer(server.id);
+                server.connected = true;
             } catch (error) {
                 console.log(`⚠️  Failed to connect to server: ${error.message}`);
+                server.connected = false;
             }
         } else {
             // Disconnect if currently connected to this server
@@ -258,7 +265,10 @@ class ServerManager {
                 this.connection.disconnect();
                 this.currentServerId = null;
             }
+            server.connected = false;
         }
+        
+        this.saveToDisk();
     }
     
     // Find server by address

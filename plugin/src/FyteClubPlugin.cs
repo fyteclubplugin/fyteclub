@@ -1053,6 +1053,13 @@ namespace FyteClub
                 return;
             }
             
+            // Check for duplicate address
+            if (servers.Any(s => s.Address.Equals(address.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                PluginLog.Warning($"FyteClub: Server already exists - {SanitizeLogInput(address)}");
+                return;
+            }
+            
             PluginLog.Information($"FyteClub: Adding server {SanitizeLogInput(name)} at {SanitizeLogInput(address)}");
             
             var server = new ServerInfo
