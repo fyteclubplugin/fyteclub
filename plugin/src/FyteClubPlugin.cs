@@ -802,6 +802,7 @@ namespace FyteClub
             private readonly FyteClubPlugin plugin;
             private string newServerAddress = "";
             private string newServerName = "";
+            private string newServerPassword = "";
 
             public ConfigWindow(FyteClubPlugin plugin) : base("FyteClub Server Management")
             {
@@ -826,6 +827,7 @@ namespace FyteClub
                 ImGui.Text("Add New Server:");
                 ImGui.InputText("Address (IP:Port)", ref newServerAddress, 100);
                 ImGui.InputText("Name", ref newServerName, 50);
+                ImGui.InputText("Password (optional)", ref newServerPassword, 100, ImGuiInputTextFlags.Password);
                 
                 if (ImGui.Button("Add Server"))
                 {
@@ -834,9 +836,11 @@ namespace FyteClub
                     {
                         var capturedAddress = newServerAddress;
                         var capturedName = string.IsNullOrEmpty(newServerName) ? newServerAddress : newServerName;
-                        _ = Task.Run(() => plugin.AddServer(capturedAddress, capturedName));
+                        var capturedPassword = newServerPassword;
+                        _ = Task.Run(() => plugin.AddServer(capturedAddress, capturedName, capturedPassword));
                         newServerAddress = "";
                         newServerName = "";
+                        newServerPassword = "";
                     }
                     else
                     {
@@ -1041,7 +1045,7 @@ namespace FyteClub
             }
         }
         
-        public async Task AddServer(string address, string name)
+        public async Task AddServer(string address, string name, string password = "")
         {
             if (string.IsNullOrWhiteSpace(address))
             {
@@ -1056,7 +1060,8 @@ namespace FyteClub
                 Address = address.Trim(),
                 Name = string.IsNullOrWhiteSpace(name) ? address.Trim() : name.Trim(),
                 Enabled = true,
-                Connected = false
+                Connected = false,
+                PasswordHash = string.IsNullOrWhiteSpace(password) ? null : HashPassword(password)
             };
             
             servers.Add(server);
