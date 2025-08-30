@@ -1,53 +1,67 @@
 @echo off
-REM FyteClub Master Release Build Script
+echo Building FyteClub v1.0.1 Releases...
 
-echo 🥊 Building FyteClub Complete Release...
+:: Clean previous builds
+if exist "release" rmdir /s /q "release"
+mkdir "release"
 
-REM Clean previous builds
-echo 🧹 Cleaning previous builds...
-if exist release rmdir /s /q release
-if exist FyteClub-Complete-Release.zip del FyteClub-Complete-Release.zip
-mkdir release
-
-REM Build Plugin Package
-echo 🔌 Building plugin package...
-call build-plugin-release.bat
+:: Build Plugin
+echo Building Plugin...
+cd plugin
+dotnet build -c Release
 if %errorlevel% neq 0 (
-    echo ❌ Plugin build failed
+    echo Plugin build failed!
     exit /b 1
 )
-move FyteClub-Plugin.zip release\
+cd ..
 
-REM Copy server files
-echo 🖥️ Copying server files...
-xcopy server release\server\ /E /I /Q
+:: Create Plugin Package
+echo Creating Plugin package...
+mkdir "release\FyteClub-Plugin"
+copy "plugin\bin\Release\FyteClub.dll" "release\FyteClub-Plugin\"
+copy "plugin\FyteClub.json" "release\FyteClub-Plugin\"
+echo # FyteClub Plugin > "release\FyteClub-Plugin\README.txt"
+echo. >> "release\FyteClub-Plugin\README.txt"
+echo 1. Install XIVLauncher and Dalamud >> "release\FyteClub-Plugin\README.txt"
+echo 2. Copy FyteClub.dll to: %%APPDATA%%\XIVLauncher\installedPlugins\FyteClub\latest\ >> "release\FyteClub-Plugin\README.txt"
+echo 3. Copy FyteClub.json to same folder >> "release\FyteClub-Plugin\README.txt"
+echo 4. Restart FFXIV >> "release\FyteClub-Plugin\README.txt"
+echo 5. Use /fyteclub command in-game >> "release\FyteClub-Plugin\README.txt"
 
-REM Copy client executable
-echo 💻 Copying client executable...
-mkdir release\client
-copy client\dist\fyteclub.exe release\client\
+:: Create Server Package
+echo Creating Server package...
+mkdir "release\FyteClub-Server"
+xcopy "server" "release\FyteClub-Server\server\" /E /I /Q
+xcopy "client" "release\FyteClub-Server\client\" /E /I /Q
+copy "build-pi.sh" "release\FyteClub-Server\"
+copy "build-aws.bat" "release\FyteClub-Server\"
+copy "build-pc.bat" "release\FyteClub-Server\"
 
-REM Copy deployment scripts
-echo 📋 Copying deployment scripts...
-copy build-pi.sh release\
-copy build-aws.bat release\
-copy build-pc.bat release\
+echo # FyteClub Server Setup > "release\FyteClub-Server\README.txt"
+echo. >> "release\FyteClub-Server\README.txt"
+echo Choose your hosting option: >> "release\FyteClub-Server\README.txt"
+echo - Gaming PC: Run build-pc.bat >> "release\FyteClub-Server\README.txt"
+echo - Raspberry Pi: Run build-pi.sh >> "release\FyteClub-Server\README.txt"
+echo - AWS Cloud: Run build-aws.bat >> "release\FyteClub-Server\README.txt"
+echo. >> "release\FyteClub-Server\README.txt"
 
-REM Copy documentation
-echo 📚 Copying documentation...
-copy README.md release\
-copy BUILD_GUIDE.md release\
-copy LICENSE release\
 
-REM Create complete release package
-echo 📦 Creating complete release package...
-powershell Compress-Archive -Path release\* -DestinationPath FyteClub-Complete-Release.zip -Force
+:: Create ZIP files
+echo Creating ZIP archives...
+cd release
+powershell -command "Compress-Archive -Path 'FyteClub-Plugin' -DestinationPath 'FyteClub-Plugin.zip' -Force"
+powershell -command "Compress-Archive -Path 'FyteClub-Server' -DestinationPath 'FyteClub-Server.zip' -Force"
+cd ..
 
-echo ✅ Complete release built successfully!
-echo 📁 Contents:
-echo    - FyteClub-Plugin.zip (Plugin for XIVLauncher)
-echo    - server\ (Server source code)
-echo    - client\ (Client executable)
-echo    - build-*.* (Deployment scripts)
-echo    - Documentation files
-echo 🚀 Upload FyteClub-Complete-Release.zip to GitHub releases
+echo.
+echo ✅ Releases built successfully!
+echo.
+echo 📦 Plugin Package: release\FyteClub-Plugin.zip
+echo    - FyteClub.dll + FyteClub.json
+echo    - Installation instructions
+echo.
+echo 📦 Server Package: release\FyteClub-Server.zip
+echo    - Complete server + client
+echo    - Deployment scripts for Pi/AWS/PC
+echo    - Simple installation instructions
+echo.
