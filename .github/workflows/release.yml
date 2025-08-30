@@ -1,0 +1,128 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '6.0.x'
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: Get version
+      id: version
+      run: |
+        if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+          $version = "${{ github.event.inputs.version }}"
+        } else {
+          $version = "${{ github.ref_name }}"
+        }
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+        echo "Building version: $version"
+    
+    - name: Build Plugin
+      run: |
+        cd plugin
+        dotnet restore
+        dotnet build --configuration Release --no-restore
+        
+    - name: Package Plugin
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        mkdir "FyteClub-Plugin-$version"
+        copy "plugin\bin\Release\net6.0\FyteClub.dll" "FyteClub-Plugin-$version\"
+        copy "plugin\FyteClub.json" "FyteClub-Plugin-$version\"
+        copy "plugin\README.md" "FyteClub-Plugin-$version\"
+        Compress-Archive -Path "FyteClub-Plugin-$version" -DestinationPath "FyteClub-Plugin-$version.zip"
+    
+    - name: Build Client
+      run: |
+        cd client
+        npm install
+        npm run build 2>$null || echo "No build script, using source"
+        
+    - name: Package Client
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        mkdir "FyteClub-Client-$version"
+        robocopy client "FyteClub-Client-$version" /E /XD node_modules .git
+        copy "client\package.json" "FyteClub-Client-$version\"
+        echo "# FyteClub Client" > "FyteClub-Client-$version\INSTALL.md"
+        echo "" >> "FyteClub-Client-$version\INSTALL.md"
+        echo "1. Install Node.js from https://nodejs.org" >> "FyteClub-Client-$version\INSTALL.md"
+        echo "2. Run: npm install" >> "FyteClub-Client-$version\INSTALL.md"
+        echo "3. Run: npm install -g ." >> "FyteClub-Client-$version\INSTALL.md"
+        echo "4. Use: fyteclub connect <ip:port>" >> "FyteClub-Client-$version\INSTALL.md"
+        Compress-Archive -Path "FyteClub-Client-$version" -DestinationPath "FyteClub-Client-$version.zip"
+    
+    - name: Build Server
+      run: |
+        cd server
+        npm install
+        npm test
+        
+    - name: Package Server
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        mkdir "FyteClub-Server-$version"
+        robocopy server "FyteClub-Server-$version" /E /XD node_modules .git test-data
+        copy "server\package.json" "FyteClub-Server-$version\"
+        echo "# FyteClub Server" > "FyteClub-Server-$version\INSTALL.md"
+        echo "" >> "FyteClub-Server-$version\INSTALL.md"
+        echo "1. Install Node.js from https://nodejs.org" >> "FyteClub-Server-$version\INSTALL.md"
+        echo "2. Run: npm install" >> "FyteClub-Server-$version\INSTALL.md"
+        echo "3. Run: npm install -g ." >> "FyteClub-Server-$version\INSTALL.md"
+        echo "4. Use: fyteclub-server --name \"My Server\"" >> "FyteClub-Server-$version\INSTALL.md"
+        Compress-Archive -Path "FyteClub-Server-$version" -DestinationPath "FyteClub-Server-$version.zip"
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.VERSION }}
+        name: FyteClub ${{ steps.version.outputs.VERSION }}
+        body: |
+          ## FyteClub Release ${{ steps.version.outputs.VERSION }}
+          
+          ### 📦 Downloads
+          - **FyteClub-Plugin-${{ steps.version.outputs.VERSION }}.zip** - FFXIV Dalamud plugin
+          - **FyteClub-Client-${{ steps.version.outputs.VERSION }}.zip** - Client daemon for friends
+          - **FyteClub-Server-${{ steps.version.outputs.VERSION }}.zip** - Server for hosting
+          
+          ### 🚀 Quick Start
+          1. **Plugin**: Extract to Dalamud plugins folder, restart FFXIV
+          2. **Client**: Extract, run `npm install && npm install -g .`
+          3. **Server**: Extract, run `npm install && npm install -g .`
+          
+          ### 🎮 Usage
+          - **Host**: `fyteclub-server --name "My Server"`
+          - **Connect**: `fyteclub connect <ip:port>`
+          - **In-game**: `/fyteclub` to manage servers
+          
+          See README.md for detailed setup instructions.
+        files: |
+          FyteClub-Plugin-${{ steps.version.outputs.VERSION }}.zip
+          FyteClub-Client-${{ steps.version.outputs.VERSION }}.zip
+          FyteClub-Server-${{ steps.version.outputs.VERSION }}.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

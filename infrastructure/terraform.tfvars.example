@@ -1,0 +1,9 @@
+# Copy this file to terraform.tfvars and customize for your deployment
+
+aws_region   = "us-east-1"  # Free tier friendly region
+project_name = "friendssync"
+environment  = "prod"
+
+# Optional: Customize these if needed
+# aws_region   = "us-west-2"  # Change region if preferred
+# project_name = "my-fc-mods"  # Use your Free Company name

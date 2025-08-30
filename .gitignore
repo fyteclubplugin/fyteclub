@@ -1,0 +1,77 @@
+# StallionSync .gitignore
+
+# AWS CDK
+infrastructure/node_modules/
+infrastructure/cdk.out/
+infrastructure/.env
+infrastructure/cdk.context.json
+
+# .NET Client
+client/bin/
+client/obj/
+client/*.user
+client/*.suo
+client/.vs/
+client/packages/
+
+# C++ Plugin
+plugin/Debug/
+plugin/Release/
+plugin/x64/
+plugin/*.vcxproj.user
+plugin/*.sdf
+plugin/*.opensdf
+plugin/.vs/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+
+# Secrets and credentials
+*.pem
+*.key
+.env
+.env.local
+.env.production
+config/secrets.json
+
+# Build artifacts
+dist/
+build/
+out/
+
+# Package managers
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# AWS
+.aws/
+aws-exports.js
+
+# Testing
+coverage/
+*.coverage
+TestResults/
+
+# Documentation builds
+docs/_build/
+site/

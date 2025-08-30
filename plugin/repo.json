@@ -1,0 +1,31 @@
+[
+  {
+    "Author": "FyteClub Team",
+    "Name": "FyteClub",
+    "Punchline": "You do not talk about FyteClub",
+    "Description": "Automatically share and synchronize character mods with nearby players. Connects to your self-hosted FyteClub server for seamless mod distribution.",
+    "InternalName": "FyteClub",
+    "AssemblyVersion": "1.0.0.0",
+    "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
+    "ApplicableVersion": "any",
+    "Tags": [
+      "mods",
+      "sharing",
+      "character",
+      "customization"
+    ],
+    "DalamudApiLevel": 9,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "LoadPriority": 0,
+    "IconUrl": "",
+    "ImageUrls": [],
+    "AcceptsFeedback": true,
+    "DownloadLinkInstall": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-Plugin-v1.0.0.zip",
+    "DownloadLinkTesting": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-Plugin-v1.0.0.zip",
+    "DownloadLinkUpdate": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-Plugin-v1.0.0.zip",
+    "DownloadCount": 0,
+    "LastUpdated": "2024-01-01T00:00:00.000Z"
+  }
+]
