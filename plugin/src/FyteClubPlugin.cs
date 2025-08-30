@@ -120,7 +120,7 @@ namespace FyteClub
                 var pluginDir = PluginInterface.AssemblyLocation.Directory?.FullName ?? "";
                 var possiblePaths = new[]
                 {
-                    Path.Combine(pluginDir, "fyteclub.exe"), // Bundled with plugin
+                    Path.Combine(pluginDir, "client", "bin", "fyteclub.js"), // Bundled with plugin
                     "fyteclub", // If in PATH
                     @"C:\Users\" + Environment.UserName + @"\AppData\Roaming\npm\fyteclub.cmd", // npm global install
                     @"C:\Program Files\nodejs\fyteclub.cmd", // Alternative npm location
@@ -131,15 +131,23 @@ namespace FyteClub
                 {
                     try
                     {
-                        var startInfo = new System.Diagnostics.ProcessStartInfo
+                        var startInfo = new System.Diagnostics.ProcessStartInfo();
+                        
+                        if (path.EndsWith(".js"))
                         {
-                            FileName = path,
-                            Arguments = "start",
-                            UseShellExecute = false,
-                            CreateNoWindow = true,
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true
-                        };
+                            startInfo.FileName = "node";
+                            startInfo.Arguments = $"\"{path}\" start";
+                        }
+                        else
+                        {
+                            startInfo.FileName = path;
+                            startInfo.Arguments = "start";
+                        }
+                        
+                        startInfo.UseShellExecute = false;
+                        startInfo.CreateNoWindow = true;
+                        startInfo.RedirectStandardOutput = true;
+                        startInfo.RedirectStandardError = true;
                         
                         var process = System.Diagnostics.Process.Start(startInfo);
                         if (process != null)
