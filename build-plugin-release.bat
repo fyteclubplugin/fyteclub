@@ -16,7 +16,7 @@ REM Create release directory
 mkdir plugin-release
 
 REM Copy existing plugin files
-xcopy plugin\bin\FyteClub.dll plugin-release\ /Y
+xcopy plugin\obj\Release\FyteClub.dll plugin-release\ /Y
 xcopy plugin\FyteClub.json plugin-release\ /Y
 
 REM Copy bundled daemon
