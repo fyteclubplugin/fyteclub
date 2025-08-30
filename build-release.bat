@@ -19,6 +19,7 @@ cd ..
 echo Creating Plugin package...
 mkdir "release\FyteClub-Plugin"
 copy "plugin\bin\Release\FyteClub.dll" "release\FyteClub-Plugin\"
+copy "plugin\bin\Release\FyteClub.deps.json" "release\FyteClub-Plugin\"
 copy "plugin\FyteClub.json" "release\FyteClub-Plugin\"
 xcopy "client" "release\FyteClub-Plugin\client\" /E /I /Q
 echo # FyteClub Plugin > "release\FyteClub-Plugin\README.txt"
@@ -88,7 +89,9 @@ echo 5. Friends connect with: fyteclub connect 192.168.1.100:3000 >> "release\Fy
 :: Create ZIP files
 echo Creating ZIP archives...
 cd release
-powershell -command "Compress-Archive -Path 'FyteClub-Plugin' -DestinationPath 'FyteClub-Plugin.zip' -Force"
+cd FyteClub-Plugin
+powershell -command "Compress-Archive -Path '*' -DestinationPath '../FyteClub-Plugin.zip' -Force"
+cd ..
 powershell -command "Compress-Archive -Path 'FyteClub-Server' -DestinationPath 'FyteClub-Server.zip' -Force"
 cd ..
 
