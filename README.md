@@ -70,14 +70,6 @@ FyteClub uses a modular, security-first architecture:
 - **Cryptography** - RSA key generation and AES encryption
 - **IPC Communication** - Named pipes with FFXIV plugin
 
-### **Self-Hosting Options**
-- **Your Gaming PC** - Free, runs when your PC is on
-- **Raspberry Pi** - $35 one-time, 24/7 uptime, ~$2/month electricity
-- **Your AWS Account** - $3-5/month, professional uptime
-- **VPS Provider** - $5-10/month, reliable hosting
-
-**Cost**: $0/month (your PC) to $10/month (VPS) - **YOU pay, not us**
-
 ## Project Status
 
 🎆 **Core Complete** - Plugin + Encryption + Server Management Ready
@@ -101,7 +93,6 @@ FyteClub uses a modular, security-first architecture:
 - **Privacy First**: Zero-knowledge server architecture
 - **Creator Protection**: Paid mods secured with cryptographic proofs
 - **User Control**: Complete self-hosting options
-- **Professional Grade**: Exceeds security of existing solutions
 
 See [ROADMAP.md](docs/ROADMAP.md) for detailed development timeline.
 
