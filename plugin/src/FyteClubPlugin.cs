@@ -5,6 +5,8 @@ using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState;
 using Dalamud.Plugin.Services;
+using Dalamud.Interface.Windowing;
+
 using System;
 using System.Collections.Generic;
 using System.IO.Pipes;
@@ -15,6 +17,7 @@ using System.Linq;
 using System.Text;
 using Dalamud.Plugin.Ipc;
 using System.IO;
+using Dalamud.Bindings.ImGui;
 
 
 namespace FyteClub
@@ -82,19 +85,17 @@ namespace FyteClub
             ClientState = clientState;
             PluginLog = pluginLog;
 
-            // TODO: Uncomment when UI is fixed
-            // this.windowSystem = new WindowSystem("FyteClub");
-            // this.configWindow = new ConfigWindow(this);
-            // this.windowSystem.AddWindow(this.configWindow);
+            this.windowSystem = new WindowSystem("FyteClub");
+            this.configWindow = new ConfigWindow(this);
+            this.windowSystem.AddWindow(this.configWindow);
 
             CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
             {
                 HelpMessage = "FyteClub mod sharing - use client daemon for server management"
             });
             
-            // TODO: Uncomment when UI is fixed
-            // PluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
-            // PluginInterface.UiBuilder.OpenConfigUi += () => this.configWindow.Toggle();
+            PluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
+            PluginInterface.UiBuilder.OpenConfigUi += () => this.configWindow.Toggle();
 
             SetupPenumbraIPC();
             SetupGlamourerIPC();
@@ -749,17 +750,13 @@ namespace FyteClub
         
         private void OnCommand(string command, string args)
         {
-            // TODO: Re-enable UI once ImGui dependency issues are resolved
-            // this.configWindow.Toggle();
-            PluginLog.Information("FyteClub: Use the client daemon to manage servers. Run 'fyteclub connect <ip:port>' to add servers.");
+            this.configWindow.Toggle();
         }
         
-        // TODO: Uncomment when UI is fixed
-        // private readonly WindowSystem windowSystem;
-        // private readonly ConfigWindow configWindow;
+        private readonly WindowSystem windowSystem;
+        private readonly ConfigWindow configWindow;
         private List<ServerInfo> servers = new();
         
-        /*
         public class ConfigWindow : Window
         {
             private readonly FyteClubPlugin plugin;
@@ -780,17 +777,17 @@ namespace FyteClub
             {
                 // Connection status
                 var clientStatus = plugin.isConnected ? "Connected" : "Disconnected";
-                ImGuiNET.ImGui.TextColored(plugin.isConnected ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Daemon: {clientStatus}");
-                ImGuiNET.ImGui.TextColored(plugin.isPenumbraAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Penumbra: {(plugin.isPenumbraAvailable ? "Available" : "Unavailable")}");
-                ImGuiNET.ImGui.Text($"Tracking: {plugin.playerMods.Count} players");
-                ImGuiNET.ImGui.Separator();
+                ImGui.TextColored(plugin.isConnected ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Daemon: {clientStatus}");
+                ImGui.TextColored(plugin.isPenumbraAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Penumbra: {(plugin.isPenumbraAvailable ? "Available" : "Unavailable")}");
+                ImGui.Text($"Tracking: {plugin.playerMods.Count} players");
+                ImGui.Separator();
                 
                 // Add new server section
-                ImGuiNET.ImGui.Text("Add New Server:");
-                ImGuiNET.ImGui.InputText("Address (IP:Port)", ref newServerAddress, 100);
-                ImGuiNET.ImGui.InputText("Name", ref newServerName, 50);
+                ImGui.Text("Add New Server:");
+                ImGui.InputText("Address (IP:Port)", ref newServerAddress, 100);
+                ImGui.InputText("Name", ref newServerName, 50);
                 
-                if (ImGuiNET.ImGui.Button("Add Server"))
+                if (ImGui.Button("Add Server"))
                 {
                     if (!string.IsNullOrEmpty(newServerAddress))
                     {
@@ -801,35 +798,35 @@ namespace FyteClub
                     }
                 }
                 
-                ImGuiNET.ImGui.Separator();
+                ImGui.Separator();
                 
                 // Server list
-                ImGuiNET.ImGui.Text("Servers:");
+                ImGui.Text("Servers:");
                 for (int i = 0; i < plugin.servers.Count; i++)
                 {
                     var server = plugin.servers[i];
                     
                     // Checkbox for enable/disable
                     bool enabled = server.Enabled;
-                    if (ImGuiNET.ImGui.Checkbox($"##server_{i}", ref enabled))
+                    if (ImGui.Checkbox($"##server_{i}", ref enabled))
                     {
                         server.Enabled = enabled;
                         plugin.UpdateServerStatus(server);
                     }
                     
-                    ImGuiNET.ImGui.SameLine();
+                    ImGui.SameLine();
                     
                     // Connection status indicator
                     var statusColor = server.Connected ? new Vector4(0, 1, 0, 1) : new Vector4(0.5f, 0.5f, 0.5f, 1);
-                    ImGuiNET.ImGui.TextColored(statusColor, "●");
-                    ImGuiNET.ImGui.SameLine();
+                    ImGui.TextColored(statusColor, "●");
+                    ImGui.SameLine();
                     
                     // Server name and address
-                    ImGuiNET.ImGui.Text($"{server.Name} ({server.Address})");
+                    ImGui.Text($"{server.Name} ({server.Address})");
                     
                     // Remove button
-                    ImGuiNET.ImGui.SameLine();
-                    if (ImGuiNET.ImGui.Button($"Remove##server_{i}"))
+                    ImGui.SameLine();
+                    if (ImGui.Button($"Remove##server_{i}"))
                     {
                         plugin.RemoveServer(i);
                         break;
@@ -838,11 +835,10 @@ namespace FyteClub
                 
                 if (plugin.servers.Count == 0)
                 {
-                    ImGuiNET.ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No servers added yet.");
+                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No servers added yet.");
                 }
             }
         }
-        */
 
         private async Task HandleClientMessage(string message)
         {
@@ -1057,10 +1053,9 @@ namespace FyteClub
                 }
             }
             
-            // TODO: Uncomment when UI is fixed
-            // this.windowSystem.RemoveAllWindows();
-            // PluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;
-            // PluginInterface.UiBuilder.OpenConfigUi -= () => this.configWindow.Toggle();
+            this.windowSystem.RemoveAllWindows();
+            PluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;
+            PluginInterface.UiBuilder.OpenConfigUi -= () => this.configWindow.Toggle();
             CommandManager.RemoveHandler(CommandName);
             pipeClient?.Dispose();
             FyteClubSecurity.Dispose();
