@@ -829,12 +829,17 @@ namespace FyteClub
                 
                 if (ImGui.Button("Add Server"))
                 {
+                    plugin.PluginLog.Information($"FyteClub UI: Button clicked, address='{newServerAddress}', name='{newServerName}'");
                     if (!string.IsNullOrEmpty(newServerAddress))
                     {
                         var serverName = string.IsNullOrEmpty(newServerName) ? newServerAddress : newServerName;
                         _ = Task.Run(() => plugin.AddServer(newServerAddress, serverName));
                         newServerAddress = "";
                         newServerName = "";
+                    }
+                    else
+                    {
+                        plugin.PluginLog.Warning($"FyteClub UI: Address field is empty when button clicked");
                     }
                 }
                 
