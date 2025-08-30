@@ -18,6 +18,8 @@ using System.Text;
 using Dalamud.Plugin.Ipc;
 using System.IO;
 using Dalamud.Bindings.ImGui;
+using System.Threading;
+using Dalamud.Configuration;
 
 
 namespace FyteClub
@@ -35,6 +37,7 @@ namespace FyteClub
         
         private NamedPipeClientStream? pipeClient;
         private bool isConnected = false;
+        private readonly CancellationTokenSource cancellationTokenSource = new();
         private Dictionary<string, PlayerModInfo> playerMods = new();
         private DateTime lastScan = DateTime.MinValue;
         private const float PROXIMITY_RANGE = 50f; // meters
@@ -97,14 +100,15 @@ namespace FyteClub
             PluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
             PluginInterface.UiBuilder.OpenConfigUi += () => this.configWindow.Toggle();
 
+            LoadServerConfig();
             SetupPenumbraIPC();
             SetupGlamourerIPC();
             SetupCustomizePlusIPC();
             SetupSimpleHeelsIPC();
             SetupHonorificIPC();
-            Task.Run(ConnectToClient);
-            Task.Run(PlayerDetectionLoop);
-            Task.Run(ClientMessageLoop);
+            _ = Task.Run(() => ConnectToClient(cancellationTokenSource.Token));
+            _ = Task.Run(() => PlayerDetectionLoop(cancellationTokenSource.Token));
+            _ = Task.Run(() => ClientMessageLoop(cancellationTokenSource.Token));
         }
         
         private async Task<bool> TryStartDaemon()
@@ -145,7 +149,7 @@ namespace FyteClub
                     }
                     catch (Exception ex)
                     {
-                        PluginLog.Warning($"FyteClub: Failed to start daemon with {path} - {ex.Message}");
+                        PluginLog.Warning($"FyteClub: Failed to start daemon with {SanitizeLogInput(path)} - {SanitizeLogInput(ex.Message)}");
                         continue;
                     }
                 }
@@ -154,32 +158,32 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"FyteClub: Auto-start failed - {ex.Message}");
+                PluginLog.Error($"FyteClub: Auto-start failed - {SanitizeLogInput(ex.Message)}");
                 return false;
             }
         }
 
-        private async Task ConnectToClient()
+        private async Task ConnectToClient(CancellationToken cancellationToken)
         {
             bool hasTriedAutoStart = false;
             
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
                     if (!isConnected)
                     {
                         pipeClient = new NamedPipeClientStream(".", "fyteclub_pipe", PipeDirection.InOut);
-                        await pipeClient.ConnectAsync(5000);
+                        await pipeClient.ConnectAsync(5000, cancellationToken);
                         isConnected = true;
                         PluginLog.Information("FyteClub: Connected to client daemon");
                     }
                     
-                    await Task.Delay(1000);
+                    await Task.Delay(1000, cancellationToken);
                 }
                 catch (Exception ex)
                 {
-                    PluginLog.Warning($"FyteClub: Client daemon not found - {ex.Message}");
+                    PluginLog.Warning($"FyteClub: Client daemon not found - {SanitizeLogInput(ex.Message)}");
                     
                     // Try to auto-start daemon once
                     if (!hasTriedAutoStart)
@@ -189,7 +193,7 @@ namespace FyteClub
                         {
                             PluginLog.Information("FyteClub: Daemon started successfully");
                             hasTriedAutoStart = true;
-                            await Task.Delay(3000); // Give daemon time to start
+                            await Task.Delay(3000, cancellationToken); // Give daemon time to start
                             continue;
                         }
                         else
@@ -202,21 +206,21 @@ namespace FyteClub
                     isConnected = false;
                     pipeClient?.Dispose();
                     pipeClient = null;
-                    await Task.Delay(10000); // Wait longer between retries
+                    await Task.Delay(10000, cancellationToken); // Wait longer between retries
                 }
             }
         }
 
-        private async Task PlayerDetectionLoop()
+        private async Task PlayerDetectionLoop(CancellationToken cancellationToken)
         {
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
                     // Rate limiting - don't scan too frequently
                     if (DateTime.Now - lastScan < TimeSpan.FromMilliseconds(SCAN_INTERVAL_MS))
                     {
-                        await Task.Delay(1000);
+                        await Task.Delay(1000, cancellationToken);
                         continue;
                     }
                     
@@ -240,12 +244,12 @@ namespace FyteClub
                         lastScan = DateTime.Now;
                     }
                     
-                    await Task.Delay(1000);
+                    await Task.Delay(1000, cancellationToken);
                 }
                 catch (Exception ex)
                 {
-                    PluginLog.Error($"Player detection error: {ex.Message}");
-                    await Task.Delay(5000); // Back off on errors
+                    PluginLog.Error($"Player detection error: {SanitizeLogInput(ex.Message)}");
+                    await Task.Delay(5000, cancellationToken); // Back off on errors
                 }
             }
         }
@@ -313,7 +317,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"FyteClub: Failed to request mods for player - {ex.Message}");
+                PluginLog.Error($"FyteClub: Failed to request mods for player - {SanitizeLogInput(ex.Message)}");
             }
         }
 
@@ -326,25 +330,23 @@ namespace FyteClub
             
             foreach (var obj in ObjectTable)
             {
-                if (obj == null || obj.ObjectKind != ObjectKind.Player)
+                if (obj?.Name?.TextValue == null || obj.ObjectKind != ObjectKind.Player)
                     continue;
                     
                 if (obj.EntityId == localPlayer.EntityId)
                     continue; // Skip self
                     
-                var player = obj;
-                    
-                // Proximity check - key learning from Rabbit
-                var distance = Vector3.Distance(localPlayer.Position, player.Position);
+                // Proximity check
+                var distance = Vector3.Distance(localPlayer.Position, obj.Position);
                 if (distance > PROXIMITY_RANGE)
                     continue;
                     
                 players.Add(new PlayerInfo
                 {
-                    Name = player.Name.TextValue,
-                    WorldId = 0, // Will need to get this differently
-                    ContentId = player.EntityId,
-                    Position = new float[] { player.Position.X, player.Position.Y, player.Position.Z },
+                    Name = obj.Name.TextValue,
+                    WorldId = 0,
+                    ContentId = obj.EntityId,
+                    Position = new float[] { obj.Position.X, obj.Position.Y, obj.Position.Z },
                     Distance = distance,
                     ZoneId = ClientState.TerritoryType
                 });
@@ -366,10 +368,10 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"IPC error: {ex.Message}");
+                PluginLog.Error($"IPC error: {SanitizeLogInput(ex.Message)}");
                 isConnected = false;
                 // Try to reconnect
-                _ = Task.Run(ConnectToClient);
+                _ = Task.Run(() => ConnectToClient(cancellationTokenSource.Token));
             }
         }
         
@@ -380,7 +382,7 @@ namespace FyteClub
             try
             {
                 var buffer = new byte[4096];
-                var messageBuffer = "";
+                var messageBuffer = new StringBuilder();
                 
                 while (isConnected && pipeClient != null)
                 {
@@ -389,10 +391,17 @@ namespace FyteClub
                     if (bytesRead > 0)
                     {
                         var data = System.Text.Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                        messageBuffer += data;
+                        messageBuffer.Append(data);
                         
-                        var messages = messageBuffer.Split('\n');
-                        messageBuffer = messages[messages.Length - 1];
+                        // Prevent buffer overflow
+                        if (messageBuffer.Length > 1048576) // 1MB limit
+                        {
+                            messageBuffer.Clear();
+                            continue;
+                        }
+                        
+                        var messages = messageBuffer.ToString().Split('\n');
+                        messageBuffer.Clear().Append(messages[^1]);
                         
                         for (int i = 0; i < messages.Length - 1; i++)
                         {
@@ -410,7 +419,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"Client read error: {ex.Message}");
+                PluginLog.Error($"Client read error: {SanitizeLogInput(ex.Message)}");
                 isConnected = false;
             }
         }
@@ -430,7 +439,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Warning($"FyteClub: Penumbra IPC setup failed - {ex.Message}");
+                PluginLog.Warning($"FyteClub: Penumbra IPC setup failed - {SanitizeLogInput(ex.Message)}");
                 isPenumbraAvailable = false;
             }
         }
@@ -448,7 +457,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Warning($"FyteClub: Glamourer IPC setup failed - {ex.Message}");
+                PluginLog.Warning($"FyteClub: Glamourer IPC setup failed - {SanitizeLogInput(ex.Message)}");
                 isGlamourerAvailable = false;
             }
         }
@@ -466,7 +475,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Warning($"FyteClub: Customize+ IPC setup failed - {ex.Message}");
+                PluginLog.Warning($"FyteClub: Customize+ IPC setup failed - {SanitizeLogInput(ex.Message)}");
                 isCustomizePlusAvailable = false;
             }
         }
@@ -484,7 +493,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Warning($"FyteClub: SimpleHeels IPC setup failed - {ex.Message}");
+                PluginLog.Warning($"FyteClub: SimpleHeels IPC setup failed - {SanitizeLogInput(ex.Message)}");
                 isSimpleHeelsAvailable = false;
             }
         }
@@ -502,7 +511,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Warning($"FyteClub: Honorific IPC setup failed - {ex.Message}");
+                PluginLog.Warning($"FyteClub: Honorific IPC setup failed - {SanitizeLogInput(ex.Message)}");
                 isHonorificAvailable = false;
             }
         }
@@ -546,7 +555,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"FyteClub: Failed to apply mods to player - {ex.Message}");
+                PluginLog.Error($"FyteClub: Failed to apply mods to player - {SanitizeLogInput(ex.Message)}");
             }
         }
         
@@ -569,7 +578,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"FyteClub: Failed to apply appearance to player - {ex.Message}");
+                PluginLog.Error($"FyteClub: Failed to apply appearance to player - {SanitizeLogInput(ex.Message)}");
             }
         }
         
@@ -590,7 +599,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"FyteClub: Failed to apply Customize+ profile to player - {ex.Message}");
+                PluginLog.Error($"FyteClub: Failed to apply Customize+ profile to player - {SanitizeLogInput(ex.Message)}");
             }
         }
         
@@ -611,7 +620,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"FyteClub: Failed to apply SimpleHeels offset to player - {ex.Message}");
+                PluginLog.Error($"FyteClub: Failed to apply SimpleHeels offset to player - {SanitizeLogInput(ex.Message)}");
             }
         }
         
@@ -632,7 +641,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"FyteClub: Failed to apply Honorific title to player - {ex.Message}");
+                PluginLog.Error($"FyteClub: Failed to apply Honorific title to player - {SanitizeLogInput(ex.Message)}");
             }
         }
         
@@ -655,7 +664,7 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    PluginLog.Error($"FyteClub: Failed to remove mods from player - {ex.Message}");
+                    PluginLog.Error($"FyteClub: Failed to remove mods from player - {SanitizeLogInput(ex.Message)}");
                 }
             }
             
@@ -669,7 +678,7 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    PluginLog.Error($"FyteClub: Failed to revert appearance for player - {ex.Message}");
+                    PluginLog.Error($"FyteClub: Failed to revert appearance for player - {SanitizeLogInput(ex.Message)}");
                 }
             }
             
@@ -683,7 +692,7 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    PluginLog.Error($"FyteClub: Failed to revert Customize+ profile for player - {ex.Message}");
+                    PluginLog.Error($"FyteClub: Failed to revert Customize+ profile for player - {SanitizeLogInput(ex.Message)}");
                 }
             }
             
@@ -697,7 +706,7 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    PluginLog.Error($"FyteClub: Failed to revert SimpleHeels offset for player - {ex.Message}");
+                    PluginLog.Error($"FyteClub: Failed to revert SimpleHeels offset for player - {SanitizeLogInput(ex.Message)}");
                 }
             }
             
@@ -711,7 +720,7 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    PluginLog.Error($"FyteClub: Failed to revert Honorific title for player - {ex.Message}");
+                    PluginLog.Error($"FyteClub: Failed to revert Honorific title for player - {SanitizeLogInput(ex.Message)}");
                 }
             }
             
@@ -727,9 +736,9 @@ namespace FyteClub
             }
         }
         
-        private async Task ClientMessageLoop()
+        private async Task ClientMessageLoop(CancellationToken cancellationToken)
         {
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
@@ -738,12 +747,12 @@ namespace FyteClub
                         await ReadFromClient();
                     }
                     
-                    await Task.Delay(100); // Check for messages every 100ms
+                    await Task.Delay(100, cancellationToken); // Check for messages every 100ms
                 }
                 catch (Exception ex)
                 {
-                    PluginLog.Error($"Client message loop error: {ex.Message}");
-                    await Task.Delay(5000); // Back off on errors
+                    PluginLog.Error($"Client message loop error: {SanitizeLogInput(ex.Message)}");
+                    await Task.Delay(5000, cancellationToken); // Back off on errors
                 }
             }
         }
@@ -756,6 +765,30 @@ namespace FyteClub
         private readonly WindowSystem windowSystem;
         private readonly ConfigWindow configWindow;
         private List<ServerInfo> servers = new();
+        
+        private void LoadServerConfig()
+        {
+            try
+            {
+                var config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+                servers = config.Servers ?? new List<ServerInfo>();
+            }
+            catch
+            {
+                servers = new List<ServerInfo>();
+            }
+        }
+        
+        private void SaveServerConfig()
+        {
+            try
+            {
+                var config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+                config.Servers = servers;
+                PluginInterface.SavePluginConfig(config);
+            }
+            catch { /* Ignore save errors */ }
+        }
         
         public class ConfigWindow : Window
         {
@@ -779,7 +812,7 @@ namespace FyteClub
                 var clientStatus = plugin.isConnected ? "Connected" : "Disconnected";
                 ImGui.TextColored(plugin.isConnected ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Daemon: {clientStatus}");
                 ImGui.TextColored(plugin.isPenumbraAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Penumbra: {(plugin.isPenumbraAvailable ? "Available" : "Unavailable")}");
-                ImGui.Text($"Tracking: {plugin.playerMods.Count} players");
+                ImGui.Text($"Syncing with: {plugin.playerMods.Count} players");
                 ImGui.Separator();
                 
                 // Add new server section
@@ -792,7 +825,7 @@ namespace FyteClub
                     if (!string.IsNullOrEmpty(newServerAddress))
                     {
                         var serverName = string.IsNullOrEmpty(newServerName) ? newServerAddress : newServerName;
-                        plugin.AddServer(newServerAddress, serverName);
+                        _ = Task.Run(() => plugin.AddServer(newServerAddress, serverName));
                         newServerAddress = "";
                         newServerName = "";
                     }
@@ -811,7 +844,7 @@ namespace FyteClub
                     if (ImGui.Checkbox($"##server_{i}", ref enabled))
                     {
                         server.Enabled = enabled;
-                        plugin.UpdateServerStatus(server);
+                        _ = Task.Run(() => plugin.UpdateServerStatus(server));
                     }
                     
                     ImGui.SameLine();
@@ -828,7 +861,7 @@ namespace FyteClub
                     ImGui.SameLine();
                     if (ImGui.Button($"Remove##server_{i}"))
                     {
-                        plugin.RemoveServer(i);
+                        _ = Task.Run(() => plugin.RemoveServer(i));
                         break;
                     }
                 }
@@ -842,12 +875,15 @@ namespace FyteClub
 
         private async Task HandleClientMessage(string message)
         {
+            if (string.IsNullOrWhiteSpace(message)) return;
+            
             try
             {
                 var data = JsonSerializer.Deserialize<Dictionary<string, object>>(message);
-                if (data == null || !data.ContainsKey("type")) return;
+                if (data?.ContainsKey("type") != true) return;
                 
                 var messageType = data["type"]?.ToString();
+                if (string.IsNullOrEmpty(messageType)) return;
                 
                 switch (messageType)
                 {
@@ -861,7 +897,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"FyteClub: Failed to handle client message - {ex.Message}");
+                PluginLog.Error($"FyteClub: Failed to handle client message - {SanitizeLogInput(ex.Message)}");
             }
         }
         
@@ -965,7 +1001,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"FyteClub: Failed to handle encrypted mods from player - {ex.Message}");
+                PluginLog.Error($"FyteClub: Failed to handle encrypted mods from player - {SanitizeLogInput(ex.Message)}");
             }
         }
         
@@ -992,44 +1028,49 @@ namespace FyteClub
             }
         }
         
-        public async void AddServer(string address, string name)
+        public async Task AddServer(string address, string name)
         {
+            if (string.IsNullOrWhiteSpace(address)) return;
+            
             var server = new ServerInfo
             {
-                Address = address,
-                Name = name,
+                Address = address.Trim(),
+                Name = string.IsNullOrWhiteSpace(name) ? address.Trim() : name.Trim(),
                 Enabled = true,
                 Connected = false
             };
             
             servers.Add(server);
+            SaveServerConfig();
             
             // Tell daemon to add this server
             await SendToClient(new {
                 type = "add_server",
-                address,
-                name,
+                address = server.Address,
+                name = server.Name,
                 enabled = true
             });
         }
         
-        public async void RemoveServer(int index)
+        public async Task RemoveServer(int index)
         {
-            if (index >= 0 && index < servers.Count)
-            {
-                var server = servers[index];
-                servers.RemoveAt(index);
-                
-                // Tell daemon to remove this server
-                await SendToClient(new {
-                    type = "remove_server",
-                    address = server.Address
-                });
-            }
+            if (index < 0 || index >= servers.Count) return;
+            
+            var server = servers[index];
+            servers.RemoveAt(index);
+            SaveServerConfig();
+            
+            // Tell daemon to remove this server
+            await SendToClient(new {
+                type = "remove_server",
+                address = server.Address
+            });
         }
         
-        public async void UpdateServerStatus(ServerInfo server)
+        public async Task UpdateServerStatus(ServerInfo server)
         {
+            SaveServerConfig();
+            
             // Tell daemon to enable/disable this server
             await SendToClient(new {
                 type = "toggle_server",
@@ -1057,8 +1098,16 @@ namespace FyteClub
             PluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;
             PluginInterface.UiBuilder.OpenConfigUi -= () => this.configWindow.Toggle();
             CommandManager.RemoveHandler(CommandName);
+            cancellationTokenSource.Cancel();
             pipeClient?.Dispose();
+            cancellationTokenSource.Dispose();
             FyteClubSecurity.Dispose();
+        }
+        
+        private static string SanitizeLogInput(string input)
+        {
+            if (string.IsNullOrEmpty(input)) return "";
+            return input.Replace("\r", "").Replace("\n", "").Replace("\t", " ");
         }
     }
 
@@ -1091,5 +1140,12 @@ namespace FyteClub
         public string Name { get; set; } = "";
         public bool Enabled { get; set; } = true;
         public bool Connected { get; set; } = false;
+    }
+    
+    [System.Serializable]
+    public class Configuration : IPluginConfiguration
+    {
+        public int Version { get; set; } = 0;
+        public List<ServerInfo> Servers { get; set; } = new();
     }
 }

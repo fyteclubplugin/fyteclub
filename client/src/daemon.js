@@ -18,6 +18,7 @@ class FyteClubDaemon {
         this.pluginConnection = null;
         this.isRunning = false;
         this.pipeName = '\\\\.\\pipe\\fyteclub_pipe';
+        this.ffxivMonitor = null;
     }
 
     async start() {
@@ -31,6 +32,7 @@ class FyteClubDaemon {
             await this.startPipeServer();
             
             this.isRunning = true;
+            this.startFFXIVMonitor();
             console.log('✅ FyteClub daemon ready');
             console.log('🔌 Waiting for FFXIV plugin to connect...');
             
@@ -53,6 +55,15 @@ class FyteClubDaemon {
                 connection.on('end', () => {
                     console.log('🔌 FFXIV plugin disconnected');
                     this.pluginConnection = null;
+                    
+                    // If plugin disconnects, start shutdown timer
+                    setTimeout(() => {
+                        if (!this.pluginConnection) {
+                            console.log('🕐 Plugin disconnected for 30s, shutting down...');
+                            this.stop();
+                            process.exit(0);
+                        }
+                    }, 30000); // 30 second grace period
                 });
                 
                 connection.on('error', (error) => {
@@ -209,6 +220,22 @@ class FyteClubDaemon {
             console.error('Failed to send to plugin:', error.message);
         }
     }
+    
+    startFFXIVMonitor() {
+        const { exec } = require('child_process');
+        
+        this.ffxivMonitor = setInterval(() => {
+            exec('tasklist /FI "IMAGENAME eq ffxiv_dx11.exe" /FO CSV', (error, stdout) => {
+                if (error || !stdout.includes('ffxiv_dx11.exe')) {
+                    console.log('🎮 FFXIV not running, shutting down daemon...');
+                    this.stop();
+                    process.exit(0);
+                }
+            });
+        }, 10000); // Check every 10 seconds
+        
+        console.log('👁️  Monitoring FFXIV process...');
+    }
 
     async handleAddServer(message) {
         const { address, name, enabled } = message;
@@ -257,6 +284,10 @@ class FyteClubDaemon {
         }
         
         this.serverManager.disconnect();
+        
+        if (this.ffxivMonitor) {
+            clearInterval(this.ffxivMonitor);
+        }
         
         console.log('👋 FyteClub daemon stopped');
     }
