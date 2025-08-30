@@ -2,11 +2,21 @@
 
 ## 🎯 Quick Build
 
+### Master Release Build (Recommended)
 ```bash
-# Build release package
+# Build complete release package
+build-release.bat
+
+# Output: FyteClub-Complete-Release.zip
+# Contains: Plugin, Server, Client, Deployment Scripts, Documentation
+```
+
+### Plugin Only Build
+```bash
+# Build plugin package only
 build-plugin-release.bat
 
-# Output: FyteClub-Plugin-v1.0.0.zip
+# Output: FyteClub-Plugin.zip
 ```
 
 ## 📋 Prerequisites
@@ -60,8 +70,18 @@ npm run build
 
 ### 3. Complete Release Package
 ```bash
+# Master build (everything)
+build-release.bat
+# Creates: FyteClub-Complete-Release.zip containing:
+# - FyteClub-Plugin.zip (plugin package)
+# - server/ (complete server source)
+# - client/ (client executable)
+# - build-*.* (deployment scripts)
+# - Documentation (README, BUILD_GUIDE, LICENSE)
+
+# Plugin only build
 build-plugin-release.bat
-# Creates: FyteClub-Plugin-v1.0.0.zip containing:
+# Creates: FyteClub-Plugin.zip containing:
 # - FyteClub.dll (plugin)
 # - FyteClub.json (manifest)
 # - fyteclub.exe (client daemon)
@@ -174,10 +194,13 @@ git push origin v1.0.0
 - ✅ Production ready
 ```
 
-#### 3. Upload Release Asset
-1. **Drag and drop:** `FyteClub-Plugin-v1.0.0.zip` to release page
-2. **Asset description:** "Complete FyteClub plugin package with daemon"
-3. **Publish release**
+#### 3. Upload Release Assets
+1. **Run master build:** `build-release.bat`
+2. **Upload complete package:** `FyteClub-Complete-Release.zip`
+   - **Asset description:** "Complete FyteClub release with plugin, server, client, and deployment scripts"
+3. **Upload plugin package:** `release/FyteClub-Plugin.zip` 
+   - **Asset description:** "FyteClub plugin for XIVLauncher users"
+4. **Publish release**
 
 #### 4. Update Plugin Repository
 ```bash
@@ -259,7 +282,7 @@ git push origin v1.0.0
 - [ ] All tests passing (35/35)
 - [ ] Security review completed
 - [ ] Version numbers updated
-- [ ] Build script tested
+- [ ] Master build script tested (`build-release.bat`)
 - [ ] Plugin loads in XIVLauncher
 - [ ] Daemon connects successfully
 - [ ] UI displays correctly
@@ -274,6 +297,75 @@ git push origin v1.0.0
 - [ ] Release zip uploaded as asset
 - [ ] Plugin repository manifest updated with download URLs
 - [ ] Release published and announced
+
+---
+
+## 🏠 Server Deployment Options
+
+### 🥧 Raspberry Pi (24/7 Server)
+**Best for:** Always-on server, low power consumption, reliable hosting
+
+```bash
+# Download and run
+curl -sSL https://raw.githubusercontent.com/fyteclubplugin/fyteclub/main/build-pi.sh | bash
+
+# Or manual:
+git clone https://github.com/fyteclubplugin/fyteclub.git
+cd fyteclub
+chmod +x build-pi.sh
+./build-pi.sh
+```
+
+**Features:**
+- ✅ Systemd service (auto-start on boot)
+- ✅ ~$2/month electricity cost
+- ✅ 99.9% uptime
+- ✅ Remote SSH management
+
+### 🌩️ AWS Cloud (Enterprise Grade)
+**Best for:** Maximum uptime, global access, automatic scaling
+
+```bash
+# Download and run
+git clone https://github.com/fyteclubplugin/fyteclub.git
+cd fyteclub
+build-aws.bat
+
+# Then deploy
+terraform apply
+```
+
+**Features:**
+- ✅ 99.99% uptime SLA
+- ✅ Auto-cleanup to stay in free tier
+- ✅ Global CDN distribution
+- ✅ Automatic backups
+
+### 🎮 Gaming PC (Simple Setup)
+**Best for:** Playing with friends, temporary servers, easy setup
+
+```bash
+# Download and run
+git clone https://github.com/fyteclubplugin/fyteclub.git
+cd fyteclub
+build-pc.bat
+```
+
+**Features:**
+- ✅ Desktop shortcut created
+- ✅ Shows your IP address
+- ✅ One-click server start
+- ✅ No additional costs
+
+### Quick Comparison
+
+| Method | Cost | Uptime | Setup Time | Best For |
+|--------|------|--------|------------|----------|
+| **Raspberry Pi** | $2/month | 99.9% | 10 min | Always-on hosting |
+| **AWS Cloud** | $0/month* | 99.99% | 5 min | Enterprise reliability |
+| **Gaming PC** | $0/month | When PC on | 2 min | Casual gaming sessions |
+
+*Stays in AWS free tier with auto-cleanup
 
 ---
 
