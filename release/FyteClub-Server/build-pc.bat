@@ -7,24 +7,27 @@ REM Check if Node.js is installed
 node --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo ❌ Node.js not found. Please install from https://nodejs.org
+    pause
     exit /b 1
 )
+
+REM Create server directory if it doesn't exist
+if not exist "server" mkdir server
 
 REM Install server dependencies
 echo 📦 Installing server dependencies...
 cd server
+if not exist "package.json" (
+    echo Creating package.json...
+    echo {"name":"fyteclub-server","version":"1.0.1","main":"bin/fyteclub-server.js","dependencies":{"express":"^4.18.2","sqlite3":"^5.1.6","cors":"^2.8.5"}} > package.json
+)
 npm install
-
-REM Create Windows service script
-echo 🔧 Creating Windows service script...
-echo @echo off > start-fyteclub.bat
-echo echo 🥊 Starting FyteClub server... >> start-fyteclub.bat
-echo node bin/fyteclub-server.js --name "%COMPUTERNAME% Server" >> start-fyteclub.bat
-echo pause >> start-fyteclub.bat
-
-REM Create desktop shortcut
-echo 🖥️ Creating desktop shortcut...
-powershell -Command "$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%USERPROFILE%\Desktop\FyteClub Server.lnk'); $Shortcut.TargetPath = '%CD%\start-fyteclub.bat'; $Shortcut.WorkingDirectory = '%CD%'; $Shortcut.Save()"
+if %errorlevel% neq 0 (
+    echo ❌ Failed to install server dependencies
+    pause
+    exit /b 1
+)
+cd ..
 
 REM Get local IP address
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4 Address"') do set IP=%%a
@@ -32,10 +35,9 @@ set IP=%IP: =%
 
 echo ✅ FyteClub PC server ready!
 echo 🔗 Your server address: %IP%:3000
-echo 🖥️ Desktop shortcut created
-echo.
 echo 🚀 Starting server now...
-echo 📋 Share this address with friends: %IP%:3000
-echo 🛑 Press Ctrl+C to stop server
 echo.
-node bin/fyteclub-server.js --name "%COMPUTERNAME% Server"
+echo 💡 To stop server: Press Ctrl+C or close this window
+echo.
+cd server
+cmd /k "node bin/fyteclub-server.js --name "%COMPUTERNAME% Server""
