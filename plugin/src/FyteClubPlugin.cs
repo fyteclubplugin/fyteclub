@@ -14,7 +14,6 @@ using System.Numerics;
 using System.Linq;
 using System.Text;
 using Dalamud.Plugin.Ipc;
-using Dalamud.Interface.Windowing;
 using System.IO;
 
 
@@ -83,17 +82,19 @@ namespace FyteClub
             ClientState = clientState;
             PluginLog = pluginLog;
 
-            this.windowSystem = new WindowSystem("FyteClub");
-            this.configWindow = new ConfigWindow(this);
-            this.windowSystem.AddWindow(this.configWindow);
+            // TODO: Uncomment when UI is fixed
+            // this.windowSystem = new WindowSystem("FyteClub");
+            // this.configWindow = new ConfigWindow(this);
+            // this.windowSystem.AddWindow(this.configWindow);
 
             CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
             {
-                HelpMessage = "FyteClub mod sharing - /fyteclub to open server management"
+                HelpMessage = "FyteClub mod sharing - use client daemon for server management"
             });
             
-            PluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
-            PluginInterface.UiBuilder.OpenConfigUi += () => this.configWindow.Toggle();
+            // TODO: Uncomment when UI is fixed
+            // PluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
+            // PluginInterface.UiBuilder.OpenConfigUi += () => this.configWindow.Toggle();
 
             SetupPenumbraIPC();
             SetupGlamourerIPC();
@@ -748,13 +749,17 @@ namespace FyteClub
         
         private void OnCommand(string command, string args)
         {
-            this.configWindow.Toggle();
+            // TODO: Re-enable UI once ImGui dependency issues are resolved
+            // this.configWindow.Toggle();
+            PluginLog.Information("FyteClub: Use the client daemon to manage servers. Run 'fyteclub connect <ip:port>' to add servers.");
         }
         
-        private readonly WindowSystem windowSystem;
-        private readonly ConfigWindow configWindow;
+        // TODO: Uncomment when UI is fixed
+        // private readonly WindowSystem windowSystem;
+        // private readonly ConfigWindow configWindow;
         private List<ServerInfo> servers = new();
         
+        /*
         public class ConfigWindow : Window
         {
             private readonly FyteClubPlugin plugin;
@@ -837,6 +842,7 @@ namespace FyteClub
                 }
             }
         }
+        */
 
         private async Task HandleClientMessage(string message)
         {
@@ -1051,9 +1057,10 @@ namespace FyteClub
                 }
             }
             
-            this.windowSystem.RemoveAllWindows();
-            PluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;
-            PluginInterface.UiBuilder.OpenConfigUi -= () => this.configWindow.Toggle();
+            // TODO: Uncomment when UI is fixed
+            // this.windowSystem.RemoveAllWindows();
+            // PluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;
+            // PluginInterface.UiBuilder.OpenConfigUi -= () => this.configWindow.Toggle();
             CommandManager.RemoveHandler(CommandName);
             pipeClient?.Dispose();
             FyteClubSecurity.Dispose();
