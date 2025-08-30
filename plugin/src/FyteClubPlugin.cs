@@ -832,8 +832,9 @@ namespace FyteClub
                     plugin.PluginLog.Information($"FyteClub UI: Button clicked, address='{newServerAddress}', name='{newServerName}'");
                     if (!string.IsNullOrEmpty(newServerAddress))
                     {
-                        var serverName = string.IsNullOrEmpty(newServerName) ? newServerAddress : newServerName;
-                        _ = Task.Run(() => plugin.AddServer(newServerAddress, serverName));
+                        var capturedAddress = newServerAddress;
+                        var capturedName = string.IsNullOrEmpty(newServerName) ? newServerAddress : newServerName;
+                        _ = Task.Run(() => plugin.AddServer(capturedAddress, capturedName));
                         newServerAddress = "";
                         newServerName = "";
                     }
