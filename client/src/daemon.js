@@ -17,7 +17,7 @@ class FyteClubDaemon {
         this.pipeServer = null;
         this.pluginConnection = null;
         this.isRunning = false;
-        this.pipeName = '\\\\.\\pipe\\fyteclub_pipe';
+        this.pipeName = 'fyteclub_pipe';
         this.ffxivMonitor = null;
     }
 
