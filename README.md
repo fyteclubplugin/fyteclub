@@ -2,6 +2,24 @@
 
 A secure, self-hosted mod-sharing system for Final Fantasy XIV with end-to-end encryption and enterprise-grade security. Share character mods automatically with nearby players while protecting creator rights and user privacy.
 
+## Table of Contents
+
+- [What It Does](#what-it-does)
+- [Key Features](#key-features)
+- [How It Works](#how-it-works)
+- [The Problem We Solve](#the-problem-we-solve)
+- [Architecture](#architecture)
+- [Project Status](#project-status)
+- [Repository Structure](#repository-structure)
+- [Installation](#installation)
+- [Getting Started](#getting-started)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [Privacy & Security](#privacy--security)
+- [Expected Costs](#expected-costs)
+- [License](#license)
+- [Support](#support)
+
 ## What It Does
 
 FyteClub solves the problem of manually sharing FFXIV character mods by automatically synchronizing them when players encounter each other in-game. Unlike other solutions, FyteClub provides enterprise-grade encryption, zero-knowledge privacy, and complete self-hosting control.
