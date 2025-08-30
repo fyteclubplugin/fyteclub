@@ -89,7 +89,7 @@ namespace FyteClub
             });
             
             PluginInterface.UiBuilder.Draw += DrawUI;
-            PluginInterface.UiBuilder.OpenConfigUi += () => isServerUIOpen = true;
+            PluginInterface.UiBuilder.OpenConfigUi += OpenConfigUi;
 
             SetupPenumbraIPC();
             SetupGlamourerIPC();
@@ -106,8 +106,10 @@ namespace FyteClub
             try
             {
                 // Try to find fyteclub executable
+                var pluginDir = PluginInterface.AssemblyLocation.Directory?.FullName ?? "";
                 var possiblePaths = new[]
                 {
+                    Path.Combine(pluginDir, "fyteclub.exe"), // Bundled with plugin
                     "fyteclub", // If in PATH
                     @"C:\Users\" + Environment.UserName + @"\AppData\Roaming\npm\fyteclub.cmd", // npm global install
                     @"C:\Program Files\nodejs\fyteclub.cmd", // Alternative npm location
@@ -744,6 +746,13 @@ namespace FyteClub
         {
             // Toggle the server management UI
             isServerUIOpen = !isServerUIOpen;
+            PluginLog.Information($"FyteClub: Command executed, UI now {(isServerUIOpen ? "open" : "closed")}");
+        }
+        
+        private void OpenConfigUi()
+        {
+            isServerUIOpen = true;
+            PluginLog.Information("FyteClub: Settings button clicked, opening UI");
         }
         
         private bool isServerUIOpen = false;
@@ -754,6 +763,8 @@ namespace FyteClub
         public void DrawUI()
         {
             if (!isServerUIOpen) return;
+            
+            PluginLog.Debug("FyteClub: Drawing UI");
             
             ImGui.SetNextWindowSize(new Vector2(500, 400), ImGuiCond.FirstUseEver);
             if (ImGui.Begin("FyteClub Server Management", ref isServerUIOpen))
@@ -1038,7 +1049,7 @@ namespace FyteClub
             }
             
             PluginInterface.UiBuilder.Draw -= DrawUI;
-            PluginInterface.UiBuilder.OpenConfigUi -= () => isServerUIOpen = true;
+            PluginInterface.UiBuilder.OpenConfigUi -= OpenConfigUi;
             CommandManager.RemoveHandler(CommandName);
             pipeClient?.Dispose();
             FyteClubSecurity.Dispose();

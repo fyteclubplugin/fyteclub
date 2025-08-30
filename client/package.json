@@ -9,17 +9,17 @@
   "scripts": {
     "start": "node bin/fyteclub.js",
     "dev": "nodemon bin/fyteclub.js",
-    "test": "jest"
+    "test": "jest",
+    "build": "pkg bin/fyteclub.js --target node18-win-x64 --output dist/fyteclub.exe"
   },
   "keywords": ["ffxiv", "mods", "client"],
   "author": "FyteClub",
   "license": "MIT",
-  "dependencies": {
-    "node-fetch": "^3.3.2"
-  },
+  "dependencies": {},
   "devDependencies": {
     "nodemon": "^3.0.1",
-    "jest": "^29.6.2"
+    "jest": "^29.6.2",
+    "pkg": "^5.8.1"
   },
   "jest": {
     "testEnvironment": "node",

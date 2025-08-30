@@ -1,0 +1,24 @@
+{
+  "Author": "FyteClub Team",
+  "Name": "FyteClub",
+  "Punchline": "You do not talk about FyteClub",
+  "Description": "[SOURCE DISTRIBUTION] Automatically share and synchronize character mods with nearby players. Requires local compilation with Dalamud SDK.",
+  "InternalName": "FyteClub",
+  "AssemblyVersion": "1.0.0.0",
+  "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "mods",
+    "sharing",
+    "character",
+    "customization"
+  ],
+  "DalamudApiLevel": 13,
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "CanUnloadAsync": false,
+  "LoadPriority": 0,
+  "IconUrl": "",
+  "ImageUrls": [],
+  "AcceptsFeedback": true
+}

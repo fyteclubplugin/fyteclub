@@ -1,54 +1,12 @@
-const ShareCodeService = require('./share-codes');
 const config = require('./config');
 
 class ServerConnection {
     constructor() {
-        this.shareCodeService = new ShareCodeService();
         this.currentServer = null;
         this.connectionStatus = 'disconnected';
     }
 
-    // Start server and generate share code
-    async startServer() {
-        try {
-            console.log('🚀 Starting FyteClub server...');
-            
-            // Get server info
-            const serverInfo = await this.shareCodeService.getPublicServerInfo();
-            console.log(`📡 Server running on ${serverInfo.publicIP}:${serverInfo.port}`);
-            
-            // Generate share code
-            const shareCode = await this.shareCodeService.registerServer(serverInfo);
-            
-            console.log('');
-            console.log('🎉 FyteClub Server Ready!');
-            console.log('');
-            console.log(`📋 Share Code: ${shareCode}`);
-            console.log(`🌐 Direct IP: ${serverInfo.publicIP}:${serverInfo.port}`);
-            console.log('');
-            console.log('Tell your friends to use the share code to connect!');
-            
-            return { shareCode, serverInfo };
-        } catch (error) {
-            console.error('❌ Failed to start server:', error.message);
-            throw error;
-        }
-    }
 
-    // Connect to server using share code
-    async connectWithShareCode(shareCode) {
-        try {
-            console.log(`🔍 Looking up share code: ${shareCode}`);
-            
-            const serverInfo = await this.shareCodeService.lookupServer(shareCode);
-            console.log(`📡 Found server: ${serverInfo.name} at ${serverInfo.ip}:${serverInfo.port}`);
-            
-            return await this.connectToServer(serverInfo.ip, serverInfo.port);
-        } catch (error) {
-            console.error(`❌ Failed to connect with share code ${shareCode}:`, error.message);
-            throw error;
-        }
-    }
 
     // Connect to server using direct IP
     async connectToServer(ip, port) {
@@ -124,7 +82,6 @@ class ServerConnection {
             throw new Error('Not connected to any server');
         }
 
-        const fetch = require('node-fetch');
         const method = endpoint.includes('/api/mods/') && !endpoint.includes('/sync') ? 'GET' : 'POST';
         
         const options = {
