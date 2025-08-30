@@ -1,6 +1,18 @@
-# StallionSync FFXIV Plugin ✅ COMPLETE
+# FyteClub FFXIV Plugin ✅ COMPLETE
 
 Dalamud plugin for detecting nearby players and managing mod synchronization in real-time.
+
+## Table of Contents
+
+- [Features](#features)
+- [Technology Stack](#technology-stack)
+- [Architecture](#architecture)
+- [Development Setup](#development-setup)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Core Functionality](#core-functionality)
+- [Safety & Compliance](#safety--compliance)
+- [Communication Protocol](#communication-protocol)
 
 ## Features
 
@@ -9,11 +21,11 @@ Dalamud plugin for detecting nearby players and managing mod synchronization in 
 - **IPC Communication** - Named pipes to Node.js client
 - **Memory Safety** - Built on proven Dalamud framework
 - **Auto-Updates** - Compatible with Dalamud's update system
-- **Mare-Style Sync** - Real-time mod sharing like the original Mare
+- **Proximity-Based Sync** - Real-time mod sharing with nearby players
 
 ## Technology Stack
 
-- **Language**: C# (.NET 7)
+- **Language**: C# (.NET 9)
 - **Framework**: Dalamud plugin system
 - **Game Integration**: Dalamud ObjectTable and ClientState
 - **Mod Management**: Penumbra integration + fallback system
@@ -36,7 +48,7 @@ Dalamud plugin for detecting nearby players and managing mod synchronization in 
 └─────────────────┘              │
          │                       │
 ┌─────────────────┐              │
-│ StallionSync    │◄─────────────┘
+│   FyteClub      │◄─────────────┘
 │ Plugin (.dll)   │
 ├─────────────────┤
 │ • Player Detect │
@@ -59,21 +71,35 @@ Dalamud plugin for detecting nearby players and managing mod synchronization in 
 build.bat
 
 # Install manually
-copy bin\StallionSync.dll %APPDATA%\XIVLauncher\installedPlugins\StallionSync\
-copy StallionSync.json %APPDATA%\XIVLauncher\installedPlugins\StallionSync\
+copy bin\FyteClub.dll %APPDATA%\XIVLauncher\installedPlugins\FyteClub\
+copy FyteClub.json %APPDATA%\XIVLauncher\installedPlugins\FyteClub\
 
 # Or use Dalamud's plugin installer (future)
 ```
 
 ### Usage
 1. Start FFXIV with XIVLauncher
-2. Run StallionSync client: `stallionsync start`
+2. Run FyteClub client: `fyteclub start`
 3. Plugin automatically detects nearby players
 4. Mods sync in real-time when players are nearby
 
-## Mare Compatibility
+## Development Setup
 
-This plugin replicates Mare's core functionality:
+### Dalamud Library Path
+The plugin uses environment variable fallback for cross-platform development:
+- **Default**: Uses XIVLauncher's dev environment (`%APPDATA%\XIVLauncher\addon\Hooks\dev\`)
+- **Custom**: Set `DALAMUD_HOME` environment variable
+- **Override**: Pass `-p:DalamudLibPath="path"` to dotnet build
+
+### Building
+```cmd
+build.bat
+# Or manually: dotnet build -c Release
+```
+
+## Core Functionality
+
+This plugin provides automatic mod synchronization:
 - **Real-time player detection** using game's object table
 - **Automatic mod synchronization** when players are nearby
 - **Seamless mod application** without game restart

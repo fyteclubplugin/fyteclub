@@ -2,6 +2,11 @@
 echo Building FyteClub FFXIV Plugin
 echo ==============================
 
+REM Set default Dalamud path if not already set
+if "%DALAMUD_HOME%"=="" (
+    set "DALAMUD_HOME=%APPDATA%\XIVLauncher\addon\Hooks\dev"
+)
+
 REM Check if .NET SDK is installed
 dotnet --version >nul 2>&1
 if %errorlevel% neq 0 (
