@@ -2,6 +2,7 @@ using Dalamud.Game.Command;
 using Dalamud.Plugin;
 using Dalamud.Game.ClientState.Objects;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState;
 using Dalamud.Plugin.Services;
 using System;
@@ -13,8 +14,9 @@ using System.Numerics;
 using System.Linq;
 using System.Text;
 using Dalamud.Plugin.Ipc;
-using ImGuiNET;
 using Dalamud.Interface.Windowing;
+using System.IO;
+using ImGuiNET;
 
 namespace FyteClub
 {
@@ -23,10 +25,10 @@ namespace FyteClub
         public string Name => "FyteClub";
         private const string CommandName = "/fyteclub";
 
-        private DalamudPluginInterface PluginInterface { get; init; }
-        private CommandManager CommandManager { get; init; }
-        private ObjectTable ObjectTable { get; init; }
-        private ClientState ClientState { get; init; }
+        private IDalamudPluginInterface PluginInterface { get; init; }
+        private ICommandManager CommandManager { get; init; }
+        private IObjectTable ObjectTable { get; init; }
+        private IClientState ClientState { get; init; }
         private IPluginLog PluginLog { get; init; }
         
         private NamedPipeClientStream? pipeClient;
@@ -69,10 +71,10 @@ namespace FyteClub
         private bool isHonorificAvailable = false;
 
         public FyteClubPlugin(
-            DalamudPluginInterface pluginInterface,
-            CommandManager commandManager,
-            ObjectTable objectTable,
-            ClientState clientState,
+            IDalamudPluginInterface pluginInterface,
+            ICommandManager commandManager,
+            IObjectTable objectTable,
+            IClientState clientState,
             IPluginLog pluginLog)
         {
             PluginInterface = pluginInterface;
@@ -242,7 +244,7 @@ namespace FyteClub
         
         private bool HasPlayersChanged(PlayerInfo[] currentPlayers)
         {
-            var currentIds = currentPlayers.Select(p => p.ContentId).ToHashSet();
+            var currentIds = currentPlayers.Select(p => p.ContentId.ToString()).ToHashSet();
             var cachedIds = playerMods.Keys.ToHashSet();
             
             return !currentIds.SetEquals(cachedIds);
@@ -316,11 +318,13 @@ namespace FyteClub
             
             foreach (var obj in ObjectTable)
             {
-                if (obj is not PlayerCharacter player || player.ObjectId == 0)
+                if (obj == null || obj.ObjectKind != ObjectKind.Player)
                     continue;
                     
-                if (player.ObjectId == localPlayer.ObjectId)
+                if (obj.EntityId == localPlayer.EntityId)
                     continue; // Skip self
+                    
+                var player = obj;
                     
                 // Proximity check - key learning from Rabbit
                 var distance = Vector3.Distance(localPlayer.Position, player.Position);
@@ -330,8 +334,8 @@ namespace FyteClub
                 players.Add(new PlayerInfo
                 {
                     Name = player.Name.TextValue,
-                    WorldId = player.HomeWorld.Id,
-                    ContentId = player.ObjectId,
+                    WorldId = 0, // Will need to get this differently
+                    ContentId = player.EntityId,
                     Position = new float[] { player.Position.X, player.Position.Y, player.Position.Z },
                     Distance = distance,
                     ZoneId = ClientState.TerritoryType

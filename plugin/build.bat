@@ -5,7 +5,7 @@ echo ==============================
 REM Check if .NET SDK is installed
 dotnet --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ERROR: .NET SDK not found. Please install .NET 7.0 SDK.
+    echo ERROR: .NET SDK not found. Please install .NET 9.0 SDK.
     echo Download from: https://dotnet.microsoft.com/download
     pause
     exit /b 1
@@ -15,10 +15,10 @@ echo Building plugin...
 dotnet build -c Release
 
 echo.
-if exist "bin\Release\net7.0\FyteClub.dll" (
+if exist "bin\Release\net9.0-windows\FyteClub.dll" (
     echo ✅ Build successful!
     echo.
-    echo Plugin file: bin\Release\net7.0\FyteClub.dll
+    echo Plugin file: bin\Release\net9.0-windows\FyteClub.dll
     echo.
     echo Installation:
     echo 1. Copy FyteClub.dll to your Dalamud plugins folder

@@ -7,24 +7,19 @@
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <OutputPath>bin\</OutputPath>
+    <DalamudLibPath>c:\Users\Me\git\Dalamud\bin\Debug\</DalamudLibPath>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="DalamudPackager" Version="2.1.12" />
-    <Reference Include="FFXIVClientStructs">
-      <HintPath>$(DalamudLibPath)FFXIVClientStructs.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="Newtonsoft.Json">
-      <HintPath>$(DalamudLibPath)Newtonsoft.Json.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
+    <PackageReference Include="DalamudPackager" Version="2.1.13" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="Dalamud">
       <HintPath>$(DalamudLibPath)Dalamud.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="ImGui.NET">
-      <HintPath>$(DalamudLibPath)ImGui.NET.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="ImGuiScene">
@@ -39,7 +34,18 @@
       <HintPath>$(DalamudLibPath)Lumina.Excel.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(DalamudLibPath)Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="FFXIVClientStructs">
+      <HintPath>$(DalamudLibPath)FFXIVClientStructs.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="ImGui.NET" Version="1.91.0.1" />
+  </ItemGroup>
 
 </Project>

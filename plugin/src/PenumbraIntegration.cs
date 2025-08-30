@@ -4,18 +4,19 @@ using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Dalamud.Plugin;
+using Dalamud.Interface.Utility;
 using Dalamud.Plugin.Services;
 
 namespace FyteClub
 {
     public class PenumbraIntegration
     {
-        private readonly DalamudPluginInterface pluginInterface;
+        private readonly IDalamudPluginInterface pluginInterface;
         private readonly IPluginLog pluginLog;
         private bool penumbraAvailable = false;
         private static readonly Regex ValidPlayerName = new Regex(@"^[a-zA-Z0-9_\-\s]{1,32}$", RegexOptions.Compiled);
 
-        public PenumbraIntegration(DalamudPluginInterface pluginInterface, IPluginLog pluginLog)
+        public PenumbraIntegration(IDalamudPluginInterface pluginInterface, IPluginLog pluginLog)
         {
             this.pluginInterface = pluginInterface;
             this.pluginLog = pluginLog;
@@ -26,9 +27,9 @@ namespace FyteClub
         {
             try
             {
-                // Check if Penumbra plugin is loaded
-                var penumbraPlugin = pluginInterface.GetPluginInterface("Penumbra");
-                penumbraAvailable = penumbraPlugin != null;
+                // Check if Penumbra plugin is loaded via IPC
+                var penumbraEnabled = pluginInterface.GetIpcSubscriber<bool>("Penumbra.GetEnabledState");
+                penumbraAvailable = penumbraEnabled?.InvokeFunc() ?? false;
                 
                 if (penumbraAvailable)
                 {

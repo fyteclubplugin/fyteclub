@@ -2,7 +2,7 @@
   "Author": "FyteClub Team",
   "Name": "FyteClub",
   "Punchline": "You do not talk about FyteClub",
-  "Description": "Automatically share and synchronize character mods with nearby players. Connects to your self-hosted FyteClub server for seamless mod distribution.",
+  "Description": "[SOURCE DISTRIBUTION] Automatically share and synchronize character mods with nearby players. Requires local compilation with Dalamud SDK.",
   "InternalName": "FyteClub",
   "AssemblyVersion": "1.0.0.0",
   "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
