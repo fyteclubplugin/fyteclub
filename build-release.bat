@@ -20,13 +20,15 @@ echo Creating Plugin package...
 mkdir "release\FyteClub-Plugin"
 copy "plugin\bin\Release\FyteClub.dll" "release\FyteClub-Plugin\"
 copy "plugin\FyteClub.json" "release\FyteClub-Plugin\"
+xcopy "client" "release\FyteClub-Plugin\client\" /E /I /Q
 echo # FyteClub Plugin > "release\FyteClub-Plugin\README.txt"
 echo. >> "release\FyteClub-Plugin\README.txt"
 echo 1. Install XIVLauncher and Dalamud >> "release\FyteClub-Plugin\README.txt"
 echo 2. Copy FyteClub.dll to: %%APPDATA%%\XIVLauncher\installedPlugins\FyteClub\latest\ >> "release\FyteClub-Plugin\README.txt"
 echo 3. Copy FyteClub.json to same folder >> "release\FyteClub-Plugin\README.txt"
-echo 4. Restart FFXIV >> "release\FyteClub-Plugin\README.txt"
-echo 5. Use /fyteclub command in-game >> "release\FyteClub-Plugin\README.txt"
+echo 4. Install Node.js and run: cd client ^&^& npm install >> "release\FyteClub-Plugin\README.txt"
+echo 5. Restart FFXIV >> "release\FyteClub-Plugin\README.txt"
+echo 6. Use /fyteclub command in-game >> "release\FyteClub-Plugin\README.txt"
 
 :: Create Server Package
 echo Creating Server package...
@@ -58,6 +60,7 @@ echo ✅ Releases built successfully!
 echo.
 echo 📦 Plugin Package: release\FyteClub-Plugin.zip
 echo    - FyteClub.dll + FyteClub.json
+echo    - Client daemon for server communication
 echo    - Installation instructions
 echo.
 echo 📦 Server Package: release\FyteClub-Server.zip
