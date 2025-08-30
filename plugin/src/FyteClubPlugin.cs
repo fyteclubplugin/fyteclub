@@ -15,7 +15,6 @@ using System.Linq;
 using System.Text;
 using Dalamud.Plugin.Ipc;
 using Dalamud.Interface.Windowing;
-using ImGuiNET;
 using System.IO;
 
 
@@ -776,65 +775,19 @@ namespace FyteClub
             {
                 // Connection status
                 var clientStatus = plugin.isConnected ? "Connected" : "Disconnected";
-                ImGui.TextColored(plugin.isConnected ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Daemon: {clientStatus}");
-                ImGui.TextColored(plugin.isPenumbraAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Penumbra: {(plugin.isPenumbraAvailable ? "Available" : "Unavailable")}");
-                ImGui.Text($"Tracking: {plugin.playerMods.Count} players");
-                ImGui.Separator();
+                Dalamud.Interface.ImGuiHelpers.SafeTextColoredWrapped(plugin.isConnected ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Daemon: {clientStatus}");
+                Dalamud.Interface.ImGuiHelpers.SafeTextColoredWrapped(plugin.isPenumbraAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Penumbra: {(plugin.isPenumbraAvailable ? "Available" : "Unavailable")}");
+                Dalamud.Interface.ImGuiHelpers.SafeTextWrapped($"Tracking: {plugin.playerMods.Count} players");
                 
                 // Add new server section
-                ImGui.Text("Add New Server:");
-                ImGui.InputText("Address (IP:Port)", ref newServerAddress, 100);
-                ImGui.InputText("Name", ref newServerName, 50);
-                
-                if (ImGui.Button("Add Server"))
-                {
-                    if (!string.IsNullOrEmpty(newServerAddress))
-                    {
-                        var serverName = string.IsNullOrEmpty(newServerName) ? newServerAddress : newServerName;
-                        plugin.AddServer(newServerAddress, serverName);
-                        newServerAddress = "";
-                        newServerName = "";
-                    }
-                }
-                
-                ImGui.Separator();
+                Dalamud.Interface.ImGuiHelpers.SafeTextWrapped("Add New Server:");
                 
                 // Server list
-                ImGui.Text("Servers:");
-                for (int i = 0; i < plugin.servers.Count; i++)
-                {
-                    var server = plugin.servers[i];
-                    
-                    // Checkbox for enable/disable
-                    bool enabled = server.Enabled;
-                    if (ImGui.Checkbox($"##server_{i}", ref enabled))
-                    {
-                        server.Enabled = enabled;
-                        plugin.UpdateServerStatus(server);
-                    }
-                    
-                    ImGui.SameLine();
-                    
-                    // Connection status indicator
-                    var statusColor = server.Connected ? new Vector4(0, 1, 0, 1) : new Vector4(0.5f, 0.5f, 0.5f, 1);
-                    ImGui.TextColored(statusColor, "●");
-                    ImGui.SameLine();
-                    
-                    // Server name and address
-                    ImGui.Text($"{server.Name} ({server.Address})");
-                    
-                    // Remove button
-                    ImGui.SameLine();
-                    if (ImGui.Button($"Remove##server_{i}"))
-                    {
-                        plugin.RemoveServer(i);
-                        break;
-                    }
-                }
+                Dalamud.Interface.ImGuiHelpers.SafeTextWrapped("Servers:");
                 
                 if (plugin.servers.Count == 0)
                 {
-                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No servers added yet.");
+                    Dalamud.Interface.ImGuiHelpers.SafeTextColoredWrapped(new Vector4(0.7f, 0.7f, 0.7f, 1), "No servers added yet.");
                 }
             }
         }
