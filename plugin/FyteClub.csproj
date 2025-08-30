@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net7.0-windows</TargetFramework>
+    <TargetFramework>net9.0-windows</TargetFramework>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
@@ -41,8 +41,5 @@
     </Reference>
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Include="src\FyteClubPlugin.cs" />
-    <Compile Include="src\FyteClubSecurity.cs" />
-  </ItemGroup>
+
 </Project>

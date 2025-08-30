@@ -56,6 +56,12 @@ config/secrets.json
 dist/
 build/
 out/
+*.zip
+
+# Plugin build artifacts
+plugin/bin/
+plugin/obj/
+plugin/*.zip
 
 # Package managers
 node_modules/
