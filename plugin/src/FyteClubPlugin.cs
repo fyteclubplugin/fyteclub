@@ -20,6 +20,7 @@ using System.IO;
 using Dalamud.Bindings.ImGui;
 using System.Threading;
 using Dalamud.Configuration;
+using System.Security.Cryptography;
 
 
 namespace FyteClub
@@ -772,9 +773,11 @@ namespace FyteClub
             {
                 var config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
                 servers = config.Servers ?? new List<ServerInfo>();
+                PluginLog.Information($"FyteClub: Loaded {servers.Count} servers from config");
             }
-            catch
+            catch (Exception ex)
             {
+                PluginLog.Warning($"FyteClub: Failed to load config - {SanitizeLogInput(ex.Message)}");
                 servers = new List<ServerInfo>();
             }
         }
@@ -786,8 +789,12 @@ namespace FyteClub
                 var config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
                 config.Servers = servers;
                 PluginInterface.SavePluginConfig(config);
+                PluginLog.Information($"FyteClub: Saved {servers.Count} servers to config");
             }
-            catch { /* Ignore save errors */ }
+            catch (Exception ex)
+            {
+                PluginLog.Error($"FyteClub: Failed to save config - {SanitizeLogInput(ex.Message)}");
+            }
         }
         
         public class ConfigWindow : Window
@@ -1030,7 +1037,13 @@ namespace FyteClub
         
         public async Task AddServer(string address, string name)
         {
-            if (string.IsNullOrWhiteSpace(address)) return;
+            if (string.IsNullOrWhiteSpace(address))
+            {
+                PluginLog.Warning("FyteClub: Cannot add server - address is empty");
+                return;
+            }
+            
+            PluginLog.Information($"FyteClub: Adding server {SanitizeLogInput(name)} at {SanitizeLogInput(address)}");
             
             var server = new ServerInfo
             {
@@ -1041,6 +1054,7 @@ namespace FyteClub
             };
             
             servers.Add(server);
+            PluginLog.Information($"FyteClub: Server added to list, total servers: {servers.Count}");
             SaveServerConfig();
             
             // Tell daemon to add this server
@@ -1050,6 +1064,8 @@ namespace FyteClub
                 name = server.Name,
                 enabled = true
             });
+            
+            PluginLog.Information($"FyteClub: Sent add_server message to daemon");
         }
         
         public async Task RemoveServer(int index)
@@ -1109,6 +1125,14 @@ namespace FyteClub
             if (string.IsNullOrEmpty(input)) return "";
             return input.Replace("\r", "").Replace("\n", "").Replace("\t", " ");
         }
+        
+        private static string HashPassword(string password)
+        {
+            if (string.IsNullOrEmpty(password)) return "";
+            using var sha256 = SHA256.Create();
+            var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(password + "fyteclub_salt"));
+            return Convert.ToBase64String(bytes);
+        }
     }
 
     public class PlayerInfo
@@ -1140,6 +1164,13 @@ namespace FyteClub
         public string Name { get; set; } = "";
         public bool Enabled { get; set; } = true;
         public bool Connected { get; set; } = false;
+        public string? PasswordHash { get; set; } = null;
+        public string? Username { get; set; } = null;
+        public bool AutoConnect { get; set; } = false;
+        public bool IsFavorite { get; set; } = false;
+        public DateTime? LastConnected { get; set; } = null;
+        public int ConnectionAttempts { get; set; } = 0;
+        public Dictionary<string, object> ServerSettings { get; set; } = new();
     }
     
     [System.Serializable]
@@ -1147,5 +1178,17 @@ namespace FyteClub
     {
         public int Version { get; set; } = 0;
         public List<ServerInfo> Servers { get; set; } = new();
+        public bool AutoStartDaemon { get; set; } = true;
+        public bool EnableProximitySync { get; set; } = true;
+        public float ProximityRange { get; set; } = 50f;
+        public bool ShowConnectionNotifications { get; set; } = true;
+        public bool EnableEncryption { get; set; } = true;
+        public string? LastActiveServer { get; set; } = null;
+        public Dictionary<string, object> PluginSettings { get; set; } = new();
+        
+        public void Save()
+        {
+            // This method is called by Dalamud when saving
+        }
     }
 }

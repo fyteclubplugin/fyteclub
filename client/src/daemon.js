@@ -252,7 +252,7 @@ class FyteClubDaemon {
         const { address } = message;
         
         try {
-            await this.serverManager.removeServer(address);
+            await this.serverManager.removeServerByAddress(address);
             console.log(`➖ Removed server: ${sanitizeForLog(address)}`);
         } catch (error) {
             console.error(`Failed to remove server:`, error.message);

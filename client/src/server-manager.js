@@ -215,6 +215,76 @@ class ServerManager {
         }
     }
 
+    // Add server from plugin (doesn't validate connectivity)
+    async addServer(address, name, enabled = true) {
+        const [ip, port] = address.split(':');
+        const serverInfo = {
+            ip: ip || address,
+            port: parseInt(port) || 3000
+        };
+        
+        const serverId = this.saveServer(name, serverInfo);
+        
+        // If enabled, try to connect
+        if (enabled) {
+            try {
+                await this.switchToServer(serverId);
+            } catch (error) {
+                console.log(`⚠️  Server added but connection failed: ${error.message}`);
+                // Server is still saved, just not connected
+            }
+        }
+        
+        return serverId;
+    }
+    
+    // Toggle server enabled/disabled
+    async toggleServer(address, enabled) {
+        const server = this.findServerByAddress(address);
+        if (!server) {
+            console.log(`⚠️  Server not found: ${sanitizeForLog(address)}`);
+            return;
+        }
+        
+        if (enabled) {
+            try {
+                await this.switchToServer(server.id);
+            } catch (error) {
+                console.log(`⚠️  Failed to connect to server: ${error.message}`);
+            }
+        } else {
+            // Disconnect if currently connected to this server
+            if (server.id === this.currentServerId) {
+                this.connection.disconnect();
+                this.currentServerId = null;
+            }
+        }
+    }
+    
+    // Find server by address
+    findServerByAddress(address) {
+        const [ip, port] = address.split(':');
+        const targetIp = ip || address;
+        const targetPort = parseInt(port) || 3000;
+        
+        for (const server of this.savedServers.values()) {
+            if (server.ip === targetIp && server.port === targetPort) {
+                return server;
+            }
+        }
+        return null;
+    }
+    
+    // Remove server by address
+    async removeServerByAddress(address) {
+        const server = this.findServerByAddress(address);
+        if (server) {
+            this.removeServer(server.id);
+        } else {
+            console.log(`⚠️  Server not found: ${sanitizeForLog(address)}`);
+        }
+    }
+
     // Disconnect and cleanup
     disconnect() {
         this.connection.disconnect();
