@@ -129,27 +129,19 @@ fyteclub/
 
 ## Installation
 
-### **📦 Download Pre-Built Releases**
-Get the latest version from: **https://github.com/fyteclubplugin/fyteclub/releases**
-
 ### **🔧 Plugin Installation**
 
-**Method 1: Custom Repository (Easiest)**
+**Custom Repository (Recommended)**
 1. **XIVLauncher Settings** → **Dalamud** → **Plugin Repositories**
 2. **Add URL**: `https://raw.githubusercontent.com/fyteclubplugin/fyteclub/main/plugin/repo.json`
 3. **In-game**: `/xlplugins` → Search **"FyteClub"** → **Install**
 
-**Method 2: Manual Installation**
-1. **Download**: FyteClub-Plugin-v1.0.0.zip from releases
-2. **Extract to**: `%APPDATA%\XIVLauncher\installedPlugins\FyteClub\`
-3. **Restart FFXIV**
-
 ### **💻 Client & Server Setup**
 1. **Install Node.js**: https://nodejs.org
-2. **Download packages** from releases:
-   - **FyteClub-Client-v1.0.0.zip** (for connecting to servers)
-   - **FyteClub-Server-v1.0.0.zip** (for hosting)
-3. **Extract and install**: `npm install && npm install -g .`
+2. **Clone repository**: `git clone https://github.com/fyteclubplugin/fyteclub.git`
+3. **Install dependencies**:
+   - Server: `cd fyteclub/server && npm install`
+   - Client: `cd fyteclub/client && npm install`
 
 ## Getting Started
 
@@ -168,18 +160,11 @@ npm install -g fyteclub-client
 fyteclub connect 192.168.1.100:3000
 ```
 
-**Install Plugin (Choose One):**
-
-**Option A: Custom Repository (Recommended)**
+**Install Plugin:**
 1. Open **XIVLauncher Settings** → **Dalamud** → **Plugin Repositories**
 2. Add URL: `https://raw.githubusercontent.com/fyteclubplugin/fyteclub/main/plugin/repo.json`
 3. Open **Dalamud Plugin Installer** in-game (`/xlplugins`)
 4. Search **"FyteClub"** → **Install**
-
-**Option B: Manual Installation**
-1. Download **FyteClub-Plugin-v1.0.0.zip** from [releases](https://github.com/chrisdemartin/fyteclub/releases)
-2. Extract to: `%APPDATA%\XIVLauncher\installedPlugins\FyteClub\`
-3. Restart FFXIV
 
 ### For Developers
 1. Clone this repository

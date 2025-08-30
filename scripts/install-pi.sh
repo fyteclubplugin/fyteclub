@@ -66,11 +66,11 @@ echo "📁 Creating installation directory: $INSTALL_DIR"
 sudo mkdir -p "$INSTALL_DIR"
 sudo chown fyteclub:fyteclub "$INSTALL_DIR"
 
-# Download and extract FyteClub
+# Clone FyteClub repository
 echo "⬇️  Downloading FyteClub..."
 cd /tmp
-wget -O fyteclub-pi.tar.gz "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/fyteclub-pi.tar.gz"
-sudo -u fyteclub tar -xzf fyteclub-pi.tar.gz -C "$INSTALL_DIR" --strip-components=1
+git clone https://github.com/fyteclubplugin/fyteclub.git
+sudo -u fyteclub cp -r fyteclub/* "$INSTALL_DIR/"
 
 # Install dependencies
 echo "📦 Installing dependencies..."
