@@ -33,4 +33,9 @@ set IP=%IP: =%
 echo ✅ FyteClub PC server ready!
 echo 🔗 Your server address: %IP%:3000
 echo 🖥️ Desktop shortcut created
-echo 🚀 Double-click shortcut to start server
+echo.
+echo 🚀 Starting server now...
+echo 📋 Share this address with friends: %IP%:3000
+echo 🛑 Press Ctrl+C to stop server
+echo.
+node bin/fyteclub-server.js --name "%COMPUTERNAME% Server"
