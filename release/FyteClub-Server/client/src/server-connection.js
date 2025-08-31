@@ -1,4 +1,5 @@
 const config = require('./config');
+const http = require('http');
 
 class ServerConnection {
     constructor() {
@@ -6,7 +7,38 @@ class ServerConnection {
         this.connectionStatus = 'disconnected';
     }
 
-
+    // HTTP request helper
+    async httpRequest(url, options = {}) {
+        return new Promise((resolve, reject) => {
+            const req = http.request(url, options, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    try {
+                        const result = {
+                            ok: res.statusCode >= 200 && res.statusCode < 300,
+                            status: res.statusCode,
+                            json: () => Promise.resolve(JSON.parse(data))
+                        };
+                        resolve(result);
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            });
+            
+            req.on('error', reject);
+            req.setTimeout(5000, () => {
+                req.destroy();
+                reject(new Error('Request timeout'));
+            });
+            
+            if (options.body) {
+                req.write(options.body);
+            }
+            req.end();
+        });
+    }
 
     // Connect to server using direct IP
     async connectToServer(ip, port) {
@@ -14,8 +46,8 @@ class ServerConnection {
             console.log(`🔌 Connecting to ${ip}:${port}...`);
             
             // Test connection
-            const serverUrl = `http://${ip}:${port}`;
-            const response = await fetch(`${serverUrl}/api/status`);
+            const serverUrl = `http://${ip}:${port}/api/status`;
+            const response = await this.httpRequest(serverUrl);
             
             if (!response.ok) {
                 throw new Error(`Server returned ${response.status}`);
@@ -95,7 +127,7 @@ class ServerConnection {
             options.body = JSON.stringify(data);
         }
 
-        const response = await fetch(`${this.currentServer.url}${endpoint}`, options);
+        const response = await this.httpRequest(`${this.currentServer.url}${endpoint}`, options);
 
         if (!response.ok) {
             throw new Error(`Server request failed: ${response.status}`);

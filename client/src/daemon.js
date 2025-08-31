@@ -72,9 +72,11 @@ class FyteClubDaemon {
                 try {
                     if (this.log) this.log(`📥 HTTP request received: ${JSON.stringify(req.body).substring(0, 100)}...`);
                     await this.processMessage(req.body);
+                    if (this.log) this.log(`✅ Successfully processed message: ${req.body.type}`);
                     res.json({ success: true });
                 } catch (error) {
                     if (this.log) this.log(`❌ Error processing plugin message: ${error.message}`);
+                    if (this.log) this.log(`❌ Error stack: ${error.stack}`);
                     res.status(500).json({ error: error.message });
                 }
             });
@@ -130,27 +132,37 @@ class FyteClubDaemon {
     }
 
     async processMessage(message) {
-        switch (message.type) {
-            case 'nearby_players':
-                await this.handleNearbyPlayers(message);
-                break;
-            case 'request_player_mods':
-                await this.handleModRequest(message);
-                break;
-            case 'mod_update':
-                await this.handleModUpdate(message);
-                break;
-            case 'add_server':
-                await this.handleAddServer(message);
-                break;
-            case 'remove_server':
-                await this.handleRemoveServer(message);
-                break;
-            case 'toggle_server':
-                await this.handleToggleServer(message);
-                break;
-            default:
-                if (this.log) this.log(`Unknown message type: ${message.type}`);
+        try {
+            if (this.log) this.log(`🔄 Processing message type: ${message.type}`);
+            
+            switch (message.type) {
+                case 'nearby_players':
+                    await this.handleNearbyPlayers(message);
+                    break;
+                case 'request_player_mods':
+                    await this.handleModRequest(message);
+                    break;
+                case 'mod_update':
+                    await this.handleModUpdate(message);
+                    break;
+                case 'add_server':
+                    await this.handleAddServer(message);
+                    break;
+                case 'remove_server':
+                    await this.handleRemoveServer(message);
+                    break;
+                case 'toggle_server':
+                    await this.handleToggleServer(message);
+                    break;
+                default:
+                    if (this.log) this.log(`Unknown message type: ${message.type}`);
+            }
+            
+            if (this.log) this.log(`✅ Completed processing: ${message.type}`);
+        } catch (error) {
+            if (this.log) this.log(`❌ Error in processMessage: ${error.message}`);
+            if (this.log) this.log(`❌ Error stack: ${error.stack}`);
+            throw error;
         }
     }
 
@@ -307,7 +319,6 @@ class FyteClubDaemon {
         
         try {
             if (this.log) this.log(`➕ Plugin requested add server: ${sanitizeForLog(name)} (${sanitizeForLog(address)}) enabled=${enabled}`);
-            if (this.log) this.log(`🔍 Connection status before add: destroyed=${this.pluginConnection?.destroyed}, writable=${this.pluginConnection?.writable}`);
             
             const serverId = await this.serverManager.addServer(address, name, enabled);
             if (this.log) this.log(`📝 Server manager returned ID: ${serverId}`);
@@ -315,16 +326,16 @@ class FyteClubDaemon {
             if (enabled) {
                 if (this.log) this.log(`🔗 Adding ${serverId} to enabled servers`);
                 this.enabledServers.add(serverId);
-                if (this.log) this.log(`🔌 Attempting to connect to server ${serverId}`);
-                await this.connectToServer(serverId);
-                if (this.log) this.log(`✅ Connect attempt completed for ${serverId}`);
+                if (this.log) this.log(`🔌 Server will be connected by reconnect timer`);
+                
+                // Don't try to connect immediately - let reconnect timer handle it
+                // This prevents daemon crashes during server add
             }
             
-            if (this.log) this.log(`🔍 Connection status after add: destroyed=${this.pluginConnection?.destroyed}, writable=${this.pluginConnection?.writable}`);
             if (this.log) this.log(`✅ Added server: ${sanitizeForLog(name)} (${sanitizeForLog(address)})`);
         } catch (error) {
             if (this.log) this.log(`❌ Failed to add server: ${error.message}`);
-            if (this.log) this.log(`🔍 Connection status after error: destroyed=${this.pluginConnection?.destroyed}, writable=${this.pluginConnection?.writable}`);
+            // Don't let server add failures crash the daemon
         }
     }
     
@@ -373,24 +384,30 @@ class FyteClubDaemon {
     }
 
     async connectToServer(serverId) {
+        const server = this.serverManager.savedServers.get(serverId);
+        if (!server) {
+            if (this.log) this.log(`⚠️  Server ${serverId} not found`);
+            return;
+        }
+        
+        // Don't reconnect if already connected
+        if (this.connectedServers.has(serverId)) {
+            return;
+        }
+        
+        if (this.log) this.log(`🔄 Connecting to server ${server.name} (${server.ip}:${server.port})...`);
+        
         try {
-            const server = this.serverManager.savedServers.get(serverId);
-            if (!server) {
-                if (this.log) this.log(`⚠️  Server ${serverId} not found`);
-                return;
-            }
-            
-            // Don't reconnect if already connected
-            if (this.connectedServers.has(serverId)) {
-                return;
-            }
-            
-            if (this.log) this.log(`🔄 Connecting to server ${server.name} (${server.ip}:${server.port})...`);
-            
             const ServerConnection = require('./server-connection');
             const connection = new ServerConnection();
             
-            await connection.connectToServer(server.ip, server.port);
+            // Add timeout to prevent hanging
+            const connectPromise = connection.connectToServer(server.ip, server.port);
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Connection timeout')), 5000)
+            );
+            
+            await Promise.race([connectPromise, timeoutPromise]);
             this.connectedServers.set(serverId, connection);
             
             // Update server status
@@ -400,19 +417,15 @@ class FyteClubDaemon {
             
             if (this.log) this.log(`✅ Connected to server ${server.name}`);
             
-            // Send status update to plugin
-            await this.sendStatusToPlugin();
-            
         } catch (error) {
             // Server offline - daemon stays running as lifeline for reconnection
-            if (this.log) this.log(`⚠️  Server ${serverId} offline, will retry later`);
+            if (this.log) this.log(`⚠️  Server ${serverId} offline: ${error.message}`);
             
             // Update server status but keep daemon running
-            const server = this.serverManager.savedServers.get(serverId);
-            if (server) {
-                server.connected = false;
-                this.serverManager.saveToDisk();
-            }
+            server.connected = false;
+            this.serverManager.saveToDisk();
+            
+            // Don't re-throw - let daemon continue
         }
     }
     

@@ -845,7 +845,8 @@ namespace FyteClub
                 var clientStatus = plugin.isConnected ? "Connected" : "Disconnected";
                 ImGui.TextColored(plugin.isConnected ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Daemon: {clientStatus}");
                 ImGui.TextColored(plugin.isPenumbraAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), $"Penumbra: {(plugin.isPenumbraAvailable ? "Available" : "Unavailable")}");
-                ImGui.Text($"Syncing with: {plugin.playerMods.Count} players");
+                var syncingCount = plugin.playerMods.Values.Count(p => p.Mods.Count > 0 || !string.IsNullOrEmpty(p.GlamourerDesign));
+                ImGui.Text($"Syncing with: {syncingCount} of {plugin.playerMods.Count} nearby");
                 ImGui.Separator();
                 
                 // Add new server section
