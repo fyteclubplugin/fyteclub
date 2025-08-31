@@ -22,7 +22,19 @@ class FyteClubDaemon {
     }
 
     async start() {
-        console.log('🥊 Starting FyteClub daemon...');
+        // Setup logging
+        const fs = require('fs');
+        const path = require('path');
+        const logFile = path.join(process.cwd(), 'fyteclub-daemon.log');
+        
+        const log = (message) => {
+            const timestamp = new Date().toISOString();
+            const logMessage = `${timestamp} ${message}\n`;
+            console.log(message);
+            fs.appendFileSync(logFile, logMessage);
+        };
+        
+        log('🥊 Starting FyteClub daemon...');
         
         try {
             // Auto-connect to last server
@@ -34,11 +46,14 @@ class FyteClubDaemon {
             this.isRunning = true;
             this.startFFXIVMonitor();
             this.startReconnectTimer();
-            console.log('✅ FyteClub daemon ready');
-            console.log('🔌 Waiting for FFXIV plugin to connect...');
+            log('✅ FyteClub daemon ready');
+            log('🔌 Waiting for FFXIV plugin to connect...');
+            
+            // Store log function for use in other methods
+            this.log = log;
             
         } catch (error) {
-            console.error('❌ Failed to start daemon:', error.message);
+            log(`❌ Failed to start daemon: ${error.message}`);
             throw error;
         }
     }
@@ -269,10 +284,11 @@ class FyteClubDaemon {
         const { address, name, enabled } = message;
         
         try {
+            if (this.log) this.log(`➕ Plugin requested add server: ${sanitizeForLog(name)} (${sanitizeForLog(address)}) enabled=${enabled}`);
             await this.serverManager.addServer(address, name, enabled);
-            console.log(`➕ Added server: ${sanitizeForLog(name)} (${sanitizeForLog(address)})`);
+            if (this.log) this.log(`✅ Added server: ${sanitizeForLog(name)} (${sanitizeForLog(address)})`);
         } catch (error) {
-            console.error(`Failed to add server:`, error.message);
+            if (this.log) this.log(`❌ Failed to add server: ${error.message}`);
         }
     }
     
