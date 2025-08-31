@@ -195,30 +195,7 @@ class ServerManager {
     // Load saved servers from disk
     loadSavedServers() {
         const saved = config.get('savedServers', {});
-        const servers = new Map(Object.entries(saved));
-        
-        // Add localhost:3000 as default if no servers exist
-        if (servers.size === 0) {
-            const defaultId = this.generateServerId();
-            const defaultServer = {
-                id: defaultId,
-                name: 'Local Server',
-                ip: 'localhost',
-                port: 3000,
-                addedAt: Date.now(),
-                lastConnected: null,
-                favorite: false,
-                enabled: true,
-                connected: false
-            };
-            servers.set(defaultId, defaultServer);
-            
-            // Save to disk
-            const serversObj = Object.fromEntries(servers);
-            config.set('savedServers', serversObj);
-        }
-        
-        return servers;
+        return new Map(Object.entries(saved));
     }
 
     // Save servers to disk
@@ -250,15 +227,8 @@ class ServerManager {
         
         const serverId = this.saveServer(name, serverInfo);
         
-        // If enabled, try to connect
-        if (enabled) {
-            try {
-                await this.switchToServer(serverId);
-            } catch (error) {
-                console.log(`⚠️  Server added but connection failed: ${error.message}`);
-                // Server is still saved, just not connected
-            }
-        }
+        // Don't auto-connect from daemon - let daemon handle it
+        console.log(`💾 Server ${name} added with ID ${serverId}`);
         
         return serverId;
     }

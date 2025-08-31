@@ -9,7 +9,7 @@ using Dalamud.Interface.Windowing;
 
 using System;
 using System.Collections.Generic;
-using System.IO.Pipes;
+using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Numerics;
@@ -37,8 +37,9 @@ namespace FyteClub
         private IPluginLog PluginLog { get; init; }
         private IFramework Framework { get; init; }
         
-        private NamedPipeClientStream? pipeClient;
+        private HttpClient? httpClient;
         private bool isConnected = false;
+        private readonly string daemonUrl = "http://localhost:8080";
         private readonly CancellationTokenSource cancellationTokenSource = new();
         private Dictionary<string, PlayerModInfo> playerMods = new();
         private DateTime lastScan = DateTime.MinValue;
@@ -110,8 +111,8 @@ namespace FyteClub
             SetupCustomizePlusIPC();
             SetupSimpleHeelsIPC();
             SetupHonorificIPC();
+            httpClient = new HttpClient();
             _ = Task.Run(() => ConnectToClient(cancellationTokenSource.Token));
-            _ = Task.Run(() => ClientMessageLoop(cancellationTokenSource.Token));
             
             // Use framework update for player detection (main thread)
             Framework.Update += OnFrameworkUpdate;
@@ -219,11 +220,14 @@ namespace FyteClub
                         connectionAttempts++;
                         PluginLog.Information($"FyteClub: Connection attempt #{connectionAttempts}");
                         
-                        pipeClient = new NamedPipeClientStream(".", "fyteclub-daemon", PipeDirection.InOut);
-                        await pipeClient.ConnectAsync(3000, cancellationToken); // Shorter timeout
-                        isConnected = true;
-                        connectionAttempts = 0; // Reset on success
-                        PluginLog.Information("FyteClub: Connected to client daemon");
+                        // Test HTTP connection
+                        var response = await httpClient!.GetAsync($"{daemonUrl}/api/servers", cancellationToken);
+                        if (response.IsSuccessStatusCode)
+                        {
+                            isConnected = true;
+                            connectionAttempts = 0;
+                            PluginLog.Information("FyteClub: Connected to HTTP daemon");
+                        }
                     }
                     
                     await Task.Delay(1000, cancellationToken);
@@ -240,7 +244,7 @@ namespace FyteClub
                         {
                             PluginLog.Information("FyteClub: Daemon started successfully, waiting for startup...");
                             hasTriedAutoStart = true;
-                            await Task.Delay(5000, cancellationToken); // Give daemon more time to start
+                            await Task.Delay(5000, cancellationToken);
                             continue;
                         }
                         else
@@ -251,10 +255,8 @@ namespace FyteClub
                     }
                     
                     isConnected = false;
-                    pipeClient?.Dispose();
-                    pipeClient = null;
                     
-                    // Progressive backoff: shorter delays initially, longer later
+                    // Progressive backoff
                     int delay = connectionAttempts <= 5 ? 2000 : 10000;
                     await Task.Delay(delay, cancellationToken);
                 }
@@ -271,7 +273,7 @@ namespace FyteClub
                     return;
                 }
                 
-                if (isConnected && pipeClient != null && ClientState.IsLoggedIn)
+                if (isConnected && httpClient != null && ClientState.IsLoggedIn)
                 {
                     var players = GetNearbyPlayers();
                     
@@ -402,72 +404,44 @@ namespace FyteClub
 
         private async Task SendToClient(object data)
         {
-            if (!isConnected || pipeClient == null) return;
+            PluginLog.Information($"FyteClub: Attempting to send HTTP message to daemon");
+            
+            if (!isConnected || httpClient == null)
+            {
+                PluginLog.Error($"FyteClub: Cannot send - not connected to daemon");
+                throw new InvalidOperationException("Not connected to daemon");
+            }
             
             try
             {
                 var json = JsonSerializer.Serialize(data);
-                var bytes = System.Text.Encoding.UTF8.GetBytes(json + "\n");
-                await pipeClient.WriteAsync(bytes, 0, bytes.Length);
-                await pipeClient.FlushAsync();
-            }
-            catch (Exception ex)
-            {
-                PluginLog.Error($"IPC error: {SanitizeLogInput(ex.Message)}");
-                isConnected = false;
-                // Try to reconnect
-                _ = Task.Run(() => ConnectToClient(cancellationTokenSource.Token));
-            }
-        }
-        
-        private async Task ReadFromClient()
-        {
-            if (!isConnected || pipeClient == null) return;
-            
-            try
-            {
-                var buffer = new byte[4096];
-                var messageBuffer = new StringBuilder();
+                PluginLog.Information($"FyteClub: Sending HTTP POST: {json.Substring(0, Math.Min(100, json.Length))}...");
                 
-                while (isConnected && pipeClient != null)
+                var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+                var response = await httpClient.PostAsync($"{daemonUrl}/api/plugin", content);
+                
+                if (response.IsSuccessStatusCode)
                 {
-                    var bytesRead = await pipeClient.ReadAsync(buffer, 0, buffer.Length);
-                    
-                    if (bytesRead > 0)
-                    {
-                        var data = System.Text.Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                        messageBuffer.Append(data);
-                        
-                        // Prevent buffer overflow
-                        if (messageBuffer.Length > 1048576) // 1MB limit
-                        {
-                            messageBuffer.Clear();
-                            continue;
-                        }
-                        
-                        var messages = messageBuffer.ToString().Split('\n');
-                        messageBuffer.Clear().Append(messages[^1]);
-                        
-                        for (int i = 0; i < messages.Length - 1; i++)
-                        {
-                            if (!string.IsNullOrWhiteSpace(messages[i]))
-                            {
-                                await HandleClientMessage(messages[i]);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        break;
-                    }
+                    PluginLog.Information($"FyteClub: HTTP message sent successfully");
+                }
+                else
+                {
+                    PluginLog.Error($"FyteClub: HTTP request failed: {response.StatusCode}");
+                    throw new InvalidOperationException($"HTTP request failed: {response.StatusCode}");
                 }
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"Client read error: {SanitizeLogInput(ex.Message)}");
+                PluginLog.Error($"FyteClub: HTTP request failed - {SanitizeLogInput(ex.Message)}");
                 isConnected = false;
+                
+                // Try to reconnect
+                _ = Task.Run(() => ConnectToClient(cancellationTokenSource.Token));
+                throw;
             }
         }
+        
+        // HTTP mode - no need to read from client, daemon will push via HTTP
 
         private void SetupPenumbraIPC()
         {
@@ -781,26 +755,7 @@ namespace FyteClub
             }
         }
         
-        private async Task ClientMessageLoop(CancellationToken cancellationToken)
-        {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                try
-                {
-                    if (isConnected && pipeClient != null)
-                    {
-                        await ReadFromClient();
-                    }
-                    
-                    await Task.Delay(100, cancellationToken); // Check for messages every 100ms
-                }
-                catch (Exception ex)
-                {
-                    PluginLog.Error($"Client message loop error: {SanitizeLogInput(ex.Message)}");
-                    await Task.Delay(5000, cancellationToken); // Back off on errors
-                }
-            }
-        }
+        // HTTP mode - no message loop needed
         
         private void OnCommand(string command, string args)
         {
@@ -1104,6 +1059,13 @@ namespace FyteClub
                 return;
             }
             
+            // FAIL HARD if daemon is not connected
+            if (!isConnected || httpClient == null)
+            {
+                PluginLog.Error($"FyteClub: Cannot add server - daemon not connected! This defeats the purpose of mod sharing.");
+                return;
+            }
+            
             PluginLog.Information($"FyteClub: Adding server {SanitizeLogInput(name)} at {SanitizeLogInput(address)}");
             
             var server = new ServerInfo
@@ -1115,19 +1077,28 @@ namespace FyteClub
                 PasswordHash = string.IsNullOrWhiteSpace(password) ? null : HashPassword(password)
             };
             
-            servers.Add(server);
-            PluginLog.Information($"FyteClub: Server added to list, total servers: {servers.Count}");
-            SaveServerConfig();
-            
-            // Tell daemon to add this server
-            await SendToClient(new {
-                type = "add_server",
-                address = server.Address,
-                name = server.Name,
-                enabled = true
-            });
-            
-            PluginLog.Information($"FyteClub: Sent add_server message to daemon");
+            // Send to daemon FIRST - only add locally if daemon accepts it
+            try
+            {
+                await SendToClient(new {
+                    type = "add_server",
+                    address = server.Address,
+                    name = server.Name,
+                    enabled = true
+                });
+                
+                PluginLog.Information($"FyteClub: Sent add_server message to daemon");
+                
+                // Only add locally after daemon confirms
+                servers.Add(server);
+                PluginLog.Information($"FyteClub: Server added to list, total servers: {servers.Count}");
+                SaveServerConfig();
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Error($"FyteClub: Failed to add server to daemon - {SanitizeLogInput(ex.Message)}");
+                // Do NOT add locally if daemon fails
+            }
         }
         
         public async Task RemoveServer(int index)
@@ -1178,7 +1149,7 @@ namespace FyteClub
             Framework.Update -= OnFrameworkUpdate;
             CommandManager.RemoveHandler(CommandName);
             cancellationTokenSource.Cancel();
-            pipeClient?.Dispose();
+            httpClient?.Dispose();
             cancellationTokenSource.Dispose();
             FyteClubSecurity.Dispose();
         }

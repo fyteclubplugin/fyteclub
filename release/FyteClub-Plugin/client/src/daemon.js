@@ -1,4 +1,4 @@
-const net = require('net');
+const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const ServerManager = require('./server-manager');
@@ -14,10 +14,9 @@ function sanitizeForLog(input) {
 class FyteClubDaemon {
     constructor() {
         this.serverManager = new ServerManager();
-        this.pipeServer = null;
-        this.pluginConnection = null;
+        this.httpServer = null;
         this.isRunning = false;
-        this.pipeName = '\\\\.\\pipe\\fyteclub-daemon';
+        this.httpPort = 8080;
         this.ffxivMonitor = null;
         this.connectedServers = new Map(); // serverId -> connection
         this.enabledServers = new Set(); // serverIds that should be connected
@@ -42,8 +41,8 @@ class FyteClubDaemon {
             // Auto-connect to last server
             await this.serverManager.autoConnect();
             
-            // Start named pipe server for plugin
-            await this.startPipeServer();
+            // Start HTTP server for plugin
+            await this.startHttpServer();
             
             this.isRunning = true;
             this.startFFXIVMonitor();
@@ -63,52 +62,47 @@ class FyteClubDaemon {
         }
     }
 
-    async startPipeServer() {
+    async startHttpServer() {
         return new Promise((resolve, reject) => {
-            this.pipeServer = net.createServer((connection) => {
-                console.log('🔌 FFXIV plugin connected!');
-                if (this.log) this.log('🔌 FFXIV plugin connected!');
-                this.pluginConnection = connection;
-                
-                // Sync current server list to plugin
-                this.syncServersToPlugin();
-                
-                connection.on('data', (data) => {
-                    if (this.log) this.log(`📨 Received data from plugin: ${data.toString().substring(0, 100)}...`);
-                    this.handlePluginMessage(data.toString());
-                });
-                
-                connection.on('end', () => {
-                    console.log('🔌 FFXIV plugin disconnected');
-                    if (this.log) this.log('🔌 FFXIV plugin disconnected');
-                    this.pluginConnection = null;
-                    
-                    // If plugin disconnects, start shutdown timer
-                    setTimeout(() => {
-                        if (!this.pluginConnection) {
-                            console.log('🕐 Plugin disconnected for 30s, shutting down...');
-                            this.stop();
-                            process.exit(0);
-                        }
-                    }, 30000); // 30 second grace period
-                });
-                
-                connection.on('error', (error) => {
-                    console.error('Plugin connection error:', error.message);
-                });
+            const app = express();
+            app.use(express.json());
+            
+            // Handle plugin messages
+            app.post('/api/plugin', async (req, res) => {
+                try {
+                    if (this.log) this.log(`📥 HTTP request received: ${JSON.stringify(req.body).substring(0, 100)}...`);
+                    await this.processMessage(req.body);
+                    res.json({ success: true });
+                } catch (error) {
+                    if (this.log) this.log(`❌ Error processing plugin message: ${error.message}`);
+                    res.status(500).json({ error: error.message });
+                }
             });
             
-            this.pipeServer.listen(this.pipeName, () => {
-                console.log(`📡 Named pipe server listening on: ${this.pipeName}`);
-                if (this.log) this.log(`📡 Named pipe server listening on: ${this.pipeName}`);
+            // Get server list
+            app.get('/api/servers', (req, res) => {
+                const servers = Array.from(this.serverManager.savedServers.values());
+                const serverList = servers.map(server => ({
+                    address: `${server.ip}:${server.port}`,
+                    name: server.name,
+                    enabled: server.enabled,
+                    connected: this.connectedServers.has(server.id)
+                }));
+                res.json({ servers: serverList });
+            });
+            
+            this.httpServer = app.listen(this.httpPort, 'localhost', () => {
+                console.log(`📡 HTTP server listening on: http://localhost:${this.httpPort}`);
+                if (this.log) this.log(`📡 HTTP server listening on: http://localhost:${this.httpPort}`);
                 resolve();
             });
             
-            this.pipeServer.on('error', (error) => {
+            this.httpServer.on('error', (error) => {
                 if (error.code === 'EADDRINUSE') {
-                    console.log('⚠️  Pipe already in use, attempting to connect to existing daemon...');
+                    console.log('⚠️  Port already in use, attempting to connect to existing daemon...');
                     reject(new Error('Daemon already running'));
                 } else {
+                    if (this.log) this.log(`❌ HTTP server error: ${error.message}, code: ${error.code}`);
                     reject(error);
                 }
             });
@@ -117,16 +111,21 @@ class FyteClubDaemon {
 
     async handlePluginMessage(data) {
         try {
+            if (this.log) this.log(`📥 Raw data received: ${data.length} bytes`);
             const lines = data.trim().split('\n');
+            if (this.log) this.log(`📥 Split into ${lines.length} lines`);
             
             for (const line of lines) {
                 if (!line.trim()) continue;
                 
+                if (this.log) this.log(`📥 Processing line: ${line.substring(0, 50)}...`);
                 const message = JSON.parse(line);
+                if (this.log) this.log(`📥 Parsed message type: ${message.type}`);
                 await this.processMessage(message);
+                if (this.log) this.log(`✅ Processed message type: ${message.type}`);
             }
         } catch (error) {
-            console.error('Error handling plugin message:', error.message);
+            if (this.log) this.log(`❌ Error handling plugin message: ${error.message}`);
         }
     }
 
@@ -245,35 +244,15 @@ class FyteClubDaemon {
         await Promise.allSettled(syncPromises);
     }
 
+    // HTTP mode - plugin polls for updates, no push needed
     async sendToPlugin(message) {
-        if (!this.pluginConnection) {
-            console.log('⚠️  No plugin connection, cannot send message');
-            return;
-        }
-        
-        try {
-            const data = JSON.stringify(message) + '\n';
-            this.pluginConnection.write(data);
-        } catch (error) {
-            console.error('Failed to send to plugin:', error.message);
-        }
+        if (this.log) this.log(`📤 Message queued for plugin: ${message.type}`);
+        // In HTTP mode, plugin will poll /api/servers for updates
     }
     
+    // HTTP mode - plugin polls for server list
     async syncServersToPlugin() {
-        const servers = Array.from(this.serverManager.savedServers.values());
-        const serverList = servers.map(server => ({
-            address: `${server.ip}:${server.port}`,
-            name: server.name,
-            enabled: server.enabled,
-            connected: this.connectedServers.has(server.id)
-        }));
-        
-        await this.sendToPlugin({
-            type: 'server_list_sync',
-            servers: serverList
-        });
-        
-        if (this.log) this.log(`🔄 Synced ${servers.length} servers to plugin`);
+        if (this.log) this.log(`🔄 Server list available for plugin polling`);
     }
     
     startFFXIVMonitor() {
@@ -314,17 +293,24 @@ class FyteClubDaemon {
         
         try {
             if (this.log) this.log(`➕ Plugin requested add server: ${sanitizeForLog(name)} (${sanitizeForLog(address)}) enabled=${enabled}`);
+            if (this.log) this.log(`🔍 Connection status before add: destroyed=${this.pluginConnection?.destroyed}, writable=${this.pluginConnection?.writable}`);
             
             const serverId = await this.serverManager.addServer(address, name, enabled);
+            if (this.log) this.log(`📝 Server manager returned ID: ${serverId}`);
             
             if (enabled) {
+                if (this.log) this.log(`🔗 Adding ${serverId} to enabled servers`);
                 this.enabledServers.add(serverId);
+                if (this.log) this.log(`🔌 Attempting to connect to server ${serverId}`);
                 await this.connectToServer(serverId);
+                if (this.log) this.log(`✅ Connect attempt completed for ${serverId}`);
             }
             
+            if (this.log) this.log(`🔍 Connection status after add: destroyed=${this.pluginConnection?.destroyed}, writable=${this.pluginConnection?.writable}`);
             if (this.log) this.log(`✅ Added server: ${sanitizeForLog(name)} (${sanitizeForLog(address)})`);
         } catch (error) {
             if (this.log) this.log(`❌ Failed to add server: ${error.message}`);
+            if (this.log) this.log(`🔍 Connection status after error: destroyed=${this.pluginConnection?.destroyed}, writable=${this.pluginConnection?.writable}`);
         }
     }
     
@@ -455,12 +441,8 @@ class FyteClubDaemon {
         
         this.isRunning = false;
         
-        if (this.pluginConnection) {
-            this.pluginConnection.end();
-        }
-        
-        if (this.pipeServer) {
-            this.pipeServer.close();
+        if (this.httpServer) {
+            this.httpServer.close();
         }
         
         // Disconnect from all servers
