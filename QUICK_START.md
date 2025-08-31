@@ -40,7 +40,7 @@ npm install -g fyteclub-client
 ### **Step 2: Install FFXIV Plugin**
 1. Open XIVLauncher
 2. Go to Settings → Dalamud Settings → Experimental
-3. Add plugin repository: `https://github.com/chrisdemartin/fyteclub`
+3. Add plugin repository: `https://raw.githubusercontent.com/fyteclubplugin/fyteclub/main/plugin/repo.json`
 4. Install "FyteClub" plugin
 
 ### **Step 3: Connect to Friend's Server**
