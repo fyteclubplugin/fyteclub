@@ -146,6 +146,13 @@ class FyteClubServer {
             console.log(`🌐 Connect with: ${publicIP}:${this.port}`);
             console.log('');
             console.log('Tell your friends to connect to this address!');
+            console.log('');
+            console.log('💡 Commands:');
+            console.log('   Ctrl+C - Stop server');
+            console.log('   Close window - Stop server');
+            console.log('');
+            console.log('📊 Server running... Keep this window open!');
+            console.log('');
 
         } catch (error) {
             console.error('❌ Failed to start server:', error.message);

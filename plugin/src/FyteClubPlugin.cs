@@ -118,12 +118,18 @@ namespace FyteClub
             {
                 // Try to find fyteclub executable
                 var pluginDir = PluginInterface.AssemblyLocation.Directory?.FullName ?? "";
+                var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                
                 var possiblePaths = new[]
                 {
+                    // Local development paths
+                    Path.Combine(userProfile, "git", "fyteclub", "client", "bin", "fyteclub.js"),
                     Path.Combine(pluginDir, "client", "bin", "fyteclub.js"), // Bundled with plugin
+                    
+                    // npm global install paths
                     "fyteclub", // If in PATH
-                    @"C:\Users\" + Environment.UserName + @"\AppData\Roaming\npm\fyteclub.cmd", // npm global install
-                    @"C:\Program Files\nodejs\fyteclub.cmd", // Alternative npm location
+                    Path.Combine(userProfile, "AppData", "Roaming", "npm", "fyteclub.cmd"),
+                    @"C:\Program Files\nodejs\fyteclub.cmd",
                     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "npm", "fyteclub.cmd")
                 };
                 
@@ -131,12 +137,19 @@ namespace FyteClub
                 {
                     try
                     {
+                        // Check if file exists first
+                        if (path.EndsWith(".js") && !File.Exists(path))
+                        {
+                            continue;
+                        }
+                        
                         var startInfo = new System.Diagnostics.ProcessStartInfo();
                         
                         if (path.EndsWith(".js"))
                         {
                             startInfo.FileName = "node";
                             startInfo.Arguments = $"\"{path}\" start";
+                            startInfo.WorkingDirectory = Path.GetDirectoryName(path);
                         }
                         else
                         {
@@ -149,11 +162,23 @@ namespace FyteClub
                         startInfo.RedirectStandardOutput = true;
                         startInfo.RedirectStandardError = true;
                         
+                        PluginLog.Information($"FyteClub: Trying to start daemon with: {startInfo.FileName} {startInfo.Arguments}");
+                        
                         var process = System.Diagnostics.Process.Start(startInfo);
                         if (process != null)
                         {
-                            PluginLog.Information($"FyteClub: Started daemon using {path}");
-                            return true;
+                            // Wait a moment to see if process starts successfully
+                            await Task.Delay(1000);
+                            
+                            if (!process.HasExited)
+                            {
+                                PluginLog.Information($"FyteClub: Successfully started daemon using {path}");
+                                return true;
+                            }
+                            else
+                            {
+                                PluginLog.Warning($"FyteClub: Daemon process exited immediately with code {process.ExitCode}");
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -163,6 +188,7 @@ namespace FyteClub
                     }
                 }
                 
+                PluginLog.Warning("FyteClub: Could not auto-start daemon. Please run 'fyteclub start' manually.");
                 return false;
             }
             catch (Exception ex)
@@ -175,6 +201,7 @@ namespace FyteClub
         private async Task ConnectToClient(CancellationToken cancellationToken)
         {
             bool hasTriedAutoStart = false;
+            int connectionAttempts = 0;
             
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -182,9 +209,13 @@ namespace FyteClub
                 {
                     if (!isConnected)
                     {
+                        connectionAttempts++;
+                        PluginLog.Information($"FyteClub: Connection attempt #{connectionAttempts}");
+                        
                         pipeClient = new NamedPipeClientStream(".", "fyteclub_pipe", PipeDirection.InOut);
-                        await pipeClient.ConnectAsync(5000, cancellationToken);
+                        await pipeClient.ConnectAsync(3000, cancellationToken); // Shorter timeout
                         isConnected = true;
+                        connectionAttempts = 0; // Reset on success
                         PluginLog.Information("FyteClub: Connected to client daemon");
                     }
                     
@@ -192,17 +223,17 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    PluginLog.Warning($"FyteClub: Client daemon not found - {SanitizeLogInput(ex.Message)}");
+                    PluginLog.Warning($"FyteClub: Connection attempt #{connectionAttempts} failed - {SanitizeLogInput(ex.Message)}");
                     
-                    // Try to auto-start daemon once
-                    if (!hasTriedAutoStart)
+                    // Try to auto-start daemon on first few attempts
+                    if (!hasTriedAutoStart && connectionAttempts <= 3)
                     {
                         PluginLog.Information("FyteClub: Attempting to start daemon automatically...");
                         if (await TryStartDaemon())
                         {
-                            PluginLog.Information("FyteClub: Daemon started successfully");
+                            PluginLog.Information("FyteClub: Daemon started successfully, waiting for startup...");
                             hasTriedAutoStart = true;
-                            await Task.Delay(3000, cancellationToken); // Give daemon time to start
+                            await Task.Delay(5000, cancellationToken); // Give daemon more time to start
                             continue;
                         }
                         else
@@ -215,7 +246,10 @@ namespace FyteClub
                     isConnected = false;
                     pipeClient?.Dispose();
                     pipeClient = null;
-                    await Task.Delay(10000, cancellationToken); // Wait longer between retries
+                    
+                    // Progressive backoff: shorter delays initially, longer later
+                    int delay = connectionAttempts <= 5 ? 2000 : 10000;
+                    await Task.Delay(delay, cancellationToken);
                 }
             }
         }

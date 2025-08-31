@@ -32,7 +32,7 @@ class FyteClubCLI {
         const serverName = args[1] || serverAddress;
 
         try {
-            await this.serverManager.connectToServer(serverAddress, serverName);
+            await this.serverManager.addServer(serverAddress, serverName, true);
             console.log(`✅ Connected to ${serverName}`);
         } catch (error) {
             console.error('❌ Connection failed:', error.message);
