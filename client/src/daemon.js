@@ -262,18 +262,27 @@ class FyteClubDaemon {
     
     startFFXIVMonitor() {
         const { exec } = require('child_process');
+        let consecutiveFailures = 0;
         
         this.ffxivMonitor = setInterval(() => {
             exec('tasklist /FI "IMAGENAME eq ffxiv_dx11.exe" /FO CSV', (error, stdout) => {
                 if (error || !stdout.includes('ffxiv_dx11.exe')) {
-                    console.log('🎮 FFXIV not running, shutting down daemon...');
-                    this.stop();
-                    process.exit(0);
+                    consecutiveFailures++;
+                    if (this.log) this.log(`⚠️  FFXIV check failed (${consecutiveFailures}/3)`);
+                    
+                    // Only shutdown after 3 consecutive failures (30 seconds)
+                    if (consecutiveFailures >= 3) {
+                        if (this.log) this.log('🎮 FFXIV not running, shutting down daemon...');
+                        this.stop();
+                        process.exit(0);
+                    }
+                } else {
+                    consecutiveFailures = 0; // Reset on success
                 }
             });
         }, 10000); // Check every 10 seconds
         
-        console.log('👁️  Monitoring FFXIV process...');
+        if (this.log) this.log('👁️  Monitoring FFXIV process (3-strike rule)...');
     }
     
     startReconnectTimer() {

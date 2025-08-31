@@ -250,28 +250,40 @@ namespace FyteClub
                 {
                     PluginLog.Warning($"FyteClub: Connection attempt #{connectionAttempts} failed - {SanitizeLogInput(ex.Message)}");
                     
-                    // Try to auto-start daemon on first few attempts
-                    if (!hasTriedAutoStart && connectionAttempts <= 3)
+                    // Try to auto-start daemon on first 5 attempts
+                    if (!hasTriedAutoStart && connectionAttempts <= 5)
                     {
-                        PluginLog.Information("FyteClub: Attempting to start daemon automatically...");
+                        PluginLog.Information($"FyteClub: Attempting to start daemon automatically (attempt {connectionAttempts})...");
                         if (await TryStartDaemon())
                         {
                             PluginLog.Information("FyteClub: Daemon started successfully, waiting for startup...");
                             hasTriedAutoStart = true;
-                            await Task.Delay(5000, cancellationToken);
+                            await Task.Delay(3000, cancellationToken);
                             continue;
                         }
                         else
                         {
-                            PluginLog.Warning("FyteClub: Failed to auto-start daemon. Please run 'fyteclub start' manually.");
-                            hasTriedAutoStart = true;
+                            PluginLog.Warning($"FyteClub: Auto-start attempt {connectionAttempts} failed, will retry...");
                         }
+                    }
+                    else if (connectionAttempts > 5 && !hasTriedAutoStart)
+                    {
+                        hasTriedAutoStart = true;
+                        PluginLog.Warning("FyteClub: Failed to auto-start daemon after 5 attempts. Please run 'fyteclub start' manually.");
                     }
                     
                     isConnected = false;
                     
-                    // Progressive backoff
+                    // Progressive backoff with periodic restart attempts
                     int delay = connectionAttempts <= 5 ? 2000 : 10000;
+                    
+                    // Every 30 seconds when disconnected, try to restart daemon
+                    if (connectionAttempts % 15 == 0) // Every 15 attempts at 2s = 30s
+                    {
+                        PluginLog.Information("FyteClub: Periodic daemon restart attempt...");
+                        await TryStartDaemon();
+                    }
+                    
                     await Task.Delay(delay, cancellationToken);
                 }
             }
