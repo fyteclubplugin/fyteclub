@@ -1,8 +1,8 @@
-# FyteClub v1.0.1 Release Notes
+# FyteClub v1.1.1 Release Notes
 
-## 🎆 Complete Release - Ready for Production
+## 🎆 Production Release - Enhanced Stability
 
-FyteClub is now feature-complete with enterprise-grade security, comprehensive server management, and seamless FFXIV integration.
+FyteClub v1.1.1 brings critical stability improvements and enhanced daemon management for seamless FFXIV integration.
 
 ### ✅ What's Included
 
@@ -33,13 +33,13 @@ FyteClub is now feature-complete with enterprise-grade security, comprehensive s
 - Raspberry Pi: `build-pi.sh` ($35-60 hardware, 24/7 uptime)
 - AWS Cloud: `build-aws.bat` (Free tier, enterprise uptime)
 
-### 🔧 Key Fixes in v1.0.1
+### 🔧 Key Improvements in v1.1.1
 
-- **Fixed build-pc.bat**: Server now starts properly after npm install
-- **Variable capture**: Fixed Task.Run lambda issues in plugin
-- **Duplicate prevention**: Case-insensitive server address checking
-- **Auto-reconnection**: 2-minute timer handles temporary outages
-- **Password security**: SHA256+salt hashing prevents plain text storage
+- **Enhanced daemon startup**: Improved auto-start reliability with multiple fallback paths
+- **Better error handling**: More robust connection management and error reporting
+- **Stability fixes**: Resolved daemon exit issues and connection timeouts
+- **Plugin integration**: Enhanced IPC communication reliability
+- **Version consistency**: Synchronized all component versions to 1.1.1
 
 ### 🚀 Installation
 
