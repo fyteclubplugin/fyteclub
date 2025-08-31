@@ -1,6 +1,6 @@
 # FyteClub
 
-A secure, self-hosted mod-sharing system for Final Fantasy XIV with end-to-end encryption and enterprise-grade security. Share character mods automatically with nearby players while protecting creator rights and user privacy.
+A DECENTRALIZED secure, self-hosted mod-sharing system for Final Fantasy XIV with end-to-end encryption and security. Share character mods automatically with nearby players while protecting user's work and user privacy.
 
 ## Table of Contents
 
