@@ -48,9 +48,9 @@ echo [?] Start server now? (Y/N)
 set /p choice="Enter choice: "
 if /i "%choice%"=="Y" (
     echo Starting server...
-    cd server
-    call start-fyteclub.bat
+    start "FyteClub Server" /d "%CD%\server" start-fyteclub.bat
+    echo [OK] Server started in new window
 ) else (
     echo [INFO] To start later: Double-click desktop shortcut or run server\start-fyteclub.bat
-    pause
 )
+pause

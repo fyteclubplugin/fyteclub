@@ -35,6 +35,7 @@ namespace FyteClub
         private IObjectTable ObjectTable { get; init; }
         private IClientState ClientState { get; init; }
         private IPluginLog PluginLog { get; init; }
+        private IFramework Framework { get; init; }
         
         private NamedPipeClientStream? pipeClient;
         private bool isConnected = false;
@@ -81,13 +82,15 @@ namespace FyteClub
             ICommandManager commandManager,
             IObjectTable objectTable,
             IClientState clientState,
-            IPluginLog pluginLog)
+            IPluginLog pluginLog,
+            IFramework framework)
         {
             PluginInterface = pluginInterface;
             CommandManager = commandManager;
             ObjectTable = objectTable;
             ClientState = clientState;
             PluginLog = pluginLog;
+            Framework = framework;
 
             this.windowSystem = new WindowSystem("FyteClub");
             this.configWindow = new ConfigWindow(this);
@@ -108,8 +111,10 @@ namespace FyteClub
             SetupSimpleHeelsIPC();
             SetupHonorificIPC();
             _ = Task.Run(() => ConnectToClient(cancellationTokenSource.Token));
-            _ = Task.Run(() => PlayerDetectionLoop(cancellationTokenSource.Token));
             _ = Task.Run(() => ClientMessageLoop(cancellationTokenSource.Token));
+            
+            // Use framework update for player detection (main thread)
+            Framework.Update += OnFrameworkUpdate;
         }
         
         private async Task<bool> TryStartDaemon()
@@ -214,7 +219,7 @@ namespace FyteClub
                         connectionAttempts++;
                         PluginLog.Information($"FyteClub: Connection attempt #{connectionAttempts}");
                         
-                        pipeClient = new NamedPipeClientStream(".", "fyteclub_pipe", PipeDirection.InOut);
+                        pipeClient = new NamedPipeClientStream(".", "fyteclub-daemon", PipeDirection.InOut);
                         await pipeClient.ConnectAsync(3000, cancellationToken); // Shorter timeout
                         isConnected = true;
                         connectionAttempts = 0; // Reset on success
@@ -256,26 +261,24 @@ namespace FyteClub
             }
         }
 
-        private async Task PlayerDetectionLoop(CancellationToken cancellationToken)
+        private void OnFrameworkUpdate(IFramework framework)
         {
-            while (!cancellationToken.IsCancellationRequested)
+            try
             {
-                try
+                // Rate limiting - don't scan too frequently
+                if (DateTime.Now - lastScan < TimeSpan.FromMilliseconds(SCAN_INTERVAL_MS))
                 {
-                    // Rate limiting - don't scan too frequently
-                    if (DateTime.Now - lastScan < TimeSpan.FromMilliseconds(SCAN_INTERVAL_MS))
-                    {
-                        await Task.Delay(1000, cancellationToken);
-                        continue;
-                    }
+                    return;
+                }
+                
+                if (isConnected && pipeClient != null && ClientState.IsLoggedIn)
+                {
+                    var players = GetNearbyPlayers();
                     
-                    if (isConnected && pipeClient != null && ClientState.IsLoggedIn)
+                    // Only send updates if players changed
+                    if (HasPlayersChanged(players))
                     {
-                        var players = GetNearbyPlayers();
-                        
-                        // Only send updates if players changed
-                        if (HasPlayersChanged(players))
-                        {
+                        _ = Task.Run(async () => {
                             await SendToClient(new { 
                                 type = "nearby_players", 
                                 players,
@@ -284,18 +287,15 @@ namespace FyteClub
                             });
                             
                             await UpdatePlayerCache(players);
-                        }
-                        
-                        lastScan = DateTime.Now;
+                        });
                     }
                     
-                    await Task.Delay(1000, cancellationToken);
+                    lastScan = DateTime.Now;
                 }
-                catch (Exception ex)
-                {
-                    PluginLog.Error($"Player detection error: {SanitizeLogInput(ex.Message)}");
-                    await Task.Delay(5000, cancellationToken); // Back off on errors
-                }
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Error($"Player detection error: {SanitizeLogInput(ex.Message)}");
             }
         }
         
@@ -1175,6 +1175,7 @@ namespace FyteClub
             this.windowSystem.RemoveAllWindows();
             PluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;
             PluginInterface.UiBuilder.OpenConfigUi -= () => this.configWindow.Toggle();
+            Framework.Update -= OnFrameworkUpdate;
             CommandManager.RemoveHandler(CommandName);
             cancellationTokenSource.Cancel();
             pipeClient?.Dispose();

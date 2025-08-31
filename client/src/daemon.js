@@ -17,7 +17,7 @@ class FyteClubDaemon {
         this.pipeServer = null;
         this.pluginConnection = null;
         this.isRunning = false;
-        this.pipeName = '\\\\.\\pipe\\fyteclub_pipe';
+        this.pipeName = '\\\\.\\pipe\\fyteclub-daemon';
         this.ffxivMonitor = null;
         this.connectedServers = new Map(); // serverId -> connection
         this.enabledServers = new Set(); // serverIds that should be connected
@@ -66,15 +66,21 @@ class FyteClubDaemon {
     async startPipeServer() {
         return new Promise((resolve, reject) => {
             this.pipeServer = net.createServer((connection) => {
-                console.log('🔌 FFXIV plugin connected');
+                console.log('🔌 FFXIV plugin connected!');
+                if (this.log) this.log('🔌 FFXIV plugin connected!');
                 this.pluginConnection = connection;
                 
+                // Sync current server list to plugin
+                this.syncServersToPlugin();
+                
                 connection.on('data', (data) => {
+                    if (this.log) this.log(`📨 Received data from plugin: ${data.toString().substring(0, 100)}...`);
                     this.handlePluginMessage(data.toString());
                 });
                 
                 connection.on('end', () => {
                     console.log('🔌 FFXIV plugin disconnected');
+                    if (this.log) this.log('🔌 FFXIV plugin disconnected');
                     this.pluginConnection = null;
                     
                     // If plugin disconnects, start shutdown timer
@@ -93,7 +99,8 @@ class FyteClubDaemon {
             });
             
             this.pipeServer.listen(this.pipeName, () => {
-                console.log('📡 Named pipe server listening');
+                console.log(`📡 Named pipe server listening on: ${this.pipeName}`);
+                if (this.log) this.log(`📡 Named pipe server listening on: ${this.pipeName}`);
                 resolve();
             });
             
@@ -252,6 +259,23 @@ class FyteClubDaemon {
         }
     }
     
+    async syncServersToPlugin() {
+        const servers = Array.from(this.serverManager.savedServers.values());
+        const serverList = servers.map(server => ({
+            address: `${server.ip}:${server.port}`,
+            name: server.name,
+            enabled: server.enabled,
+            connected: this.connectedServers.has(server.id)
+        }));
+        
+        await this.sendToPlugin({
+            type: 'server_list_sync',
+            servers: serverList
+        });
+        
+        if (this.log) this.log(`🔄 Synced ${servers.length} servers to plugin`);
+    }
+    
     startFFXIVMonitor() {
         const { exec } = require('child_process');
         
@@ -280,9 +304,9 @@ class FyteClubDaemon {
                     }
                 }
             }
-        }, 120000); // 2 minutes
+        }, 30000); // 30 seconds - faster reconnect attempts
         
-        if (this.log) this.log('🔄 Auto-reconnect timer started (2 min intervals)');
+        if (this.log) this.log('🔄 Auto-reconnect timer started (30s intervals)');
     }
 
     async handleAddServer(message) {
@@ -358,7 +382,6 @@ class FyteClubDaemon {
             
             // Don't reconnect if already connected
             if (this.connectedServers.has(serverId)) {
-                if (this.log) this.log(`ℹ️  Already connected to server ${serverId}`);
                 return;
             }
             
@@ -378,9 +401,10 @@ class FyteClubDaemon {
             if (this.log) this.log(`✅ Connected to server ${server.name}`);
             
         } catch (error) {
-            if (this.log) this.log(`❌ Failed to connect to server ${serverId}: ${error.message}`);
+            // Server offline - daemon stays running as lifeline for reconnection
+            if (this.log) this.log(`⚠️  Server ${serverId} offline, will retry later`);
             
-            // Update server status
+            // Update server status but keep daemon running
             const server = this.serverManager.savedServers.get(serverId);
             if (server) {
                 server.connected = false;
