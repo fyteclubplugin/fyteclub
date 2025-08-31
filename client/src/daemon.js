@@ -255,6 +255,11 @@ class FyteClubDaemon {
         if (this.log) this.log(`🔄 Server list available for plugin polling`);
     }
     
+    async sendStatusToPlugin() {
+        // Plugin will get updated status via /api/servers endpoint
+        if (this.log) this.log(`📊 Server status updated for plugin`);
+    }
+    
     startFFXIVMonitor() {
         const { exec } = require('child_process');
         
@@ -386,6 +391,9 @@ class FyteClubDaemon {
             
             if (this.log) this.log(`✅ Connected to server ${server.name}`);
             
+            // Send status update to plugin
+            await this.sendStatusToPlugin();
+            
         } catch (error) {
             // Server offline - daemon stays running as lifeline for reconnection
             if (this.log) this.log(`⚠️  Server ${serverId} offline, will retry later`);
@@ -415,6 +423,9 @@ class FyteClubDaemon {
             }
             
             if (this.log) this.log(`👋 Disconnected from server ${serverId}`);
+            
+            // Send status update to plugin
+            await this.sendStatusToPlugin();
             
         } catch (error) {
             if (this.log) this.log(`Error disconnecting from server ${serverId}: ${error.message}`);

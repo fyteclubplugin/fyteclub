@@ -21,6 +21,7 @@ using Dalamud.Bindings.ImGui;
 using System.Threading;
 using Dalamud.Configuration;
 using System.Security.Cryptography;
+using System.Diagnostics;
 
 
 namespace FyteClub
@@ -128,8 +129,9 @@ namespace FyteClub
                 
                 var possiblePaths = new[]
                 {
-                    // Plugin bundled daemon (FIRST PRIORITY)
-                    Path.Combine(pluginDir, "client", "bin", "fyteclub.js"),
+                    // Plugin bundled executable (FIRST PRIORITY)
+                    Path.Combine(pluginDir, "fyteclub.exe"),
+                    Path.Combine(pluginDir, "client", "dist", "fyteclub.exe"),
                     
                     // npm global install paths
                     "fyteclub", // If in PATH
@@ -146,7 +148,7 @@ namespace FyteClub
                     try
                     {
                         // Check if file exists first
-                        if (path.EndsWith(".js") && !File.Exists(path))
+                        if ((path.EndsWith(".js") || path.EndsWith(".exe")) && !File.Exists(path))
                         {
                             continue;
                         }
@@ -227,10 +229,22 @@ namespace FyteClub
                             isConnected = true;
                             connectionAttempts = 0;
                             PluginLog.Information("FyteClub: Connected to HTTP daemon");
+                            
+                            // Update server statuses
+                            _ = Task.Run(() => UpdateServerStatuses());
                         }
                     }
                     
-                    await Task.Delay(1000, cancellationToken);
+                    // Update server statuses every 5 seconds when connected
+                    if (isConnected && connectionAttempts == 0)
+                    {
+                        _ = Task.Run(() => UpdateServerStatuses());
+                        await Task.Delay(5000, cancellationToken);
+                    }
+                    else
+                    {
+                        await Task.Delay(1000, cancellationToken);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1158,6 +1172,42 @@ namespace FyteClub
         {
             if (string.IsNullOrEmpty(input)) return "";
             return input.Replace("\r", "").Replace("\n", "").Replace("\t", " ");
+        }
+        
+        private async Task UpdateServerStatuses()
+        {
+            try
+            {
+                if (!isConnected || httpClient == null) return;
+                
+                var response = await httpClient.GetAsync($"{daemonUrl}/api/servers");
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    var data = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
+                    
+                    if (data?.ContainsKey("servers") == true && data["servers"] is JsonElement serversElement)
+                    {
+                        var daemonServers = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(serversElement.GetRawText());
+                        
+                        // Update connection status for each server
+                        foreach (var server in servers)
+                        {
+                            var daemonServer = daemonServers?.FirstOrDefault(s => 
+                                s.ContainsKey("address") && s["address"]?.ToString() == server.Address);
+                            
+                            if (daemonServer?.ContainsKey("connected") == true)
+                            {
+                                server.Connected = daemonServer["connected"].ToString() == "True";
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Warning($"FyteClub: Failed to update server statuses - {SanitizeLogInput(ex.Message)}");
+            }
         }
         
         private static string HashPassword(string password)
