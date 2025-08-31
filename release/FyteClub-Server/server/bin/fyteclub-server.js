@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const FyteClubServer = require('../src/server');
+const FyteClubServer = require('../src/server.js');
 const path = require('path');
 
 // Parse command line arguments
