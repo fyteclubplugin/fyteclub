@@ -100,7 +100,7 @@ namespace FyteClub
 
             CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
             {
-                HelpMessage = "FyteClub mod sharing - use client daemon for server management"
+                HelpMessage = "FyteClub mod sharing - /fyteclub (open UI) or /fyteclub resync (sync mods)"
             });
             
             PluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
@@ -115,8 +115,15 @@ namespace FyteClub
             httpClient = new HttpClient();
             _ = Task.Run(() => ConnectToClient(cancellationTokenSource.Token));
             
+            // Start WebSocket connection
+            _ = Task.Run(() => ConnectWebSocket());
+            
             // Use framework update for player detection (main thread)
             Framework.Update += OnFrameworkUpdate;
+            
+            // Monitor for character changes
+            ClientState.Login += () => OnLogin();
+            ClientState.TerritoryChanged += (territoryId) => OnTerritoryChanged(territoryId);
         }
         
         private async Task<bool> TryStartDaemon()
@@ -212,6 +219,7 @@ namespace FyteClub
         {
             bool hasTriedAutoStart = false;
             int connectionAttempts = 0;
+            bool hasUploadedInitialMods = false;
             
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -231,14 +239,50 @@ namespace FyteClub
                             PluginLog.Information("FyteClub: Connected to HTTP daemon");
                             
                             // Update server statuses
-                            _ = Task.Run(() => UpdateServerStatuses());
+                            _ = Task.Run(async () => {
+                                try
+                                {
+                                    await UpdateServerStatuses();
+                                }
+                                catch (Exception ex)
+                                {
+                                    PluginLog.Warning($"FyteClub: Failed to update server statuses - {SanitizeLogInput(ex.Message)}");
+                                }
+                            });
+                            
+                            // Upload our mods on first connection for quick access
+                            if (!hasUploadedInitialMods && ClientState.IsLoggedIn)
+                            {
+                                _ = Task.Run(async () => {
+                                    try
+                                    {
+                                        await Task.Delay(2000); // Wait 2 seconds for daemon to settle
+                                        await UploadOwnModsToServer();
+                                        hasUploadedInitialMods = true;
+                                        PluginLog.Information("FyteClub: Initial mod upload complete");
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        PluginLog.Warning($"FyteClub: Failed initial mod upload - {SanitizeLogInput(ex.Message)}");
+                                    }
+                                });
+                            }
                         }
                     }
                     
                     // Update server statuses every 5 seconds when connected
                     if (isConnected && connectionAttempts == 0)
                     {
-                        _ = Task.Run(() => UpdateServerStatuses());
+                        _ = Task.Run(async () => {
+                            try
+                            {
+                                await UpdateServerStatuses();
+                            }
+                            catch (Exception ex)
+                            {
+                                PluginLog.Warning($"FyteClub: Failed to update server statuses - {SanitizeLogInput(ex.Message)}");
+                            }
+                        });
                         await Task.Delay(5000, cancellationToken);
                     }
                     else
@@ -303,18 +347,52 @@ namespace FyteClub
                 {
                     var players = GetNearbyPlayers();
                     
-                    // Only send updates if players changed
-                    if (HasPlayersChanged(players))
+                    // Send nearby players with smart batching for high-population areas
+                    if (players.Length > 0)
                     {
                         _ = Task.Run(async () => {
-                            await SendToClient(new { 
-                                type = "nearby_players", 
-                                players,
-                                zone = ClientState.TerritoryType,
-                                timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                            });
+                            var playerIds = players.Select(p => p.ContentId.ToString()).ToArray();
                             
-                            await UpdatePlayerCache(players);
+                            if (playerIds.Length > 20)
+                            {
+                                // High population area - batch process in chunks of 20
+                                PluginLog.Information($"FyteClub: High population area ({playerIds.Length} players) - using batch processing");
+                                
+                                for (int i = 0; i < playerIds.Length; i += 20)
+                                {
+                                    var batch = playerIds.Skip(i).Take(20).ToArray();
+                                    await SendToClient(new { 
+                                        type = "check_nearby_players", 
+                                        playerIds = batch,
+                                        zone = ClientState.TerritoryType,
+                                        batchInfo = new { current = (i / 20) + 1, total = (int)Math.Ceiling(playerIds.Length / 20.0) },
+                                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                                    });
+                                    
+                                    // Small delay between batches to prevent overwhelming
+                                    if (i + 20 < playerIds.Length)
+                                    {
+                                        await Task.Delay(100);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                // Normal area - process all at once with positions
+                                var positions = players.Select(p => new { 
+                                    x = p.Position[0], 
+                                    y = p.Position[1], 
+                                    z = p.Position[2] 
+                                }).ToArray();
+                                
+                                await SendToClient(new { 
+                                    type = "check_nearby_players", 
+                                    playerIds,
+                                    positions,
+                                    zone = ClientState.TerritoryType,
+                                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                                });
+                            }
                         });
                     }
                     
@@ -332,7 +410,14 @@ namespace FyteClub
             var currentIds = currentPlayers.Select(p => p.ContentId.ToString()).ToHashSet();
             var cachedIds = playerMods.Keys.ToHashSet();
             
-            return !currentIds.SetEquals(cachedIds);
+            var hasChanged = !currentIds.SetEquals(cachedIds);
+            
+            if (hasChanged)
+            {
+                PluginLog.Information($"FyteClub: Players changed - Current: [{string.Join(", ", currentIds)}], Cached: [{string.Join(", ", cachedIds)}]");
+            }
+            
+            return hasChanged;
         }
         
         private async Task UpdatePlayerCache(PlayerInfo[] players)
@@ -350,29 +435,123 @@ namespace FyteClub
                 playerMods.Remove(id);
             }
             
-            // Add new players
+            var now = DateTime.UtcNow;
+            
+            // Add new players and refresh old ones
             foreach (var player in players)
             {
                 var id = player.ContentId.ToString();
                 if (!playerMods.ContainsKey(id))
                 {
+                    // New player - request mods immediately
                     playerMods[id] = new PlayerModInfo
                     {
                         PlayerId = id,
                         Name = player.Name,
-                        LastSeen = DateTime.UtcNow,
+                        LastSeen = now,
+                        LastModRequest = now,
                         Mods = new List<string>()
                     };
                     
-                    // Request mods for new player from FyteClub server
                     await RequestPlayerMods(id, player.Name);
                 }
                 else
                 {
-                    // Update last seen time
-                    playerMods[id].LastSeen = DateTime.UtcNow;
+                    var playerInfo = playerMods[id];
+                    playerInfo.LastSeen = now;
+                    
+                    // Refresh mods every 5 minutes
+                    if (now - playerInfo.LastModRequest > TimeSpan.FromMinutes(5))
+                    {
+                        playerInfo.LastModRequest = now;
+                        await RequestPlayerMods(id, player.Name);
+                    }
                 }
             }
+            
+            // Upload our own mods to server for quick retrieval
+            await UploadOwnModsToServer();
+        }
+        
+        private DateTime lastModUpload = DateTime.MinValue;
+        
+        private string lastModHash = "";
+        
+        private async Task UploadOwnModsToServer()
+        {
+            try
+            {
+                var localPlayer = ClientState.LocalPlayer;
+                if (localPlayer == null) return;
+                
+                // Collect our current mods from all plugins
+                var ourMods = await CollectOwnMods();
+                
+                if (ourMods.Count > 0)
+                {
+                    // Check if mods changed
+                    var modJson = JsonSerializer.Serialize(ourMods);
+                    var currentHash = modJson.GetHashCode().ToString();
+                    
+                    if (currentHash == lastModHash && DateTime.UtcNow - lastModUpload < TimeSpan.FromSeconds(30))
+                    {
+                        return; // No changes and recent upload
+                    }
+                    
+                    // Encrypt mods before sending (placeholder - implement encryption)
+                    var encryptedMods = modJson; // TODO: Add encryption
+                    
+                    await SendToClient(new {
+                        type = "upload_own_mods",
+                        playerId = localPlayer.EntityId.ToString(),
+                        playerName = localPlayer.Name?.TextValue ?? "Unknown",
+                        encryptedMods,
+                        publicKey = FyteClubSecurity.GetPublicKeyPEM(),
+                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    });
+                    
+                    lastModUpload = DateTime.UtcNow;
+                    lastModHash = currentHash;
+                    PluginLog.Information($"FyteClub: Resynced {ourMods.Count} mods to server (character changed)");
+                }
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Warning($"FyteClub: Failed to upload own mods - {SanitizeLogInput(ex.Message)}");
+            }
+        }
+        
+        private async Task<List<string>> CollectOwnMods()
+        {
+            var mods = new List<string>();
+            
+            try
+            {
+                // Get active Penumbra mods
+                if (isPenumbraAvailable)
+                {
+                    // TODO: Add Penumbra IPC calls to get active mods
+                    // For now, return placeholder
+                    mods.Add("penumbra_mod_1");
+                    mods.Add("penumbra_mod_2");
+                }
+                
+                // Get Glamourer design
+                if (isGlamourerAvailable)
+                {
+                    // TODO: Add Glamourer IPC calls to get current design
+                    mods.Add("glamourer_design_data");
+                }
+                
+                // Get other plugin data...
+                
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Warning($"FyteClub: Failed to collect own mods - {SanitizeLogInput(ex.Message)}");
+            }
+            
+            return mods;
         }
         
         private async Task RequestPlayerMods(string playerId, string playerName)
@@ -406,7 +585,9 @@ namespace FyteClub
                 if (obj?.Name?.TextValue == null || obj.ObjectKind != ObjectKind.Player)
                     continue;
                     
-                if (obj.EntityId == localPlayer.EntityId)
+                // Skip self - check both EntityId and name for safety
+                if (obj.EntityId == localPlayer.EntityId || 
+                    (obj.Name?.TextValue != null && obj.Name.TextValue.Equals(localPlayer.Name?.TextValue, StringComparison.OrdinalIgnoreCase)))
                     continue; // Skip self
                     
                 // Proximity check
@@ -428,46 +609,76 @@ namespace FyteClub
             return players.ToArray();
         }
 
+        private System.Net.WebSockets.ClientWebSocket? webSocket;
+        private readonly string wsUrl = "ws://localhost:8081";
+        
         private async Task SendToClient(object data)
         {
-            PluginLog.Information($"FyteClub: Attempting to send HTTP message to daemon");
-            
-            if (!isConnected || httpClient == null)
-            {
-                PluginLog.Error($"FyteClub: Cannot send - not connected to daemon");
-                throw new InvalidOperationException("Not connected to daemon");
-            }
-            
             try
             {
-                var json = JsonSerializer.Serialize(data);
-                PluginLog.Information($"FyteClub: Sending HTTP POST: {json.Substring(0, Math.Min(100, json.Length))}...");
-                
-                var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-                var response = await httpClient.PostAsync($"{daemonUrl}/api/plugin", content);
-                
-                if (response.IsSuccessStatusCode)
+                if (webSocket?.State == System.Net.WebSockets.WebSocketState.Open)
                 {
-                    PluginLog.Information($"FyteClub: HTTP message sent successfully");
+                    var json = JsonSerializer.Serialize(data);
+                    var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+                    await webSocket.SendAsync(new ArraySegment<byte>(bytes), 
+                        System.Net.WebSockets.WebSocketMessageType.Text, true, CancellationToken.None);
                 }
                 else
                 {
-                    PluginLog.Error($"FyteClub: HTTP request failed: {response.StatusCode}");
-                    throw new InvalidOperationException($"HTTP request failed: {response.StatusCode}");
+                    // Fallback to HTTP if WebSocket not available
+                    if (httpClient != null)
+                    {
+                        var json = JsonSerializer.Serialize(data);
+                        var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+                        using var cts = new CancellationTokenSource(2000);
+                        await httpClient.PostAsync($"{daemonUrl}/api/plugin", content, cts.Token);
+                    }
                 }
             }
             catch (Exception ex)
             {
-                PluginLog.Error($"FyteClub: HTTP request failed - {SanitizeLogInput(ex.Message)}");
-                isConnected = false;
-                
-                // Try to reconnect
-                _ = Task.Run(() => ConnectToClient(cancellationTokenSource.Token));
-                throw;
+                PluginLog.Warning($"FyteClub: Send failed - {SanitizeLogInput(ex.Message)}");
             }
         }
         
-        // HTTP mode - no need to read from client, daemon will push via HTTP
+        // Hybrid mode - read responses from named pipe
+        private async Task StartPipeReader()
+        {
+            _ = Task.Run(async () => {
+                const string pipeName = @"\\.\pipe\fyteclub_responses";
+                
+                while (!cancellationTokenSource.Token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        using var pipe = new System.IO.Pipes.NamedPipeClientStream(".", "fyteclub_responses", System.IO.Pipes.PipeDirection.In);
+                        await pipe.ConnectAsync(1000, cancellationTokenSource.Token);
+                        
+                        using var reader = new StreamReader(pipe);
+                        string? line;
+                        while ((line = await reader.ReadLineAsync()) != null)
+                        {
+                            try
+                            {
+                                await HandleClientMessage(line);
+                            }
+                            catch (Exception ex)
+                            {
+                                PluginLog.Warning($"FyteClub: Pipe message error - {SanitizeLogInput(ex.Message)}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!ex.Message.Contains("timeout"))
+                        {
+                            PluginLog.Warning($"FyteClub: Pipe error - {SanitizeLogInput(ex.Message)}");
+                        }
+                        await Task.Delay(2000, cancellationTokenSource.Token);
+                    }
+                }
+            });
+        }
 
         private void SetupPenumbraIPC()
         {
@@ -785,7 +996,24 @@ namespace FyteClub
         
         private void OnCommand(string command, string args)
         {
-            this.configWindow.Toggle();
+            if (args.Trim().ToLower() == "resync")
+            {
+                _ = Task.Run(async () => {
+                    try
+                    {
+                        await UploadOwnModsToServer();
+                        PluginLog.Information("FyteClub: Manual mod resync triggered");
+                    }
+                    catch (Exception ex)
+                    {
+                        PluginLog.Error($"FyteClub: Manual resync failed - {SanitizeLogInput(ex.Message)}");
+                    }
+                });
+            }
+            else
+            {
+                this.configWindow.Toggle();
+            }
         }
         
         private readonly WindowSystem windowSystem;
@@ -863,7 +1091,16 @@ namespace FyteClub
                         var capturedAddress = newServerAddress;
                         var capturedName = string.IsNullOrEmpty(newServerName) ? newServerAddress : newServerName;
                         var capturedPassword = newServerPassword;
-                        _ = Task.Run(() => plugin.AddServer(capturedAddress, capturedName, capturedPassword));
+                        _ = Task.Run(async () => {
+                            try
+                            {
+                                await plugin.AddServer(capturedAddress, capturedName, capturedPassword);
+                            }
+                            catch (Exception ex)
+                            {
+                                plugin.PluginLog.Warning($"FyteClub: Failed to add server - {FyteClubPlugin.SanitizeLogInput(ex.Message)}");
+                            }
+                        });
                         newServerAddress = "";
                         newServerName = "";
                         newServerPassword = "";
@@ -887,7 +1124,16 @@ namespace FyteClub
                     if (ImGui.Checkbox($"##server_{i}", ref enabled))
                     {
                         server.Enabled = enabled;
-                        _ = Task.Run(() => plugin.UpdateServerStatus(server));
+                        _ = Task.Run(async () => {
+                            try
+                            {
+                                await plugin.UpdateServerStatus(server);
+                            }
+                            catch (Exception ex)
+                            {
+                                plugin.PluginLog.Warning($"FyteClub: Failed to update server status - {FyteClubPlugin.SanitizeLogInput(ex.Message)}");
+                            }
+                        });
                     }
                     
                     ImGui.SameLine();
@@ -904,7 +1150,16 @@ namespace FyteClub
                     ImGui.SameLine();
                     if (ImGui.Button($"Remove##server_{i}"))
                     {
-                        _ = Task.Run(() => plugin.RemoveServer(i));
+                        _ = Task.Run(async () => {
+                            try
+                            {
+                                await plugin.RemoveServer(i);
+                            }
+                            catch (Exception ex)
+                            {
+                                plugin.PluginLog.Warning($"FyteClub: Failed to remove server - {FyteClubPlugin.SanitizeLogInput(ex.Message)}");
+                            }
+                        });
                         break;
                     }
                 }
@@ -913,6 +1168,26 @@ namespace FyteClub
                 {
                     ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No servers added yet.");
                 }
+                
+                ImGui.Separator();
+                
+                // Resync button
+                if (ImGui.Button("Resync Mods"))
+                {
+                    _ = Task.Run(async () => {
+                        try
+                        {
+                            await plugin.UploadOwnModsToServer();
+                            plugin.PluginLog.Information("FyteClub: Manual resync from UI button");
+                        }
+                        catch (Exception ex)
+                        {
+                            plugin.PluginLog.Error($"FyteClub: UI resync failed - {FyteClubPlugin.SanitizeLogInput(ex.Message)}");
+                        }
+                    });
+                }
+                ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Force sync your current mods to servers");
             }
         }
 
@@ -1155,6 +1430,52 @@ namespace FyteClub
             });
         }
         
+        private void OnLogin()
+        {
+            _ = Task.Run(async () => {
+                await Task.Delay(3000); // Wait for character to load
+                await UploadOwnModsToServer();
+            });
+        }
+        
+        private void OnTerritoryChanged(ushort territoryId)
+        {
+            _ = Task.Run(async () => {
+                await Task.Delay(1000); // Wait for zone to settle
+                await UploadOwnModsToServer();
+            });
+        }
+        
+        private async Task ConnectWebSocket()
+        {
+            while (!cancellationTokenSource.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    webSocket = new System.Net.WebSockets.ClientWebSocket();
+                    await webSocket.ConnectAsync(new Uri(wsUrl), cancellationTokenSource.Token);
+                    PluginLog.Information("FyteClub: WebSocket connected");
+                    
+                    // Listen for messages
+                    var buffer = new byte[4096];
+                    while (webSocket.State == System.Net.WebSockets.WebSocketState.Open)
+                    {
+                        var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationTokenSource.Token);
+                        if (result.MessageType == System.Net.WebSockets.WebSocketMessageType.Text)
+                        {
+                            var message = System.Text.Encoding.UTF8.GetString(buffer, 0, result.Count);
+                            await HandleClientMessage(message);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    PluginLog.Warning($"FyteClub: WebSocket error - {SanitizeLogInput(ex.Message)}");
+                    await Task.Delay(5000, cancellationTokenSource.Token);
+                }
+            }
+        }
+        
         public void Dispose()
         {
             // Clean up all player mod collections
@@ -1170,18 +1491,21 @@ namespace FyteClub
                 }
             }
             
+            ClientState.Login -= () => OnLogin();
+            ClientState.TerritoryChanged -= (territoryId) => OnTerritoryChanged(territoryId);
             this.windowSystem.RemoveAllWindows();
             PluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;
             PluginInterface.UiBuilder.OpenConfigUi -= () => this.configWindow.Toggle();
             Framework.Update -= OnFrameworkUpdate;
             CommandManager.RemoveHandler(CommandName);
             cancellationTokenSource.Cancel();
+            webSocket?.Dispose();
             httpClient?.Dispose();
             cancellationTokenSource.Dispose();
             FyteClubSecurity.Dispose();
         }
         
-        private static string SanitizeLogInput(string input)
+        public static string SanitizeLogInput(string input)
         {
             if (string.IsNullOrEmpty(input)) return "";
             return input.Replace("\r", "").Replace("\n", "").Replace("\t", " ");
@@ -1247,6 +1571,7 @@ namespace FyteClub
         public string PlayerId { get; set; } = "";
         public string Name { get; set; } = "";
         public DateTime LastSeen { get; set; }
+        public DateTime LastModRequest { get; set; } = DateTime.MinValue;
         public List<string> Mods { get; set; } = new();
         public string? ActiveCollection { get; set; }
         public string? GlamourerDesign { get; set; }

@@ -134,6 +134,21 @@ class DatabaseService {
         });
     }
 
+    async filterConnectedPlayers(playerIds) {
+        if (!playerIds || playerIds.length === 0) {
+            return [];
+        }
+        
+        // Create placeholders for IN clause
+        const placeholders = playerIds.map(() => '?').join(',');
+        const sql = `SELECT DISTINCT p.id FROM players p 
+                     JOIN player_mods pm ON p.id = pm.player_id 
+                     WHERE p.id IN (${placeholders}) AND pm.encrypted_data IS NOT NULL`;
+        
+        const rows = await this.all(sql, playerIds);
+        return rows.map(row => row.id);
+    }
+
     async close() {
         if (this.db) {
             return new Promise((resolve) => {

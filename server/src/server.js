@@ -89,6 +89,46 @@ class FyteClubServer {
             }
         });
 
+        // Filter connected players - used by daemon to check which nearby players are connected
+        this.app.post('/api/filter-connected', async (req, res) => {
+            try {
+                const { playerIds, zone } = req.body;
+                const connectedPlayers = await this.database.filterConnectedPlayers(playerIds);
+                res.json({ connectedPlayers });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Batch operations - process multiple requests in one call
+        this.app.post('/api/batch-check', async (req, res) => {
+            try {
+                const { operations } = req.body;
+                const results = [];
+                
+                for (const op of operations) {
+                    switch (op.type) {
+                        case 'filter_players':
+                            const connectedPlayers = await this.database.filterConnectedPlayers(op.playerIds);
+                            results.push({ connectedPlayers });
+                            break;
+                        case 'get_mods':
+                            const playerMods = {};
+                            for (const playerId of op.playerIds) {
+                                const mods = await this.modSyncService.getPlayerMods(playerId);
+                                if (mods) playerMods[playerId] = mods;
+                            }
+                            results.push({ playerMods });
+                            break;
+                    }
+                }
+                
+                res.json({ results });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
 
 
         // Error handling
