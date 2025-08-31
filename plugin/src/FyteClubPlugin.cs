@@ -144,10 +144,7 @@ namespace FyteClub
                     "fyteclub", // If in PATH
                     Path.Combine(userProfile, "AppData", "Roaming", "npm", "fyteclub.cmd"),
                     @"C:\Program Files\nodejs\fyteclub.cmd",
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "npm", "fyteclub.cmd"),
-                    
-                    // Development paths (LAST RESORT)
-                    Path.Combine(userProfile, "git", "fyteclub", "client", "bin", "fyteclub.js")
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "npm", "fyteclub.cmd")
                 };
                 
                 foreach (var path in possiblePaths)
