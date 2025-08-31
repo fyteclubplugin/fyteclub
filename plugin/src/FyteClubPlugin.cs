@@ -122,15 +122,17 @@ namespace FyteClub
                 
                 var possiblePaths = new[]
                 {
-                    // Local development paths
-                    Path.Combine(userProfile, "git", "fyteclub", "client", "bin", "fyteclub.js"),
-                    Path.Combine(pluginDir, "client", "bin", "fyteclub.js"), // Bundled with plugin
+                    // Plugin bundled daemon (FIRST PRIORITY)
+                    Path.Combine(pluginDir, "client", "bin", "fyteclub.js"),
                     
                     // npm global install paths
                     "fyteclub", // If in PATH
                     Path.Combine(userProfile, "AppData", "Roaming", "npm", "fyteclub.cmd"),
                     @"C:\Program Files\nodejs\fyteclub.cmd",
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "npm", "fyteclub.cmd")
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "npm", "fyteclub.cmd"),
+                    
+                    // Development paths (LAST RESORT)
+                    Path.Combine(userProfile, "git", "fyteclub", "client", "bin", "fyteclub.js")
                 };
                 
                 foreach (var path in possiblePaths)

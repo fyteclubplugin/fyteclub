@@ -19,6 +19,8 @@ class FyteClubDaemon {
         this.isRunning = false;
         this.pipeName = '\\\\.\\pipe\\fyteclub_pipe';
         this.ffxivMonitor = null;
+        this.connectedServers = new Map(); // serverId -> connection
+        this.enabledServers = new Set(); // serverIds that should be connected
     }
 
     async start() {
@@ -51,6 +53,9 @@ class FyteClubDaemon {
             
             // Store log function for use in other methods
             this.log = log;
+            
+            // Load saved servers and auto-connect to enabled ones
+            await this.loadAndConnectServers();
             
         } catch (error) {
             log(`❌ Failed to start daemon: ${error.message}`);
@@ -139,7 +144,7 @@ class FyteClubDaemon {
                 await this.handleToggleServer(message);
                 break;
             default:
-                console.log('Unknown message type:', message.type);
+                if (this.log) this.log(`Unknown message type: ${message.type}`);
         }
     }
 
@@ -159,32 +164,38 @@ class FyteClubDaemon {
     }
 
     async requestPlayerMods(player) {
-        const serverStatus = this.serverManager.connection.getStatus();
+        const connectedServerIds = Array.from(this.connectedServers.keys());
         
-        if (serverStatus.status !== 'connected') {
-            console.log('⚠️  No server connected, cannot request mods');
+        if (connectedServerIds.length === 0) {
+            if (this.log) this.log('⚠️  No servers connected, cannot request mods');
             return;
         }
         
-        try {
-            // Request mods from current server
-            const response = await this.serverManager.connection.sendRequest('/api/mods/' + player.ContentId, {});
-            
-            if (response.mods) {
-                // Send mods back to plugin
-                await this.sendToPlugin({
-                    type: 'player_mods_response',
-                    playerId: player.ContentId.toString(),
-                    playerName: player.Name,
-                    encryptedMods: response.mods,
-                    timestamp: Date.now()
-                });
+        // Try each connected server until we get mods
+        for (const serverId of connectedServerIds) {
+            try {
+                const connection = this.connectedServers.get(serverId);
+                const response = await connection.sendRequest('/api/mods/' + player.ContentId, {});
                 
-                console.log(`📦 Sent mods for player`);
+                if (response.mods) {
+                    await this.sendToPlugin({
+                        type: 'player_mods_response',
+                        playerId: player.ContentId.toString(),
+                        playerName: player.Name,
+                        encryptedMods: response.mods,
+                        timestamp: Date.now()
+                    });
+                    
+                    if (this.log) this.log(`📦 Sent mods for player from server ${serverId}`);
+                    return; // Success, stop trying other servers
+                }
+            } catch (error) {
+                if (this.log) this.log(`Failed to get mods from server ${serverId}: ${error.message}`);
+                continue; // Try next server
             }
-        } catch (error) {
-            console.error(`Failed to get mods for player:`, error.message);
         }
+        
+        if (this.log) this.log('❌ Failed to get mods from any connected server');
     }
 
     async handleModRequest(message) {
@@ -203,24 +214,28 @@ class FyteClubDaemon {
     async handleModUpdate(message) {
         const { playerId, mods } = message;
         
-        const serverStatus = this.serverManager.connection.getStatus();
+        const connectedServerIds = Array.from(this.connectedServers.keys());
         
-        if (serverStatus.status !== 'connected') {
-            console.log('⚠️  No server connected, cannot sync mods');
+        if (connectedServerIds.length === 0) {
+            if (this.log) this.log('⚠️  No servers connected, cannot sync mods');
             return;
         }
         
-        try {
-            // Send mod update to current server
-            await this.serverManager.connection.sendRequest('/api/mods/sync', {
-                playerId,
-                encryptedMods: mods // TODO: Encrypt before sending
-            });
-            
-            console.log(`📤 Synced mods for player ${playerId}`);
-        } catch (error) {
-            console.error('Failed to sync mods:', error.message);
-        }
+        // Sync to all connected servers
+        const syncPromises = connectedServerIds.map(async (serverId) => {
+            try {
+                const connection = this.connectedServers.get(serverId);
+                await connection.sendRequest('/api/mods/sync', {
+                    playerId,
+                    encryptedMods: mods
+                });
+                if (this.log) this.log(`📤 Synced mods to server ${serverId}`);
+            } catch (error) {
+                if (this.log) this.log(`Failed to sync mods to server ${serverId}: ${error.message}`);
+            }
+        });
+        
+        await Promise.allSettled(syncPromises);
     }
 
     async sendToPlugin(message) {
@@ -255,29 +270,19 @@ class FyteClubDaemon {
     
     startReconnectTimer() {
         this.reconnectTimer = setInterval(async () => {
-            const serverStatus = this.serverManager.connection.getStatus();
-            
-            if (serverStatus.status !== 'connected') {
-                // Try to reconnect to enabled servers
-                const enabledServers = Array.from(this.serverManager.savedServers.values())
-                    .filter(server => server.enabled && !server.connected);
-                
-                if (enabledServers.length > 0) {
-                    console.log('🔄 Attempting to reconnect to enabled servers...');
-                    for (const server of enabledServers) {
-                        try {
-                            await this.serverManager.switchToServer(server.id);
-                            console.log(`✅ Reconnected to ${sanitizeForLog(server.name)}`);
-                            break; // Only connect to one server at a time
-                        } catch (error) {
-                            console.log(`⚠️  Failed to reconnect to ${sanitizeForLog(server.name)}`);
-                        }
+            // Try to reconnect to enabled servers that aren't connected
+            for (const serverId of this.enabledServers) {
+                if (!this.connectedServers.has(serverId)) {
+                    const server = this.serverManager.savedServers.get(serverId);
+                    if (server) {
+                        if (this.log) this.log(`🔄 Attempting to reconnect to ${sanitizeForLog(server.name)}...`);
+                        await this.connectToServer(serverId);
                     }
                 }
             }
         }, 120000); // 2 minutes
         
-        console.log('🔄 Auto-reconnect timer started (2 min intervals)');
+        if (this.log) this.log('🔄 Auto-reconnect timer started (2 min intervals)');
     }
 
     async handleAddServer(message) {
@@ -285,7 +290,14 @@ class FyteClubDaemon {
         
         try {
             if (this.log) this.log(`➕ Plugin requested add server: ${sanitizeForLog(name)} (${sanitizeForLog(address)}) enabled=${enabled}`);
-            await this.serverManager.addServer(address, name, enabled);
+            
+            const serverId = await this.serverManager.addServer(address, name, enabled);
+            
+            if (enabled) {
+                this.enabledServers.add(serverId);
+                await this.connectToServer(serverId);
+            }
+            
             if (this.log) this.log(`✅ Added server: ${sanitizeForLog(name)} (${sanitizeForLog(address)})`);
         } catch (error) {
             if (this.log) this.log(`❌ Failed to add server: ${error.message}`);
@@ -296,10 +308,17 @@ class FyteClubDaemon {
         const { address } = message;
         
         try {
+            const server = this.serverManager.findServerByAddress(address);
+            if (server) {
+                // Disconnect if connected
+                await this.disconnectFromServer(server.id);
+                this.enabledServers.delete(server.id);
+            }
+            
             await this.serverManager.removeServerByAddress(address);
-            console.log(`➖ Removed server: ${sanitizeForLog(address)}`);
+            if (this.log) this.log(`➖ Removed server: ${sanitizeForLog(address)}`);
         } catch (error) {
-            console.error(`Failed to remove server:`, error.message);
+            if (this.log) this.log(`Failed to remove server: ${error.message}`);
         }
     }
     
@@ -307,15 +326,108 @@ class FyteClubDaemon {
         const { address, enabled } = message;
         
         try {
+            const server = this.serverManager.findServerByAddress(address);
+            if (!server) {
+                if (this.log) this.log(`⚠️  Server not found: ${sanitizeForLog(address)}`);
+                return;
+            }
+            
             await this.serverManager.toggleServer(address, enabled);
-            console.log(`🔄 ${enabled ? 'Enabled' : 'Disabled'} server: ${sanitizeForLog(address)}`);
+            
+            if (enabled) {
+                this.enabledServers.add(server.id);
+                await this.connectToServer(server.id);
+            } else {
+                this.enabledServers.delete(server.id);
+                await this.disconnectFromServer(server.id);
+            }
+            
+            if (this.log) this.log(`🔄 ${enabled ? 'Enabled' : 'Disabled'} server: ${sanitizeForLog(address)}`);
         } catch (error) {
-            console.error(`Failed to toggle server:`, error.message);
+            if (this.log) this.log(`Failed to toggle server: ${error.message}`);
         }
     }
 
+    async connectToServer(serverId) {
+        try {
+            const server = this.serverManager.savedServers.get(serverId);
+            if (!server) {
+                if (this.log) this.log(`⚠️  Server ${serverId} not found`);
+                return;
+            }
+            
+            // Don't reconnect if already connected
+            if (this.connectedServers.has(serverId)) {
+                if (this.log) this.log(`ℹ️  Already connected to server ${serverId}`);
+                return;
+            }
+            
+            if (this.log) this.log(`🔄 Connecting to server ${server.name} (${server.ip}:${server.port})...`);
+            
+            const ServerConnection = require('./server-connection');
+            const connection = new ServerConnection();
+            
+            await connection.connectToServer(server.ip, server.port);
+            this.connectedServers.set(serverId, connection);
+            
+            // Update server status
+            server.connected = true;
+            server.lastConnected = Date.now();
+            this.serverManager.saveToDisk();
+            
+            if (this.log) this.log(`✅ Connected to server ${server.name}`);
+            
+        } catch (error) {
+            if (this.log) this.log(`❌ Failed to connect to server ${serverId}: ${error.message}`);
+            
+            // Update server status
+            const server = this.serverManager.savedServers.get(serverId);
+            if (server) {
+                server.connected = false;
+                this.serverManager.saveToDisk();
+            }
+        }
+    }
+    
+    async disconnectFromServer(serverId) {
+        try {
+            const connection = this.connectedServers.get(serverId);
+            if (connection) {
+                connection.disconnect();
+                this.connectedServers.delete(serverId);
+            }
+            
+            // Update server status
+            const server = this.serverManager.savedServers.get(serverId);
+            if (server) {
+                server.connected = false;
+                this.serverManager.saveToDisk();
+            }
+            
+            if (this.log) this.log(`👋 Disconnected from server ${serverId}`);
+            
+        } catch (error) {
+            if (this.log) this.log(`Error disconnecting from server ${serverId}: ${error.message}`);
+        }
+    }
+    
+    async loadAndConnectServers() {
+        // Load saved servers
+        const servers = Array.from(this.serverManager.savedServers.values());
+        
+        if (this.log) this.log(`💾 Loaded ${servers.length} saved servers`);
+        
+        // Auto-connect to enabled servers
+        for (const server of servers) {
+            if (server.enabled) {
+                this.enabledServers.add(server.id);
+                await this.connectToServer(server.id);
+            }
+        }
+    }
+    
     async stop() {
-        console.log('🛑 Stopping FyteClub daemon...');
+        if (this.log) this.log('🛑 Stopping FyteClub daemon...');
         
         this.isRunning = false;
         
@@ -325,6 +437,11 @@ class FyteClubDaemon {
         
         if (this.pipeServer) {
             this.pipeServer.close();
+        }
+        
+        // Disconnect from all servers
+        for (const serverId of this.connectedServers.keys()) {
+            await this.disconnectFromServer(serverId);
         }
         
         this.serverManager.disconnect();
@@ -337,7 +454,7 @@ class FyteClubDaemon {
             clearInterval(this.reconnectTimer);
         }
         
-        console.log('👋 FyteClub daemon stopped');
+        if (this.log) this.log('👋 FyteClub daemon stopped');
     }
 }
 
