@@ -69,7 +69,9 @@ echo Server README created
 :: Create ZIP files
 echo Creating ZIP files...
 cd release
-powershell -command "Compress-Archive -Path 'FyteClub-Plugin' -DestinationPath 'FyteClub-Plugin.zip' -Force"
+cd FyteClub-Plugin
+powershell -command "Compress-Archive -Path '*' -DestinationPath '../FyteClub-Plugin.zip' -Force"
+cd ..
 powershell -command "Compress-Archive -Path 'FyteClub-Server' -DestinationPath 'FyteClub-Server.zip' -Force"
 cd ..
 
