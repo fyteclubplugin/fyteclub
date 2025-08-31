@@ -22,6 +22,7 @@ echo echo [HELP] To stop server: Press Ctrl+C >> start-fyteclub.bat
 echo echo [HELP] To close window: Press Ctrl+C then any key >> start-fyteclub.bat
 echo echo. >> start-fyteclub.bat
 echo taskkill /f /im node.exe /fi "WINDOWTITLE eq FyteClub*" 2^>nul >> start-fyteclub.bat
+echo cd /d "%CD%" >> start-fyteclub.bat
 echo node bin/fyteclub-server.js --name "%COMPUTERNAME% Server" >> start-fyteclub.bat
 echo echo. >> start-fyteclub.bat
 echo echo [INFO] Server stopped. Press any key to close... >> start-fyteclub.bat
