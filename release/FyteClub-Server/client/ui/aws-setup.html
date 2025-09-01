@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>AWS Setup - FyteClub</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .setup-wizard {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .step {
+            display: none;
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .step.active {
+            display: block;
+        }
+        .step-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .step-number {
+            background: #ff6b35;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            font-weight: bold;
+        }
+        .progress-bar {
+            background: #404040;
+            height: 4px;
+            border-radius: 2px;
+            margin-bottom: 30px;
+        }
+        .progress-fill {
+            background: #ff6b35;
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.3s;
+        }
+        .requirement {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            margin: 10px 0;
+            background: #333;
+            border-radius: 4px;
+        }
+        .requirement.met {
+            background: #1b5e20;
+        }
+        .requirement.failed {
+            background: #b71c1c;
+        }
+        .status-icon {
+            margin-right: 10px;
+            font-size: 18px;
+        }
+        .code-block {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            margin: 15px 0;
+            border-left: 4px solid #ff6b35;
+        }
+        .deployment-log {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            height: 200px;
+            overflow-y: auto;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>FyteClub AWS Setup</h1>
+        </header>
+
+        <div class="setup-wizard">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress" style="width: 20%"></div>
+            </div>
+
+            <!-- Step 1: Welcome -->
+            <div class="step active" id="step1">
+                <div class="step-header">
+                    <div class="step-number">1</div>
+                    <h2>Welcome to FyteClub Setup</h2>
+                </div>
+                <p>This wizard will help you deploy your personal FyteClub infrastructure to AWS.</p>
+                <p><strong>What you'll need:</strong></p>
+                <ul>
+                    <li>AWS Account (free tier eligible)</li>
+                    <li>AWS CLI installed and configured</li>
+                    <li>About 5 minutes</li>
+                </ul>
+                <p><strong>Estimated monthly cost:</strong> $0-5 (mostly free tier)</p>
+                <div class="actions">
+                    <button class="btn primary" onclick="nextStep()">Get Started</button>
+                    <button class="btn secondary" onclick="window.close()">Cancel</button>
+                </div>
+            </div>
+
+            <!-- Step 2: Prerequisites -->
+            <div class="step" id="step2">
+                <div class="step-header">
+                    <div class="step-number">2</div>
+                    <h2>Check Prerequisites</h2>
+                </div>
+                <p>Checking your system for required tools...</p>
+                
+                <div class="requirement" id="aws-cli-check">
+                    <span class="status-icon">⏳</span>
+                    <span>AWS CLI installed and configured</span>
+                </div>
+                
+                <div class="requirement" id="terraform-check">
+                    <span class="status-icon">⏳</span>
+                    <span>Terraform installed</span>
+                </div>
+
+                <div id="missing-tools" style="display: none;">
+                    <h3>Missing Tools</h3>
+                    <p>Please install the following tools:</p>
+                    
+                    <div class="code-block">
+                        # Install AWS CLI
+                        https://aws.amazon.com/cli/
+                        
+                        # Configure AWS CLI
+                        aws configure
+                        
+                        # Install Terraform
+                        https://terraform.io/downloads
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button class="btn secondary" onclick="prevStep()">Back</button>
+                    <button class="btn primary" id="check-prereqs" onclick="checkPrerequisites()">Check Again</button>
+                    <button class="btn primary" id="continue-deploy" onclick="nextStep()" style="display: none;">Continue</button>
+                </div>
+            </div>
+
+            <!-- Step 3: AWS Region -->
+            <div class="step" id="step3">
+                <div class="step-header">
+                    <div class="step-number">3</div>
+                    <h2>Choose AWS Region</h2>
+                </div>
+                <p>Select the AWS region closest to you for best performance:</p>
+                
+                <div class="form-group">
+                    <label>AWS Region</label>
+                    <select id="aws-region">
+                        <option value="us-east-1">US East (N. Virginia) - us-east-1</option>
+                        <option value="us-west-2">US West (Oregon) - us-west-2</option>
+                        <option value="eu-west-1">Europe (Ireland) - eu-west-1</option>
+                        <option value="ap-southeast-1">Asia Pacific (Singapore) - ap-southeast-1</option>
+                        <option value="ap-northeast-1">Asia Pacific (Tokyo) - ap-northeast-1</option>
+                    </select>
+                </div>
+
+                <div class="actions">
+                    <button class="btn secondary" onclick="prevStep()">Back</button>
+                    <button class="btn primary" onclick="nextStep()">Continue</button>
+                </div>
+            </div>
+
+            <!-- Step 4: Deploy -->
+            <div class="step" id="step4">
+                <div class="step-header">
+                    <div class="step-number">4</div>
+                    <h2>Deploy Infrastructure</h2>
+                </div>
+                <p>Deploying your StallionSync infrastructure to AWS...</p>
+                
+                <div class="deployment-log" id="deployment-log">
+                    Ready to deploy...
+                </div>
+
+                <div class="actions">
+                    <button class="btn secondary" onclick="prevStep()" id="back-deploy">Back</button>
+                    <button class="btn primary" onclick="deployInfrastructure()" id="start-deploy">Start Deployment</button>
+                    <button class="btn primary" onclick="nextStep()" id="continue-final" style="display: none;">Continue</button>
+                </div>
+            </div>
+
+            <!-- Step 5: Complete -->
+            <div class="step" id="step5">
+                <div class="step-header">
+                    <div class="step-number">5</div>
+                    <h2>Setup Complete!</h2>
+                </div>
+                <p>🎉 Your StallionSync infrastructure is now deployed!</p>
+                
+                <div class="stat-card">
+                    <h3>Your Configuration</h3>
+                    <p><strong>API Endpoint:</strong> <span id="final-endpoint">Loading...</span></p>
+                    <p><strong>Region:</strong> <span id="final-region">Loading...</span></p>
+                    <p><strong>S3 Bucket:</strong> <span id="final-bucket">Loading...</span></p>
+                </div>
+
+                <p>These settings have been automatically saved to StallionSync.</p>
+
+                <div class="actions">
+                    <button class="btn primary" onclick="finishSetup()">Launch StallionSync</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="aws-setup.js"></script>
+</body>
+</html>
