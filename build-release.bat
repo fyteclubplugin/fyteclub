@@ -66,8 +66,8 @@ copy "build-pc.bat" "release\FyteClub-Server\"
 
 :: Copy the comprehensive README template
 if exist "server-readme-template.txt" (
-    powershell -command "Get-Content 'server-readme-template.txt' -Encoding UTF8 | Out-File 'release\FyteClub-Server\README.txt' -Encoding UTF8"
-    echo [OK] Comprehensive README.txt copied with proper encoding
+    powershell -command "[System.IO.File]::WriteAllText('release\FyteClub-Server\README.txt', [System.IO.File]::ReadAllText('server-readme-template.txt', [System.Text.Encoding]::UTF8), [System.Text.Encoding]::UTF8)"
+    echo [OK] Comprehensive README.txt copied with proper UTF-8 encoding
 ) else (
     echo [WARN] Template not found, creating basic README...
     powershell -command "@('FyteClub Server v3.0.0 - Setup Guide', '', 'Choose your installation method:', '1. Gaming PC: run build-pc.bat', '2. Raspberry Pi: run build-pi.sh', '3. AWS Cloud: run build-aws.bat') | Out-File 'release\FyteClub-Server\README.txt' -Encoding UTF8"

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("FyteClubPlugin.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+462e6d3e6fd287abf1e5ee41411aa0151f4b9507")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+09ec82c8de75a1023440d143ad323604be23c34d")]
 [assembly: System.Reflection.AssemblyProductAttribute("FyteClubPlugin.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("FyteClubPlugin.Tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

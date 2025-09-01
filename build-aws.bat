@@ -84,6 +84,28 @@ if not exist terraform.tfvars (
 
 REM Plan deployment
 echo [6/7] Planning AWS deployment...
+
+REM Check for existing infrastructure
+echo [INFO] Checking for existing FyteClub infrastructure...
+aws dynamodb describe-table --table-name fyteclub-players 2>nul >nul
+if %errorlevel% equ 0 (
+    echo [FOUND] Existing DynamoDB table: fyteclub-players
+    echo [INFO] Terraform will manage existing resources
+)
+
+aws s3 ls s3://fyteclub-mods 2>nul >nul
+if %errorlevel% equ 0 (
+    echo [FOUND] Existing S3 bucket: fyteclub-mods
+    echo [INFO] Terraform will manage existing resources
+)
+
+REM Check Lambda functions
+aws lambda get-function --function-name fyteclub-api 2>nul >nul
+if %errorlevel% equ 0 (
+    echo [FOUND] Existing Lambda function: fyteclub-api
+    echo [INFO] Terraform will update existing function
+)
+
 terraform plan
 if %errorlevel% neq 0 (
     echo ❌ ERROR: Terraform planning failed

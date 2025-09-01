@@ -44,6 +44,10 @@ namespace FyteClub
         // User blocking system - track recently synced users and blocked list
         private readonly HashSet<string> _recentlySyncedUsers = new();
         private readonly HashSet<string> _blockedUsers = new();
+        
+        // Detection retry system
+        private int _detectionRetryCount = 0;
+        private DateTime _lastDetectionRetry = DateTime.MinValue;
 
         // IPC with version checking - established patterns
         private readonly ICallGateSubscriber<bool>? _penumbraEnabled;
@@ -98,7 +102,7 @@ namespace FyteClub
 
         private void CheckModSystemAvailability()
         {
-            //_modSystemIntegration.CheckModSystemAvailability();
+            _modSystemIntegration.RetryDetection();
             //var systems = _modSystemIntegration.GetAvailableModSystems();
             
             //if (!string.IsNullOrEmpty(systems))
@@ -131,11 +135,53 @@ namespace FyteClub
                 // Keep your FyteClub logic but use established state management
                 _mediator.ProcessQueue();
                 _playerDetection.ScanForPlayers();
+                
+                // Retry mod system detection periodically if not all systems are detected
+                if (ShouldRetryDetection())
+                {
+                    CheckModSystemAvailability();
+                    _lastDetectionRetry = DateTime.UtcNow;
+                    _detectionRetryCount++;
+                    
+                    if (_detectionRetryCount >= 10) // Stop retrying after 10 attempts
+                    {
+                        _detectionRetryCount = int.MaxValue; // Prevent further retries
+                        var detectedSystems = new List<string>();
+                        if (_modSystemIntegration.IsPenumbraAvailable) detectedSystems.Add("Penumbra");
+                        if (_modSystemIntegration.IsGlamourerAvailable) detectedSystems.Add("Glamourer");
+                        if (_modSystemIntegration.IsCustomizePlusAvailable) detectedSystems.Add("Customize+");
+                        if (_modSystemIntegration.IsHeelsAvailable) detectedSystems.Add("Simple Heels");
+                        if (_modSystemIntegration.IsHonorificAvailable) detectedSystems.Add("Honorific");
+                        
+                        if (detectedSystems.Count > 0)
+                        {
+                            _pluginLog.Info($"FyteClub: Final detection results - Found: {string.Join(", ", detectedSystems)}");
+                        }
+                        else
+                        {
+                            _pluginLog.Warning("FyteClub: No mod systems detected. Plugin will work in limited mode.");
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
                 _pluginLog.Error($"Framework error: {ex.Message}");
             }
+        }
+        
+        private bool ShouldRetryDetection()
+        {
+            // Only retry if we haven't reached max attempts and enough time has passed
+            if (_detectionRetryCount >= 10) return false;
+            
+            // Retry every 5 seconds for the first minute
+            if ((DateTime.UtcNow - _lastDetectionRetry).TotalSeconds < 5) return false;
+            
+            // Check if we need to retry (at least one system is missing that we expect to find)
+            return !_modSystemIntegration.IsPenumbraAvailable || 
+                   !_modSystemIntegration.IsGlamourerAvailable ||
+                   !_modSystemIntegration.IsHonorificAvailable;
         }
 
         private void OnPlayerDetected(PlayerDetectedMessage message)
@@ -169,9 +215,18 @@ namespace FyteClub
                     _loadingStates[playerName] = LoadingState.Downloading;
                     
                     // FyteClub's encrypted communication to friend servers
-                    var response = await _httpClient.GetAsync($"http://{server.Address}/api/player/{playerName}/mods", _cancellationTokenSource.Token);
+                    var response = await _httpClient.GetAsync($"http://{server.Address}/api/mods/{playerName}", _cancellationTokenSource.Token);
                     if (response.IsSuccessStatusCode)
                     {
+                        // Mark server as connected when we get a successful response
+                        if (!server.Connected)
+                        {
+                            server.Connected = true;
+                            server.LastConnected = DateTime.UtcNow;
+                            SaveConfiguration();
+                            _pluginLog.Info($"FyteClub: Server {server.Name} is now connected");
+                        }
+                        
                         var jsonContent = await response.Content.ReadAsStringAsync();
                         var playerInfo = System.Text.Json.JsonSerializer.Deserialize<AdvancedPlayerInfo>(jsonContent);
                         
@@ -198,9 +253,27 @@ namespace FyteClub
                         }
                         break;
                     }
+                    else
+                    {
+                        // Mark server as disconnected on failed response
+                        if (server.Connected)
+                        {
+                            server.Connected = false;
+                            SaveConfiguration();
+                            _pluginLog.Warning($"FyteClub: Server {server.Name} is not responding (HTTP {response.StatusCode})");
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
+                    // Mark server as disconnected on exception
+                    if (server.Connected)
+                    {
+                        server.Connected = false;
+                        SaveConfiguration();
+                        _pluginLog.Error($"FyteClub: Connection to server {server.Name} failed: {ex.Message}");
+                    }
+                    
                     _loadingStates[playerName] = LoadingState.Failed;
                     _pluginLog.Error($"FyteClub: Error requesting mods for {playerName} from {server.Address}: {ex.Message}");
                 }
@@ -210,8 +283,49 @@ namespace FyteClub
         // FyteClub's friend server management - keep your UI innovations
         public void AddServer(string address, string name)
         {
-            _servers.Add(new ServerInfo { Address = address, Name = name, Enabled = true });
+            var server = new ServerInfo 
+            { 
+                Address = address, 
+                Name = name, 
+                Enabled = true,
+                Connected = false
+            };
+            _servers.Add(server);
             SaveConfiguration();
+            
+            // Test connectivity when server is added
+            _ = Task.Run(() => TestServerConnectivity(server));
+        }
+        
+        private async Task TestServerConnectivity(ServerInfo server)
+        {
+            try
+            {
+                _pluginLog.Info($"FyteClub: Testing connectivity to {server.Name} ({server.Address})...");
+                
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)); // 10 second timeout
+                var response = await _httpClient.GetAsync($"http://{server.Address}/health", cts.Token);
+                
+                if (response.IsSuccessStatusCode)
+                {
+                    server.Connected = true;
+                    server.LastConnected = DateTime.UtcNow;
+                    SaveConfiguration();
+                    _pluginLog.Info($"FyteClub: Successfully connected to {server.Name}");
+                }
+                else
+                {
+                    server.Connected = false;
+                    SaveConfiguration();
+                    _pluginLog.Warning($"FyteClub: Server {server.Name} health check failed (HTTP {response.StatusCode})");
+                }
+            }
+            catch (Exception ex)
+            {
+                server.Connected = false;
+                SaveConfiguration();
+                _pluginLog.Error($"FyteClub: Failed to connect to {server.Name}: {ex.Message}");
+            }
         }
 
         public void RemoveServer(int index)
@@ -413,10 +527,12 @@ namespace FyteClub
             private void DrawConnectionStatus()
             {
                 // Connection Status Display (like v2.0.1)
-                var connectedServers = _plugin.GetServers().Count(s => s.Enabled);
+                var servers = _plugin.GetServers();
+                var connectedServers = servers.Count(s => s.Connected);
+                var totalServers = servers.Count;
                 var connectionColor = connectedServers > 0 ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1);
                 
-                ImGui.TextColored(connectionColor, $"Connected Servers: {connectedServers}");
+                ImGui.TextColored(connectionColor, $"Connected Servers: {connectedServers}/{totalServers}");
                 
                 // Display all 5 supported mod plugin statuses
                 ImGui.TextColored(_plugin._modSystemIntegration.IsPenumbraAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 

@@ -3,7 +3,17 @@
 # For full installation with Redis and advecho ""
 echo "[INFO] Server Information:"
 echo "   Hostname: $HOSTNAME"
+echo "   Lecho ""
+echo "==============================================="
+echo "[*] FyteClub Pi Setup Complete!"
+echo "==============================================="
+echo ""
+echo "🖥️ Server Information:"
+echo "   Hostname: $(hostname)"
 echo "   Local IP: $LOCAL_IP"
+echo "   Port: 3000"
+echo "   Cache: $(command -v redis-server &> /dev/null && echo "Redis caching enabled" || echo "Memory cache fallback")"
+echo ""LOCAL_IP"
 echo "   Port: 3000"
 echo "   User: $(whoami)"
 echo ""
@@ -130,6 +140,63 @@ sudo systemctl enable fyteclub
 echo "✅ System service configured"
 
 cd ..
+
+echo ""
+echo "[6/7] Redis Cache Setup (Optional - Enhances Performance):"
+echo "Redis significantly improves performance for 20+ users"
+echo ""
+
+# Check if Redis is already installed
+if command -v redis-server &> /dev/null; then
+    echo "✅ Redis is already installed"
+    
+    # Check if Redis is running
+    if systemctl is-active --quiet redis-server 2>/dev/null || systemctl is-active --quiet redis 2>/dev/null; then
+        echo "✅ Redis is already running"
+        echo "🔗 Your FyteClub server will automatically use the existing Redis instance"
+    else
+        echo "⚠️  Redis is installed but not running"
+        echo "Starting Redis service..."
+        sudo systemctl start redis-server 2>/dev/null || sudo systemctl start redis 2>/dev/null
+        sudo systemctl enable redis-server 2>/dev/null || sudo systemctl enable redis 2>/dev/null
+        echo "✅ Redis service started and enabled"
+    fi
+else
+    echo "❌ Redis not detected"
+    echo ""
+    echo "Redis Installation Options:"
+    echo "1. Install Redis now (recommended for better performance)"
+    echo "2. Skip Redis (use memory cache fallback)"
+    echo ""
+    read -p "Install Redis? (Y/n): " redis_choice
+    redis_choice=${redis_choice:-Y}
+    
+    if [[ $redis_choice =~ ^[Yy]$ ]]; then
+        echo ""
+        echo "📦 Installing Redis..."
+        sudo apt update
+        sudo apt install -y redis-server
+        
+        # Configure Redis for better security
+        echo "🔧 Configuring Redis..."
+        sudo sed -i 's/^# requirepass.*/requirepass fyteclub/' /etc/redis/redis.conf 2>/dev/null || true
+        sudo sed -i 's/^bind 127.0.0.1/bind 127.0.0.1/' /etc/redis/redis.conf 2>/dev/null || true
+        
+        # Start and enable Redis
+        sudo systemctl start redis-server
+        sudo systemctl enable redis-server
+        
+        # Test Redis connection
+        if redis-cli ping 2>/dev/null | grep -q PONG; then
+            echo "✅ Redis installed and working!"
+        else
+            echo "⚠️  Redis installed but may need configuration"
+        fi
+    else
+        echo "⏭️  Skipping Redis installation"
+        echo "💡 Your server will use memory cache (works great for small groups)"
+    fi
+fi
 
 echo ""
 echo "==============================================="

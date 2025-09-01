@@ -47,6 +47,9 @@
       "text",
       "lcov",
       "html"
-    ]
+    ],
+    "forceExit": true,
+    "detectOpenHandles": true,
+    "testTimeout": 15000
   }
 }

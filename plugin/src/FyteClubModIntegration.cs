@@ -419,6 +419,101 @@ namespace FyteClub
             return 0;
         }
 
+        public void RetryDetection()
+        {
+            _pluginLog.Debug("Retrying mod system detection...");
+            
+            // Retry Penumbra detection
+            if (!IsPenumbraAvailable)
+            {
+                try
+                {
+                    var version = _penumbraGetVersion?.InvokeFunc("FyteClub");
+                    IsPenumbraAvailable = version != null;
+                    if (IsPenumbraAvailable)
+                    {
+                        _pluginLog.Information("Penumbra detected on retry");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Debug($"Penumbra retry failed: {ex.Message}");
+                }
+            }
+            
+            // Retry Glamourer detection
+            if (!IsGlamourerAvailable)
+            {
+                try
+                {
+                    var version = _glamourerGetVersion?.InvokeFunc();
+                    IsGlamourerAvailable = version > 0;
+                    if (IsGlamourerAvailable)
+                    {
+                        _pluginLog.Information("Glamourer detected on retry");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Debug($"Glamourer retry failed: {ex.Message}");
+                }
+            }
+            
+            // Retry Customize+ detection
+            if (!IsCustomizePlusAvailable)
+            {
+                try
+                {
+                    var version = _customizePlusGetVersion?.InvokeFunc();
+                    IsCustomizePlusAvailable = version?.Item1 > 0;
+                    if (IsCustomizePlusAvailable)
+                    {
+                        _pluginLog.Information("Customize+ detected on retry");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Debug($"Customize+ retry failed: {ex.Message}");
+                }
+            }
+            
+            // Retry Simple Heels detection
+            if (!IsHeelsAvailable)
+            {
+                try
+                {
+                    var version = _heelsGetVersion?.InvokeFunc();
+                    IsHeelsAvailable = version?.Item1 > 0;
+                    if (IsHeelsAvailable)
+                    {
+                        _pluginLog.Information("Simple Heels detected on retry");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Debug($"Simple Heels retry failed: {ex.Message}");
+                }
+            }
+            
+            // Retry Honorific detection
+            if (!IsHonorificAvailable)
+            {
+                try
+                {
+                    var version = _honorificGetVersion?.InvokeFunc();
+                    IsHonorificAvailable = version?.Item1 > 0;
+                    if (IsHonorificAvailable)
+                    {
+                        _pluginLog.Information("Honorific detected on retry");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Debug($"Honorific retry failed: {ex.Message}");
+                }
+            }
+        }
+
         public void Dispose()
         {
             // Cleanup any remaining state

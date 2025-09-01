@@ -5,7 +5,7 @@ REM Complete installation and configuration for gaming PCs
 title FyteClub PC Setup
 echo.
 echo ===============================================
-echo 🥊 FyteClub Gaming PC Setup
+echo [*] FyteClub Gaming PC Setup
 echo ===============================================
 echo Friend-to-friend mod sharing server for FFXIV
 echo.
@@ -14,7 +14,7 @@ REM Check if Node.js is installed
 echo [1/6] Checking Node.js installation...
 node --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ❌ ERROR: Node.js not found
+    echo [X] ERROR: Node.js not found
     echo.
     echo Please install Node.js first:
     echo 1. Go to https://nodejs.org
@@ -25,29 +25,29 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 for /f "tokens=*" %%i in ('node --version') do set NODE_VERSION=%%i
-echo ✅ Node.js %NODE_VERSION% found
+echo [OK] Node.js %NODE_VERSION% found
 
 REM Check if we're in the correct directory
 echo [2/6] Checking project structure...
 if not exist "server\package.json" (
-    echo ❌ ERROR: Cannot find server\package.json
+    echo [X] ERROR: Cannot find server\package.json
     echo Please run this script from the FyteClub root directory
     pause
     exit /b 1
 )
-echo ✅ Project structure verified
+echo [OK] Project structure verified
 
 REM Install server dependencies
 echo [3/6] Installing server dependencies...
 cd server
 call npm install --silent
 if %errorlevel% neq 0 (
-    echo ❌ ERROR: Failed to install dependencies
+    echo [X] ERROR: Failed to install dependencies
     echo Check your internet connection and try again
     pause
     exit /b 1
 )
-echo ✅ Dependencies installed successfully
+echo [OK] Dependencies installed successfully
 
 REM Verify start script exists (don't overwrite the enhanced one)
 echo [4/6] Configuring startup script...
@@ -59,7 +59,7 @@ if not exist "start-fyteclub.bat" (
     echo node src/server.js --name "%COMPUTERNAME% FyteClub Server" >> start-fyteclub.bat
     echo pause >> start-fyteclub.bat
 )
-echo ✅ Startup script ready
+echo [OK] Startup script ready
 
 REM Create desktop shortcut
 echo [5/6] Creating desktop shortcut...
@@ -81,23 +81,24 @@ powershell -Command "try { $publicIP = (Invoke-RestMethod -Uri 'https://api.ipif
 
 echo.
 echo ===============================================
-echo 🎉 FyteClub PC Setup Complete!
+echo [*] FyteClub PC Setup Complete!
 echo ===============================================
 echo.
-echo 📊 Server Information:
+echo [i] Server Information:
 echo   Computer Name: %COMPUTERNAME%
 echo   Local IP: %LOCAL_IP%
 echo   Port: 3000
+echo   Cache: Memory fallback (Redis optional for better performance)
 echo.
-echo 🌐 Connection URLs:
+echo [i] Connection URLs:
 echo   Local Network: http://%LOCAL_IP%:3000
 echo   Health Check: http://%LOCAL_IP%:3000/health
 echo.
-echo 🚀 How to Start:
-echo   • Double-click "FyteClub Server" on desktop
-echo   • Or run: server\start-fyteclub.bat
+echo [i] How to Start:
+echo   - Double-click "FyteClub Server" on desktop
+echo   - Or run: server\start-fyteclub.bat
 echo.
-echo ⚙️  Router Setup (for friends outside your network):
+echo [!] Router Setup (for friends outside your network):
 echo   1. Log into your router admin panel
 echo   2. Set up port forwarding:
 echo      External Port: 3000
@@ -105,12 +106,14 @@ echo      Internal IP: %LOCAL_IP%
 echo      Internal Port: 3000
 echo   3. Share your public IP with friends
 echo.
-echo 📚 Troubleshooting:
-echo   • Test local: http://localhost:3000/health
-echo   • Check firewall: Allow port 3000
-echo   • Check antivirus: Whitelist FyteClub folder
+echo [?] Troubleshooting:
+echo   - Test local: http://localhost:3000/health
+echo   - Check firewall: Allow port 3000
+echo   - Check antivirus: Whitelist FyteClub folder
+echo   - Redis setup: Server works without Redis (uses memory cache)
+echo   - Performance: Install Redis via Docker for better caching
 echo.
-echo 🔐 Security Setup:
+echo [#] Security Setup:
 echo [?] Do you want to set a password for your server? (Y/N)
 set /p password_choice="Enter choice: "
 set SERVER_PASSWORD=
@@ -120,10 +123,50 @@ if /i "%password_choice%"=="Y" (
     echo Note: This password will be required for friends to connect
     set /p SERVER_PASSWORD="Password: "
     echo.
-    echo ✅ Password protection enabled
+    echo [OK] Password protection enabled
 ) else (
     echo.
-    echo ⚠️  No password set - server will be open to anyone who can connect
+    echo [!] No password set - server will be open to anyone who can connect
+)
+
+echo.
+echo [!] Redis Cache Setup (Optional - Recommended for 20+ users):
+echo Redis dramatically improves performance but requires additional setup.
+echo Without Redis, the server uses memory caching (still works great for small groups).
+echo.
+echo Redis Installation Options for Windows:
+echo   1. Docker Desktop - Easiest, current Redis version
+echo   2. WSL2 + Ubuntu Redis - Best performance, current Redis version
+echo   3. Skip Redis - Use memory cache fallback
+echo.
+echo [?] Which Redis option do you prefer? (1-3)
+set /p redis_choice="Enter choice (1-3): "
+if "%redis_choice%"=="1" (
+    echo.
+    echo [INFO] Docker Desktop Redis Setup:
+    echo.
+    echo 1. Install Docker Desktop from https://docker.com/products/docker-desktop
+    echo 2. After Docker is running, open command prompt and run:
+    echo    docker run -d --name fyteclub-redis -p 6379:6379 redis:alpine
+    echo 3. Restart your FyteClub server to use Redis
+    echo.
+    echo [OK] Docker Redis instructions provided
+) else if "%redis_choice%"=="2" (
+    echo.
+    echo [INFO] WSL2 Redis Setup:
+    echo.
+    echo 1. Enable WSL2: wsl --install
+    echo 2. Install Ubuntu from Microsoft Store
+    echo 3. In Ubuntu terminal run:
+    echo    sudo apt update ^&^& sudo apt install redis-server
+    echo    sudo service redis-server start
+    echo 4. Restart your FyteClub server to use Redis
+    echo.
+    echo [OK] WSL2 Redis instructions provided
+) else (
+    echo.
+    echo [OK] Using memory cache fallback - Redis can be added later
+    echo     Server will work perfectly for small to medium groups
 )
 
 echo.
@@ -137,18 +180,18 @@ if /i "%choice%"=="Y" (
     ) else (
         start "FyteClub Server" /d "%CD%\server" start-fyteclub.bat
     )
-    echo ✅ Server started in new window
+    echo [OK] Server started in new window
     echo.
     echo Keep that window open while friends are connected!
     echo Press any key to close this setup window...
 ) else (
     echo.
-    echo ✅ Setup complete! Start the server when ready:
+    echo [OK] Setup complete! Start the server when ready:
     if defined SERVER_PASSWORD (
-        echo   • Manual with password: node src/server.js --name "%COMPUTERNAME% FyteClub Server" --password "%SERVER_PASSWORD%"
+        echo   - Manual with password: node src/server.js --name "%COMPUTERNAME% FyteClub Server" --password "%SERVER_PASSWORD%"
     ) else (
-        echo   • Desktop shortcut: "FyteClub Server"
-        echo   • Manual: server\start-fyteclub.bat
+        echo   - Desktop shortcut: "FyteClub Server"
+        echo   - Manual: server\start-fyteclub.bat
     )
     echo.
     echo Press any key to close...
