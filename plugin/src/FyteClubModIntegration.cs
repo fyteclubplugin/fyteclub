@@ -37,11 +37,20 @@ namespace FyteClub
         private ICallGateSubscriber<nint, float, object>? _heelsRegisterPlayer;
         private ICallGateSubscriber<nint, object>? _heelsUnregisterPlayer;
         
+        private ICallGateSubscriber<(uint, uint)>? _honorificGetVersion;
+        private ICallGateSubscriber<string>? _honorificGetLocalCharacterTitle;
+        private ICallGateSubscriber<int, string, object>? _honorificSetCharacterTitle;
+        private ICallGateSubscriber<int, object>? _honorificClearCharacterTitle;
+        private ICallGateSubscriber<string, object>? _honorificLocalCharacterTitleChanged;
+        private ICallGateSubscriber<object>? _honorificReady;
+        private ICallGateSubscriber<object>? _honorificDisposing;
+        
         // Availability flags
         public bool IsPenumbraAvailable { get; private set; }
         public bool IsGlamourerAvailable { get; private set; }
         public bool IsCustomizePlusAvailable { get; private set; }
         public bool IsHeelsAvailable { get; private set; }
+        public bool IsHonorificAvailable { get; private set; }
 
         public FyteClubModIntegration(IDalamudPluginInterface pluginInterface, IPluginLog pluginLog)
         {
@@ -136,6 +145,30 @@ namespace FyteClub
                 {
                     IsHeelsAvailable = false;
                 }
+                
+                // Initialize Honorific IPC (Mare's patterns)
+                _honorificGetVersion = _pluginInterface.GetIpcSubscriber<(uint, uint)>("Honorific.ApiVersion");
+                _honorificGetLocalCharacterTitle = _pluginInterface.GetIpcSubscriber<string>("Honorific.GetLocalCharacterTitle");
+                _honorificSetCharacterTitle = _pluginInterface.GetIpcSubscriber<int, string, object>("Honorific.SetCharacterTitle");
+                _honorificClearCharacterTitle = _pluginInterface.GetIpcSubscriber<int, object>("Honorific.ClearCharacterTitle");
+                _honorificLocalCharacterTitleChanged = _pluginInterface.GetIpcSubscriber<string, object>("Honorific.LocalCharacterTitleChanged");
+                _honorificReady = _pluginInterface.GetIpcSubscriber<object>("Honorific.Ready");
+                _honorificDisposing = _pluginInterface.GetIpcSubscriber<object>("Honorific.Disposing");
+                
+                // Check Honorific availability (Mare checks for API >= 3.0)
+                try
+                {
+                    var version = _honorificGetVersion?.InvokeFunc();
+                    IsHonorificAvailable = version.HasValue && version.Value.Item1 >= 3;
+                    if (IsHonorificAvailable && version.HasValue)
+                    {
+                        _pluginLog.Information($"Honorific detected, version: {version.Value.Item1}.{version.Value.Item2}");
+                    }
+                }
+                catch
+                {
+                    IsHonorificAvailable = false;
+                }
             }
             catch (Exception ex)
             {
@@ -172,6 +205,12 @@ namespace FyteClub
                 if (IsHeelsAvailable && playerInfo.SimpleHeelsOffset.HasValue)
                 {
                     ApplyHeelsData(character, playerInfo.SimpleHeelsOffset.Value);
+                }
+                
+                // Apply Honorific title data
+                if (IsHonorificAvailable && !string.IsNullOrEmpty(playerInfo.HonorificTitle))
+                {
+                    ApplyHonorificData(character, playerInfo.HonorificTitle);
                 }
             }
             catch (Exception ex)
@@ -249,6 +288,55 @@ namespace FyteClub
             }
         }
 
+        private void ApplyHonorificData(ICharacter character, string honorificTitle)
+        {
+            try
+            {
+                // Apply Honorific title using Mare's pattern (Base64 encoded)
+                var characterIndex = GetCharacterIndex(character);
+                
+                if (string.IsNullOrEmpty(honorificTitle))
+                {
+                    // Clear title
+                    _honorificClearCharacterTitle?.InvokeFunc(characterIndex);
+                    _pluginLog.Debug($"Cleared Honorific title for {character.Name}");
+                }
+                else
+                {
+                    // Set title (Mare expects Base64 encoded data)
+                    var titleBytes = System.Text.Encoding.UTF8.GetBytes(honorificTitle);
+                    var titleB64 = Convert.ToBase64String(titleBytes);
+                    _honorificSetCharacterTitle?.InvokeFunc(characterIndex, titleB64);
+                    _pluginLog.Debug($"Applied Honorific title '{honorificTitle}' for {character.Name}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Failed to apply Honorific data: {ex.Message}");
+            }
+        }
+
+        // Get local player's Honorific title (for sharing with friends)
+        public string? GetLocalHonorificTitle()
+        {
+            if (!IsHonorificAvailable) return null;
+            
+            try
+            {
+                var titleB64 = _honorificGetLocalCharacterTitle?.InvokeFunc();
+                if (string.IsNullOrEmpty(titleB64)) return null;
+                
+                // Decode from Base64 (Mare's pattern)
+                var titleBytes = Convert.FromBase64String(titleB64);
+                return System.Text.Encoding.UTF8.GetString(titleBytes);
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Failed to get local Honorific title: {ex.Message}");
+                return null;
+            }
+        }
+
         // Clean up mod applications (Mare's cleanup patterns)
         public void CleanupCharacter(ICharacter character)
         {
@@ -273,6 +361,13 @@ namespace FyteClub
                 {
                     var characterPtr = (nint)character.Address;
                     _heelsUnregisterPlayer?.InvokeFunc(characterPtr);
+                }
+                
+                // Clear Honorific title
+                if (IsHonorificAvailable)
+                {
+                    var characterIndex = GetCharacterIndex(character);
+                    _honorificClearCharacterTitle?.InvokeFunc(characterIndex);
                 }
             }
             catch (Exception ex)
