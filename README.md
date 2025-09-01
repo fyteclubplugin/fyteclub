@@ -92,8 +92,8 @@ FyteClub uses a simplified, all-in-one plugin architecture:
 - **End-to-End Encryption**: RSA + AES hybrid implementation
 - **Configuration UI**: Server management with connection indicators
 
-### **Framework Ready (Implementation Needed)**
-- **Plugin Integrations**: Penumbra started, need Glamourer, Customize+, SimpleHeels, Honorific
+### **Framework Ready (Testing Needed)**
+- **Plugin Integrations**: Penumbra, Glamourer, Customize+, SimpleHeels, Honorific
 - **Enhanced UI**: Basic UI works, can be enhanced with full ImGui implementation
 - **Performance Features**: WebSocket and batch operation framework exists
 
