@@ -580,7 +580,7 @@ namespace FyteClub
         public string Name { get; set; } = "";
         public bool Enabled { get; set; } = true;
         public bool Connected { get; set; } = false;
-        public DateTime LastConnected { get; set; } = DateTime.MinValue;
+        public DateTime? LastConnected { get; set; } = null;
         public string EncryptionKey { get; set; } = ""; // FyteClub's E2E encryption
         public bool IsFriend { get; set; } = true; // FyteClub's friend designation
     }

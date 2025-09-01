@@ -1773,7 +1773,7 @@
           "build/net6.0/xunit.runner.visualstudio.props": {}
         }
       },
-      "FyteClub/1.0.1": {
+      "FyteClub/3.0.0": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v9.0",
         "dependencies": {
@@ -5673,7 +5673,7 @@
         "xunit.runner.visualstudio.nuspec"
       ]
     },
-    "FyteClub/1.0.1": {
+    "FyteClub/3.0.0": {
       "type": "project",
       "path": "../FyteClub.csproj",
       "msbuildProject": "../FyteClub.csproj"
@@ -5681,7 +5681,7 @@
   },
   "projectFileDependencyGroups": {
     "net9.0-windows7.0": [
-      "FyteClub >= 1.0.1",
+      "FyteClub >= 3.0.0",
       "Microsoft.NET.Test.Sdk >= 17.8.0",
       "Moq >= 4.20.69",
       "coverlet.collector >= 6.0.0",
