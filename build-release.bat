@@ -147,24 +147,3 @@ dir release\*.zip
 echo.
 echo 🌐 Ready for GitHub release upload!
 echo Next: Create release tag with: git tag -a v3.0.0 -m "FyteClub v3.0.0 - Enhanced Storage and Caching"
-
-
-:: Create ZIP files
-echo Creating ZIP files...
-cd release
-cd FyteClub-Plugin
-powershell -command "Compress-Archive -Path '*' -DestinationPath '../FyteClub-Plugin.zip' -Force"
-cd ..
-powershell -command "Compress-Archive -Path 'FyteClub-Server' -DestinationPath 'FyteClub-Server.zip' -Force"
-cd ..
-
-echo.
-echo Build completed successfully!
-echo.
-echo Plugin Package: release\FyteClub-Plugin.zip (All-in-One Solution)
-echo Server Package: release\FyteClub-Server.zip (Friend Hosting)
-echo.
-echo Architecture: Plugin connects directly to friend servers via HTTP
-echo Simplified and reliable implementation.
-echo.
-dir release\*.zip
