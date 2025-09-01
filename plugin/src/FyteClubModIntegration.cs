@@ -79,9 +79,14 @@ namespace FyteClub
                     {
                         _pluginLog.Information("Penumbra detected and available");
                     }
+                    else
+                    {
+                        _pluginLog.Warning("Penumbra GetVersion returned null");
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _pluginLog.Error($"Penumbra detection failed: {ex.Message}");
                     IsPenumbraAvailable = false;
                 }
                 
@@ -100,9 +105,14 @@ namespace FyteClub
                     {
                         _pluginLog.Information($"Glamourer detected, version: {version}");
                     }
+                    else
+                    {
+                        _pluginLog.Warning($"Glamourer version too old or invalid: {version}");
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _pluginLog.Error($"Glamourer detection failed: {ex.Message}");
                     IsGlamourerAvailable = false;
                 }
                 
@@ -120,9 +130,18 @@ namespace FyteClub
                     {
                         _pluginLog.Information($"Customize+ detected, version: {version.Value.Item1}.{version.Value.Item2}");
                     }
+                    else if (version.HasValue)
+                    {
+                        _pluginLog.Warning($"Customize+ version too old: {version.Value.Item1}.{version.Value.Item2}");
+                    }
+                    else
+                    {
+                        _pluginLog.Warning("Customize+ GetVersion returned null");
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _pluginLog.Error($"Customize+ detection failed: {ex.Message}");
                     IsCustomizePlusAvailable = false;
                 }
                 
@@ -140,9 +159,18 @@ namespace FyteClub
                     {
                         _pluginLog.Information($"Simple Heels detected, version: {version.Value.Item1}.{version.Value.Item2}");
                     }
+                    else if (version.HasValue)
+                    {
+                        _pluginLog.Warning($"Simple Heels version too old: {version.Value.Item1}.{version.Value.Item2}");
+                    }
+                    else
+                    {
+                        _pluginLog.Warning("Simple Heels GetVersion returned null");
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _pluginLog.Error($"Simple Heels detection failed: {ex.Message}");
                     IsHeelsAvailable = false;
                 }
                 
@@ -164,9 +192,18 @@ namespace FyteClub
                     {
                         _pluginLog.Information($"Honorific detected, version: {version.Value.Item1}.{version.Value.Item2}");
                     }
+                    else if (version.HasValue)
+                    {
+                        _pluginLog.Warning($"Honorific version too old: {version.Value.Item1}.{version.Value.Item2}");
+                    }
+                    else
+                    {
+                        _pluginLog.Warning("Honorific GetVersion returned null");
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _pluginLog.Error($"Honorific detection failed: {ex.Message}");
                     IsHonorificAvailable = false;
                 }
             }
