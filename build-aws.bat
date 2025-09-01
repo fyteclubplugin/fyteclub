@@ -5,7 +5,7 @@ REM Deploy FyteClub server to AWS using Terraform infrastructure
 title FyteClub AWS Setup
 echo.
 echo ===============================================
-echo 🌩️ FyteClub AWS Cloud Setup
+echo [*] FyteClub AWS Cloud Setup
 echo ===============================================
 echo Serverless mod sharing for AWS free tier
 echo.
@@ -14,7 +14,7 @@ REM Check if Terraform is installed
 echo [1/7] Checking Terraform installation...
 terraform version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ❌ ERROR: Terraform not found
+    echo [ERROR] ERROR: Terraform not found
     echo.
     echo Please install Terraform first:
     echo 1. Go to https://terraform.io/downloads
@@ -25,7 +25,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 for /f "tokens=2" %%i in ('terraform version ^| findstr "Terraform"') do set TERRAFORM_VERSION=%%i
-echo ✅ Terraform %TERRAFORM_VERSION% found
+echo [OK] Terraform %TERRAFORM_VERSION% found
 
 REM Check if AWS CLI is configured
 echo [2/7] Checking AWS CLI configuration...
@@ -95,7 +95,7 @@ if %errorlevel% neq 0 (
 echo [7/7] Deployment planning complete!
 echo.
 echo ===============================================
-echo 🎉 FyteClub AWS Setup Ready!
+echo [*] FyteClub AWS Setup Ready!
 echo ===============================================
 echo.
 echo � Deployment Summary:
@@ -110,11 +110,11 @@ echo   • Free Tier: $0/month for small groups
 echo   • Beyond Free: ~$3-5/month for 100+ users
 echo   • Auto-cleanup prevents runaway costs
 echo.
-echo 🚀 Next Steps:
+echo [>] Next Steps:
 echo   1. Review the plan above
 echo   2. Run: terraform apply
 echo   3. Share the API endpoint with friends
 echo.
-echo ⚠️  WARNING: This will create AWS resources
+echo [WARN] WARNING: This will create AWS resources
 echo   You can destroy them anytime with: terraform destroy
 echo.
