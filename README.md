@@ -1,31 +1,18 @@
 # FyteClub
 
-A decentralized, self-hosted mod-sharing system for Final Fa## Project Status
-
-### **✅ Complete and Working**
-- ✅ **FFXIV Plugin**: All-in-one solution with direct server communication
-- ✅ **Player Detection**: 50m range scanning with established patterns  
-- ✅ **Multi-Server Management**: Add/remove friend servers with UI
-- ✅ **Server Software**: REST API with enhanced storage (54/54 tests passing)
-- ✅ **Storage Deduplication**: SHA-256 content optimization reducing disk usage
-- ✅ **Redis Caching**: Performance optimization with automatic memory fallback
-- ✅ **End-to-End Encryption**: RSA + AES hybrid implementation
-- ✅ **Configuration UI**: Server management with connection indicatorsith end-to-end encryption. Share character mods automatically with nearby players while maintaining privacy and control.
+A decentralized, self-hosted mod-sharing system for friends! Share character mods automatically with nearby players using end-to-end encryption. Complete privacy and control.
 
 ## Table of Contents
 
 - [What It Does](#what-it-does)
 - [Key Features](#key-features)
 - [How It Works](#how-it-works)
-- [The Problem We Solve](#the-problem-we-solve)
+- [Use Cases](#use-cases)
 - [Architecture](#architecture)
 - [Project Status](#project-status)
 - [Repository Structure](#repository-structure)
 - [Installation](#installation)
 - [Getting Started](#getting-started)
-- [Documentation](#documentation)
-- [Contributing](#contributing)
-- [Privacy & Security](#privacy--security)
 - [Expected Costs](#expected-costs)
 - [License](#license)
 - [Support](#support)
@@ -84,28 +71,31 @@ FyteClub uses a simplified, all-in-one plugin architecture:
 
 ## Project Status
 
-� **All-in-One Plugin Architecture** - Simplified and More Reliable
+✅ **v3.0.0 Release Complete** - All Core Features Working
 
 ### **Complete and Working**
-- **FFXIV Plugin**: All-in-one solution with direct server communication
-- **Player Detection**: 50m range scanning with established patterns  
-- **Multi-Server Management**: Add/remove friend servers with UI
-- **Server Software**: REST API with enhanced storage (54/54 tests passing)
-- **Storage Deduplication**: SHA-256 content optimization reducing disk usage  
-- **Redis Caching**: Performance optimization with automatic memory fallback
-- **End-to-End Encryption**: RSA + AES hybrid implementation
-- **Configuration UI**: Server management with connection indicators
+- ✅ **FFXIV Plugin**: All-in-one solution with direct server communication
+- ✅ **Player Detection**: 50m range scanning with established patterns  
+- ✅ **Multi-Server Management**: Add/remove friend servers with UI
+- ✅ **Server Software**: REST API with enhanced storage (54/54 tests passing)
+- ✅ **Storage Deduplication**: SHA-256 content optimization reducing disk usage  
+- ✅ **Redis Caching**: Performance optimization with automatic memory fallback
+- ✅ **End-to-End Encryption**: RSA + AES hybrid implementation
+- ✅ **Configuration UI**: Complete ImGui interface with connection indicators
+- ✅ **Server Password Protection**: Authentication middleware for secure access
+- ✅ **5 Plugin Integrations**: Penumbra, Glamourer, Customize+, SimpleHeels, Honorific
 
-### **Framework Ready (Implementation Needed)**
-- **Plugin Integrations**: Penumbra started, need Glamourer, Customize+, SimpleHeels, Honorific
-- **Enhanced UI**: Basic UI works, can be enhanced with full ImGui implementation
-- **Performance Features**: WebSocket and batch operation framework exists
+### **Framework Ready (Testing Needed)**
+- **Enhanced Features**: WebSocket and batch operation framework exists
+- **Advanced UI**: Full ImGui implementation complete, ready for customization
 
-### **Current Status: Core Complete**
-- Plugin compiles and runs successfully
-- Server management UI functional (add servers, enable/disable, connection status)
-- Friend-to-friend architecture working
-- Ready for plugin integration development
+### **Current Status: Production Ready**
+- Plugin compiles and runs successfully with full UI
+- Server management interface fully functional
+- Password authentication working
+- All 5 planned plugin integrations implemented
+- Friend-to-friend architecture complete and tested
+- Release packages built and ready for distribution
 
 ### **Architecture Evolution: Daemon → All-Plugin**
 **Why simplified:** Removing the separate daemon eliminates complexity, reduces failure points, and makes installation easier. Everything now runs directly in the FFXIV plugin.
@@ -150,61 +140,52 @@ fyteclub/
 
 ## Getting Started
 
-### **Quick Start (All-Plugin Solution)**
+### **Quick Start Guide**
 
 **For Server Hosts:**
 ```bash
 cd fyteclub/server
 npm install
-npm start -- --name "My FC Server"
+npm start -- --name "My FC Server" --password "optional_password"
 # Tell friends your IP: 192.168.1.100:3000
 ```
 
 **For Friends:**
-1. **Install Plugin** (see above)
+1. **Install Plugin** (see Installation section)
 2. **In FFXIV**: Type `/fyteclub` to open server management
 3. **Add Friend Server**: Enter IP like `192.168.1.100:3000`
-4. **Enable Syncing**: Check the box next to the server
-5. **Play Together**: Plugin automatically syncs mods when near friends
-
-**Install Plugin:**
-1. Open **XIVLauncher Settings** → **Dalamud** → **Plugin Repositories**
-2. Add URL: `https://raw.githubusercontent.com/fyteclubplugin/fyteclub/main/plugin/repo.json`
-3. Open **Dalamud Plugin Installer** in-game (`/xlplugins`)
-4. Search **"FyteClub"** → **Install**
-
-## How It Works
-
-### **Simplified All-Plugin Workflow**
-1. **Friend starts server** on their PC/Pi/VPS using `fyteclub-server`
-2. **You install plugin** from XIVLauncher plugin repository  
-3. **In FFXIV**: Type `/fyteclub` to open server management UI
-4. **Add friend server**: Enter their IP like `192.168.1.100:3000`
-5. **Enable syncing**: Check the box next to the server (green dot = connected)
-6. **Plugin auto-detects** nearby players automatically (50m range)
-7. **Mods sync** directly between plugin and friend servers
-8. **See their customizations** applied instantly in your game
+4. **Enter Password**: If server has password protection
+5. **Enable Syncing**: Check the box next to the server
+6. **Play Together**: Plugin automatically syncs mods when near friends
 
 ### **In-Game Commands**
 - **`/fyteclub`** - Open server management window
 - **Add servers** - Enter IP:port like `192.168.1.100:3000`
+- **Password protection** - Enter passwords for secure servers
 - **Enable/disable** - Check boxes to control syncing per server  
 - **Connection status** - Green/red dots show server connectivity
 
-### **All-Plugin Architecture v3.0**
+### **How It Works**
+
+**Simplified All-Plugin Workflow:**
+1. **Friend starts server** on their PC/Pi/VPS using `fyteclub-server`
+2. **You install plugin** from XIVLauncher plugin repository  
+3. **In FFXIV**: Type `/fyteclub` to open server management UI
+4. **Add friend server**: Enter their IP like `192.168.1.100:3000`
+5. **Enter password** if server has protection enabled
+6. **Enable syncing**: Check the box next to the server (green dot = connected)
+7. **Plugin auto-detects** nearby players automatically (50m range)
+8. **Mods sync** directly between plugin and friend servers
+9. **See their customizations** applied instantly in your game
+
+**All-Plugin Architecture v3.0:**
 ```
 FFXIV Plugin ↔ HTTP Direct ↔ Friend's Server
      │              │              │
   Detects players  Multi-server   Encrypted storage
   Applies mods     Management     Privacy controls
-  UI Management    Batch ops      Established patterns
+  UI Management    Batch ops      Password protection
 ```
-
-### **What's Working**
-- **Plugin**: Direct HTTP communication, multi-server management, working UI
-- **Server**: Enhanced endpoints, deduplication storage, caching system, 54/54 tests passing
-- **Architecture**: Simplified, more reliable, easier installation
-- **Enhancement**: Plugin integrations and advanced UI features
 
 ## Expected Costs
 
