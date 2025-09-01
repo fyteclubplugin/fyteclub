@@ -1,15 +1,16 @@
 @echo off
-:: FyteClub Release Builder v3.0.3
-:: Updated for Enhanced Storage & Caching Architecture (September 2025)
+:: FyteClub Release Builder - Dynamic Version
+:: Updated for Intelligent Mod Caching (September 2025)
 :: 
-:: v3.0.3 Features:
-:: - Storage deduplication with SHA-256 hashing
-:: - Redis caching with memory fallback
-:: - Enhanced database operations with proper indexing
-:: - Comprehensive test suite (54/54 tests passing)
-:: - Optimized network communication
+:: Features:
+:: - Intelligent mod state comparison and caching
+:: - SHA-256 mod data hashing for uniqueness detection
+:: - Time-based protection against application spam
+:: - Enhanced performance and reduced redundancy
+:: - User-controllable cache management UI
 ::
-echo Building FyteClub v3.0.3 Releases (Enhanced Storage and Caching)...
+set /p CURRENT_VERSION=<VERSION
+echo Building FyteClub v%CURRENT_VERSION% Releases (Intelligent Mod Caching)...
 
 :: Clean previous builds
 if exist "release" rmdir /s /q "release"
@@ -91,17 +92,17 @@ cd ..
 echo [6/6] Build verification...
 echo.
 echo ===============================================
-echo [*] FyteClub v3.0.3 Build Complete!
+echo [*] FyteClub v%CURRENT_VERSION% Build Complete!
 echo ===============================================
 echo.
 echo [>] Release Packages Created:
-echo   • FyteClub-Plugin.zip - FFXIV plugin with v3.0.3 enhancements
+echo   • FyteClub-Plugin.zip - FFXIV plugin with v%CURRENT_VERSION% enhancements
 echo   • FyteClub-Server.zip - Complete server package with setup scripts
 echo.
-echo [>] New in v3.0.3:
-echo   • Storage deduplication with SHA-256 hashing
-echo   • Redis caching with memory fallback
-echo   • Enhanced database operations
+echo [>] New in v%CURRENT_VERSION%:
+echo   • Intelligent mod state comparison and caching
+echo   • SHA-256 mod data hashing for uniqueness detection
+echo   • Time-based protection against application spam
 echo   • 54/54 comprehensive tests passing
 echo   • Ultra-fast response times ^(^<50ms^)
 echo.
@@ -121,4 +122,5 @@ echo 📁 Release folder contents:
 dir release\*.zip
 echo.
 echo [INFO] Ready for GitHub release upload!
-echo Next: Create release tag with: git tag -a v3.0.3 -m "FyteClub v3.0.3 - Connection Status & Infrastructure Fixes"
+set /p CURRENT_VERSION=<VERSION
+echo Next: Create release tag with: git tag -a v%CURRENT_VERSION% -m "FyteClub v%CURRENT_VERSION% - Intelligent Mod Caching"
