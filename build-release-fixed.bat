@@ -1,5 +1,5 @@
 @echo off
-echo Building FyteClub v1.1.1 Releases...
+echo Building FyteClub v3.0.3 Releases...
 
 :: Clean previous builds
 if exist "release" rmdir /s /q "release"

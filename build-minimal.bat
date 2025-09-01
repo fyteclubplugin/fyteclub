@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-echo Building FyteClub v1.1.1 Releases...
+echo Building FyteClub v3.0.3 Releases...
 
 :: Clean and create release directory
 if exist "release" rmdir /s /q "release"

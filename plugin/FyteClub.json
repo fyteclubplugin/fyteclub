@@ -2,9 +2,9 @@
   "Author": "FyteClub Team",
   "Name": "FyteClub",
   "Punchline": "You do not talk about FyteClub",
-  "Description": "[v3.0 ENHANCED] Advanced mod sharing with storage deduplication, Redis caching, and optimized database operations. Enhanced performance and reliability.",
+  "Description": "[v3.0.3 STABILITY] Advanced mod sharing with connection status fixes, Redis auto-detection, and enhanced build scripts. Improved reliability and infrastructure.",
   "InternalName": "FyteClub",
-  "AssemblyVersion": "3.0.0",
+  "AssemblyVersion": "3.0.3",
   "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
   "ApplicableVersion": "any",
   "Tags": [
