@@ -4,7 +4,7 @@
 
 set -e
 
-echo "🥊 FyteClub Raspberry Pi Installer"
+echo "[*] FyteClub Raspberry Pi Installer"
 echo "=================================="
 echo "Simple friend-to-friend mod sharing server"
 echo ""
@@ -213,27 +213,27 @@ HOSTNAME=$(hostname)
 
 # Installation complete
 echo ""
-echo "🎉 FyteClub Installation Complete!"
+echo "[*] FyteClub Installation Complete!"
 echo "=================================="
 echo ""
-echo "📊 Server Information:"
+echo "[INFO] Server Information:"
 echo "   Hostname: $HOSTNAME"
 echo "   Local IP: $LOCAL_IP"
 echo "   Port: 3000"
 echo "   Directory: $INSTALL_DIR"
 echo ""
-echo "🚀 Start Server:"
+echo "[>] Start Server:"
 echo "   Manual: ./start-server.sh"
 if sudo systemctl is-enabled fyteclub &>/dev/null; then
 echo "   Service: sudo systemctl start fyteclub"
 echo "   Logs: sudo journalctl -u fyteclub -f"
 fi
 echo ""
-echo "🌐 Connection URLs:"
+echo "[INFO] Connection URLs:"
 echo "   Local Network: http://$LOCAL_IP:3000"
 echo "   Health Check: http://$LOCAL_IP:3000/health"
 echo ""
-echo "⚙️  Router Configuration:"
+echo "[!] Router Configuration:"
 echo "   1. Log into your router admin panel"
 echo "   2. Set up port forwarding:"
 echo "      External Port: 3000"
@@ -251,7 +251,7 @@ echo "   Status: sudo systemctl status fyteclub"
 fi
 echo "   Update: Re-run this script"
 echo ""
-echo "📚 Troubleshooting:"
+echo "[?] Troubleshooting:"
 echo "   Check logs: tail -f ~/.fyteclub/server.log"
 echo "   Test local: curl http://localhost:3000/health"
 echo "   Check port: netstat -tlnp | grep :3000"

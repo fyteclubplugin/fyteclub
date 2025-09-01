@@ -43,7 +43,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo ✅ Build complete!
+echo [OK] Build complete!
 echo.
 echo Installers created in dist/ folder:
 dir dist\*.exe dist\*.msi 2>nul

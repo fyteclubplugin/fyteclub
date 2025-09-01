@@ -41,7 +41,7 @@ echo ""
 # Check if running on Raspberry Pi
 echo "[1/6] Checking system compatibility..."
 if ! grep -q "Raspberry Pi" /proc/cpuinfo 2>/dev/null; then
-    echo "⚠️  Warning: This doesn't appear to be a Raspberry Pi"
+    echo "[WARN] Warning: This doesn't appear to be a Raspberry Pi"
     echo "This script is optimized for Raspberry Pi but may work on other Linux systems"
     read -p "Continue anyway? (y/N): " -n 1 -r
     echo
@@ -49,35 +49,35 @@ if ! grep -q "Raspberry Pi" /proc/cpuinfo 2>/dev/null; then
         echo "Setup cancelled"
         exit 1
     fi
-    echo "✅ Proceeding with Linux setup"
+    echo "[OK] Proceeding with Linux setup"
 else
     PI_MODEL=$(grep "Raspberry Pi" /proc/cpuinfo | head -1 | cut -d':' -f2 | xargs)
-    echo "✅ Detected: $PI_MODEL"
+    echo "[OK] Detected: $PI_MODEL"
 fi
 
 # Check system requirements
 echo "[2/6] Checking system requirements..."
 RAM_MB=$(free -m | awk 'NR==2{printf "%.0f", $2}')
 if [ "$RAM_MB" -lt 512 ]; then
-    echo "❌ Insufficient RAM: ${RAM_MB}MB (minimum 512MB required)"
+    echo "[ERROR] Insufficient RAM: ${RAM_MB}MB (minimum 512MB required)"
     exit 1
 fi
-echo "✅ RAM: ${RAM_MB}MB available"
+echo "[OK] RAM: ${RAM_MB}MB available"
 
 # Check if Node.js is installed
 echo "[3/6] Checking Node.js installation..."
 if ! command -v node &> /dev/null; then
-    echo "❌ Node.js not found. Installing Node.js 18..."
+    echo "[ERROR] Node.js not found. Installing Node.js 18..."
     curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
     sudo apt-get install -y nodejs
     if [ $? -ne 0 ]; then
-        echo "❌ Failed to install Node.js"
+        echo "[ERROR] Failed to install Node.js"
         exit 1
     fi
-    echo "✅ Node.js $(node --version) installed"
+    echo "[OK] Node.js $(node --version) installed"
 else
     NODE_VERSION=$(node --version)
-    echo "✅ Node.js $NODE_VERSION found"
+    echo "[OK] Node.js $NODE_VERSION found"
 fi
 
 # Install dependencies

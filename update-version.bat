@@ -46,11 +46,11 @@ if /i not "%CONFIRM%"=="Y" (
 echo.
 echo [1/7] Updating VERSION file...
 echo %NEW_VERSION% > VERSION
-echo ✅ VERSION file updated
+echo [OK] VERSION file updated
 
 echo [2/7] Updating server package.json...
 powershell -Command "(Get-Content 'server\package.json') -replace '\"version\": \".*\"', '\"version\": \"%NEW_VERSION%\"' | Set-Content 'server\package.json'"
-echo ✅ server/package.json updated
+echo [OK] server/package.json updated
 
 echo [3/7] Updating client package.json...
 powershell -Command "(Get-Content 'client\package.json') -replace '\"version\": \".*\"', '\"version\": \"%NEW_VERSION%\"' | Set-Content 'client\package.json'"
@@ -77,7 +77,7 @@ echo ✅ Documentation updated
 
 echo.
 echo ===============================================
-echo 🎉 Version Update Complete!
+echo [*] Version Update Complete!
 echo ===============================================
 echo.
 echo Updated from: %CURRENT_VERSION%
@@ -92,7 +92,7 @@ echo   • plugin/FyteClub.json
 echo   • plugin/repo.json
 echo   • Documentation files
 echo.
-echo 🚀 Next steps:
+echo [>] Next steps:
 echo   1. Review changes: git diff
 echo   2. Test build: build-pc.bat or npm test
 echo   3. Commit: git add . ^&^& git commit -m "Release v%NEW_VERSION%"
