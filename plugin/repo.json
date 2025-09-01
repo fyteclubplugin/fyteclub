@@ -5,7 +5,7 @@
     "Punchline": "You do not talk about FyteClub",
     "Description": "[v3.0 ENHANCED] Advanced mod sharing with storage deduplication, Redis caching, and optimized database operations. Enhanced performance and reliability.",
     "InternalName": "FyteClub",
-    "AssemblyVersion": "3.0.0",
+    "AssemblyVersion": "3.0.5",
     "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
     "ApplicableVersion": "any",
     "Tags": [

@@ -71,7 +71,7 @@ FyteClub uses a simplified, all-in-one plugin architecture:
 
 ## Project Status
 
-✅ **v3.0.0 Release Complete** - All Core Features Working
+✅ **v3.0.5 Release Complete** - All Core Features Working
 
 ### **Complete and Working**
 - ✅ **FFXIV Plugin**: All-in-one solution with direct server communication
