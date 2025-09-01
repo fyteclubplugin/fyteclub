@@ -11,7 +11,7 @@ class LocalServer {
     this.db = null;
     this.port = 3000;
     this.apiKey = null;
-    this.dataDir = path.join(require('os').homedir(), '.stallionsync', 'server');
+    this.dataDir = path.join(require('os').homedir(), '.fyteclub', 'server');
   }
 
   async initialize() {
@@ -32,7 +32,7 @@ class LocalServer {
   }
 
   async initDatabase() {
-    const dbPath = path.join(this.dataDir, 'stallionsync.db');
+    const dbPath = path.join(this.dataDir, 'fyteclub.db');
     this.db = new sqlite3.Database(dbPath);
     
     // Create tables
@@ -119,7 +119,7 @@ class LocalServer {
     // Health check (no auth required)
     this.app.get('/health', (req, res) => {
       res.json({
-        service: 'stallionsync',
+        service: 'fyteclub',
         version: '1.0.0',
         uptime: process.uptime(),
         mode: 'local-pc',
@@ -205,7 +205,7 @@ class LocalServer {
         if (error) {
           reject(error);
         } else {
-          console.log(`StallionSync local server running on port ${port}`);
+          console.log(`FyteClub local server running on port ${port}`);
           resolve({
             port: port,
             apiKey: this.apiKey,

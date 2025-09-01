@@ -1,6 +1,6 @@
-# StallionSync Infrastructure
+# FyteClub Infrastructure
 
-Terraform infrastructure code for deploying StallionSync backend services optimized for AWS free tier.
+Terraform infrastructure code for deploying FyteClub backend services optimized for AWS free tier.
 
 ## Components
 
@@ -53,7 +53,7 @@ terraform destroy
 ## Architecture
 
 ```
-FFXIV Client → StallionSync Client → API Gateway → Lambda → DynamoDB
+FFXIV Client → FyteClub Client → API Gateway → Lambda → DynamoDB
                                            ↓
                                       S3 Storage
 ```

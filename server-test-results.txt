@@ -1,0 +1,8 @@
+🧪 Testing FyteClub Server Connection
+====================================
+❌ Connection Failed: 
+
+💡 Possible issues:
+   - Server not running
+   - Port 3000 not accessible
+   - Firewall blocking connection

@@ -50,10 +50,10 @@ class PiSetup {
     try {
       const response = await axios.get(`http://${ip}:${port}/health`, {
         timeout: 2000,
-        headers: { 'User-Agent': 'StallionSync-Client' }
+        headers: { 'User-Agent': 'FyteClub-Client' }
       });
 
-      if (response.data && response.data.service === 'stallionsync') {
+      if (response.data && response.data.service === 'fyteclub') {
         return {
           status: 'online',
           version: response.data.version,
@@ -62,7 +62,7 @@ class PiSetup {
         };
       }
     } catch (error) {
-      // Connection failed - not a StallionSync Pi
+      // Connection failed - not a FyteClub Pi
     }
     return null;
   }
@@ -95,11 +95,11 @@ class PiSetup {
     // Test 3: API health check
     try {
       const response = await axios.get(`http://${ip}:${port}/health`, { timeout: 5000 });
-      if (response.data.service === 'stallionsync') {
+      if (response.data.service === 'fyteclub') {
         tests.apiHealth = true;
       }
     } catch (error) {
-      return { tests, error: 'StallionSync API not responding' };
+      return { tests, error: 'FyteClub API not responding' };
     }
 
     // Test 4: Authentication (if API key provided)

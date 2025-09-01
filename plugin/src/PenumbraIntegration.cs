@@ -140,7 +140,7 @@ namespace FyteClub
             return true;
         }
 
-        private async Task<bool> RemoveModDirect(string playerName, string modId)
+        private Task<bool> RemoveModDirect(string playerName, string modId)
         {
             try
             {
@@ -150,12 +150,12 @@ namespace FyteClub
                     File.Delete(modFile);
                     pluginLog.Information($"FyteClub: Removed mod directly");
                 }
-                return true;
+                return Task.FromResult(true);
             }
             catch (Exception ex)
             {
                 pluginLog.Error($"FyteClub: Direct mod removal failed: {ex.Message}");
-                return false;
+                return Task.FromResult(false);
             }
         }
 

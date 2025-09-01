@@ -37,6 +37,16 @@ class FyteClubServer {
 
     setupRoutes() {
         // Health check
+        // Health check endpoint
+        this.app.get('/health', (req, res) => {
+            res.json({
+                service: 'fyteclub',
+                status: 'healthy',
+                timestamp: Date.now()
+            });
+        });
+
+        // Status endpoint
         this.app.get('/api/status', (req, res) => {
             res.json({
                 name: this.name,
@@ -45,6 +55,16 @@ class FyteClubServer {
                 users: this.database.getUserCount(),
                 timestamp: Date.now()
             });
+        });
+
+        // Server statistics endpoint
+        this.app.get('/api/stats', async (req, res) => {
+            try {
+                const stats = await this.modSyncService.getServerStats();
+                res.json(stats);
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
         });
 
         // Player management
@@ -167,9 +187,12 @@ class FyteClubServer {
 
     async start() {
         try {
+            console.log('🔧 Initializing database...');
             await this.database.initialize();
+            console.log('✅ Database initialized successfully');
             
-            this.server = this.app.listen(this.port, () => {
+            console.log('🔧 Starting HTTP server...');
+            this.server = this.app.listen(this.port, '0.0.0.0', () => {
                 console.log('');
                 console.log('🥊 FyteClub Server Started!');
                 console.log('');
@@ -179,6 +202,15 @@ class FyteClubServer {
                 console.log('');
                 console.log('🎮 Ready for friends to connect!');
                 console.log('');
+                console.log('✅ HTTP server is now listening on port', this.port);
+            });
+
+            this.server.on('error', (err) => {
+                console.error('❌ Server error:', err.message);
+                if (err.code === 'EADDRINUSE') {
+                    console.error(`Port ${this.port} is already in use. Try a different port.`);
+                }
+                throw err;
             });
 
             // Show connection info
@@ -210,3 +242,16 @@ class FyteClubServer {
 }
 
 module.exports = FyteClubServer;
+
+// Start server if this file is run directly
+if (require.main === module) {
+    const server = new FyteClubServer();
+    server.start();
+    
+    // Handle graceful shutdown
+    process.on('SIGINT', async () => {
+        console.log('\n👋 Shutting down FyteClub server...');
+        await server.stop();
+        process.exit(0);
+    });
+}

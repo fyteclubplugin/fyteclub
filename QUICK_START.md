@@ -1,6 +1,8 @@
-# FyteClub Quick Start Guide
+# Quick Start Guide - v3.0.0
 
-## **For Server Hosts (One Person in Your Group)**
+## Enhanced All-Plugin Architecture
+
+Simple setup with direct HTTP communication, now featuring storage deduplication and Redis caching for optimal performance.
 
 ### **Option 1: Run on Your Gaming PC**
 ```bash

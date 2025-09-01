@@ -1,30 +1,29 @@
-# FyteClub Feature Specification: Complete FFXIV Mod Sync System
+# FyteClub Feature Specification: FFXIV Mod Sync System
 
-## Core Philosophy: Set and Forget
+## Core Philosophy: Automated Sharing
 
-FyteClub is designed to be **fully automatic** - once configured, it syncs mods in the background whenever anyone in your server comes in contact with anyone else. No manual intervention required.
+FyteClub is designed to be **automatic** - once configured, it syncs mods in the background when players in your server encounter each other. Minimal manual intervention required.
 
 ## Core Mod Synchronization Features
 
 ### **Essential Features Implemented**
-- **Fully automatic sync** - Background sync whenever players meet
-- **Set and forget** - No manual intervention needed
+- **Automatic sync** - Background sync when players meet
 - **Proximity-based detection** - 50-meter range with distance filtering
 - **Automatic mod switching** - When players enter/leave range
 - **Zone awareness** - Different mod sets per territory
 - **Player identification** - Name + World + ContentId tracking
 - **Individual mod collections** - Each player gets their own mods applied
 - **Performance optimization** - Rate limiting and change detection
-- **5 Plugin integration** - Penumbra, Glamourer, Customize+, SimpleHeels, Honorific
+- **Plugin integration** - Penumbra, Glamourer, Customize+, SimpleHeels, Honorific
 - **Real-time updates** - Automatic mod application
 - **Distance filtering** - Proximity-based sync
 
-### **Security Advantages**
+### **Security Features**
 - **End-to-end encryption** - Protect mod data in transit
-- **Zero-knowledge server** - Server never sees actual mod content
+- **Privacy controls** - Server handles only encrypted data
 - **Self-hosted options** - User controls their own data
 - **XIVLauncher integration** - Trusted distribution platform
-- **Cryptographic proofs** - Verify mod ownership without revealing content
+- **Ownership verification** - Verify mod ownership without revealing content
 
 ## Additional Features FyteClub Should Have
 

@@ -2,9 +2,9 @@
   "Author": "FyteClub Team",
   "Name": "FyteClub",
   "Punchline": "You do not talk about FyteClub",
-  "Description": "[v2.0 PERFORMANCE] Real-time mod sharing with WebSocket communication, batch operations, and smart filtering. 10x faster than v1.0.",
+  "Description": "[v3.0 ENHANCED] Advanced mod sharing with storage deduplication, Redis caching, and optimized database operations. Enhanced performance and reliability.",
   "InternalName": "FyteClub",
-  "AssemblyVersion": "2.0.1",
+  "AssemblyVersion": "3.0.0",
   "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
   "ApplicableVersion": "any",
   "Tags": [

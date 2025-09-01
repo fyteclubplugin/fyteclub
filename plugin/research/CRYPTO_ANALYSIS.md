@@ -259,4 +259,4 @@ public class ModOwnershipProof
 4. **Test with real mod files**
 5. **Add zero-knowledge proofs** for ownership
 
-FyteClub's cryptographic approach is enterprise-grade security that makes Rabbit look like a toy! 🔐
+FyteClub's cryptographic approach provides robust security with proper key management and encryption!

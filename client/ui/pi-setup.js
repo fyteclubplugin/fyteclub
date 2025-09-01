@@ -47,23 +47,23 @@ function copyInstallCommand() {
 
 async function scanNetwork() {
     const discoveryDiv = document.getElementById('pi-discovery');
-    discoveryDiv.innerHTML = '<p>🔍 Scanning network for StallionSync servers...</p>';
+    discoveryDiv.innerHTML = '<p>Scanning network for FyteClub servers...</p>';
     
     try {
         const discoveries = await ipcRenderer.invoke('scan-pi-network');
         
         if (discoveries.length === 0) {
             discoveryDiv.innerHTML = `
-                <p>❌ No StallionSync servers found on your network</p>
+                <p>No FyteClub servers found on your network</p>
                 <p>Make sure your Raspberry Pi is:</p>
                 <ul>
                     <li>Connected to the same network</li>
-                    <li>Running StallionSync service</li>
+                    <li>Running FyteClub service</li>
                     <li>Firewall allows port 3000</li>
                 </ul>
             `;
         } else {
-            let html = '<h3>Found StallionSync Servers:</h3>';
+            let html = '<h3>Found FyteClub Servers:</h3>';
             discoveries.forEach((pi, index) => {
                 html += `
                     <div class="pi-item" onclick="selectPi('${pi.ip}', ${pi.port})">

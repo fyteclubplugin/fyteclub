@@ -1,6 +1,6 @@
 # FyteClub Plugin Build & Update Guide
 
-## 🎯 Quick Build
+## Quick Build
 
 ### Master Release Build (Recommended)
 ```bash
@@ -32,7 +32,7 @@ build-plugin-release.bat
 - **Visual Studio Code** or **Visual Studio** - Recommended IDEs
 - **Git** - Version control
 
-## 🔧 Project Structure
+## Project Structure
 
 ```
 fyteclub/
@@ -51,7 +51,7 @@ fyteclub/
 └── build-plugin-release.bat   # Automated build script
 ```
 
-## 🚀 Build Process
+## Build Process
 
 ### 1. Plugin Build (C#)
 ```bash
@@ -120,7 +120,7 @@ build-plugin-release.bat
 ### Run Test Suite
 ```bash
 node run-tests.js
-# Expected: 35 tests passed (14 server, 21 client)
+# Expected: 54 tests passed (34 server, 15 client, 5 integration)
 ```
 
 ### Manual Testing
@@ -156,9 +156,19 @@ node run-tests.js
 
 #### 1. Create Release Tag
 ```bash
-# Tag the current commit
-git tag v1.0.0
-git push origin v1.0.0
+```cmd
+git tag v3.0.0
+git push origin v3.0.0
+```
+
+### 📦 **Release Creation**
+1. **Go to GitHub** → Releases → "Create a new release"
+2. **Generate release notes** → Auto-generate from commits  
+3. **Choose tag:** Select `v3.0.0` (or create new)
+4. **Release title:** `FyteClub v3.0.0 - Enhanced Storage & Caching`
+5. **Upload:** `FyteClub-Plugin.zip` and `FyteClub-Server.zip`
+
+## 🎉 FyteClub v3.0.0 Release
 ```
 
 #### 2. Create GitHub Release
@@ -183,13 +193,13 @@ git push origin v1.0.0
 - Zero-knowledge server architecture
 
 ### 📦 Installation
-1. Download `FyteClub-Plugin-v1.0.0.zip`
+1. Download `FyteClub-Plugin-v3.0.0.zip`
 2. Extract to XIVLauncher plugins folder
 3. Run `fyteclub.exe start` for daemon
 4. Use `/fyteclub` command in-game
 
 ### 🧪 Testing
-- ✅ 35/35 tests passing
+- ✅ 54/54 tests passing
 - ✅ Security review completed
 - ✅ Production ready
 ```
@@ -207,9 +217,9 @@ git push origin v1.0.0
 # Update plugin manifest with download URL
 # Edit: plugin/repo.json
 {
-  "DownloadLinkInstall": "https://github.com/fyteclubplugin/fyteclub/releases/download/v1.0.0/FyteClub-Plugin-v1.0.0.zip",
-  "DownloadLinkTesting": "https://github.com/fyteclubplugin/fyteclub/releases/download/v1.0.0/FyteClub-Plugin-v1.0.0.zip",
-  "DownloadLinkUpdate": "https://github.com/fyteclubplugin/fyteclub/releases/download/v1.0.0/FyteClub-Plugin-v1.0.0.zip"
+  "DownloadLinkInstall": "https://github.com/fyteclubplugin/fyteclub/releases/download/v3.0.0/FyteClub-Plugin-v3.0.0.zip",
+  "DownloadLinkTesting": "https://github.com/fyteclubplugin/fyteclub/releases/download/v3.0.0/FyteClub-Plugin-v3.0.0.zip",
+  "DownloadLinkUpdate": "https://github.com/fyteclubplugin/fyteclub/releases/download/v3.0.0/FyteClub-Plugin-v3.0.0.zip"
 }
 ```
 
@@ -279,7 +289,7 @@ git push origin v1.0.0
 ## 🎉 Release Checklist
 
 ### Pre-Release
-- [ ] All tests passing (35/35)
+- [ ] All tests passing (54/54)
 - [ ] Security review completed
 - [ ] Version numbers updated
 - [ ] Master build script tested (`build-release.bat`)
@@ -291,8 +301,8 @@ git push origin v1.0.0
 - [ ] Release notes prepared
 
 ### GitHub Release
-- [ ] Git tag created (`git tag v1.0.0`)
-- [ ] Tag pushed to GitHub (`git push origin v1.0.0`)
+- [ ] Git tag created (`git tag v3.0.0`)
+- [ ] Tag pushed to GitHub (`git push origin v3.0.0`)
 - [ ] GitHub release created with proper description
 - [ ] Release zip uploaded as asset
 - [ ] Plugin repository manifest updated with download URLs
@@ -322,7 +332,7 @@ chmod +x build-pi.sh
 - ✅ 99.9% uptime
 - ✅ Remote SSH management
 
-### 🌩️ AWS Cloud (Enterprise Grade)
+### 🌩️ AWS Cloud (Reliable Hosting)
 **Best for:** Maximum uptime, global access, automatic scaling
 
 ```bash
@@ -362,7 +372,7 @@ build-pc.bat
 | Method | Cost | Uptime | Setup Time | Best For |
 |--------|------|--------|------------|----------|
 | **Raspberry Pi** | $2/month | 99.9% | 10 min | Always-on hosting |
-| **AWS Cloud** | $0/month* | 99.99% | 5 min | Enterprise reliability |
+| **AWS Cloud** | $0/month* | 99.99% | 5 min | Reliable hosting |
 | **Gaming PC** | $0/month | When PC on | 2 min | Casual gaming sessions |
 
 *Stays in AWS free tier with auto-cleanup
@@ -371,4 +381,4 @@ build-pc.bat
 
 **Build Status:** ✅ Ready for Production  
 **Security Status:** ✅ Vulnerabilities Fixed  
-**Test Status:** ✅ All Tests Passing (35/35)
+**Test Status:** ✅ All Tests Passing (54/54)

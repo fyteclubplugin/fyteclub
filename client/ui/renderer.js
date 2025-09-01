@@ -1,6 +1,6 @@
 const { ipcRenderer } = require('electron');
 
-class StallionSyncUI {
+class FyteClubUI {
     constructor() {
         this.config = {};
         this.init();
@@ -224,4 +224,4 @@ class StallionSyncUI {
 }
 
 // Initialize UI when DOM is loaded
-const ui = new StallionSyncUI();
+const ui = new FyteClubUI();

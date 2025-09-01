@@ -1,5 +1,5 @@
-/**
- * StallionSync Terms of Service
+/*
+ * FyteClub Terms of Service
  * Simple, humorous terms that users must accept on first run
  */
 

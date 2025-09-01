@@ -1,5 +1,5 @@
 @echo off
-echo StallionSync Infrastructure Deployment
+echo FyteClub Infrastructure Deployment
 echo =====================================
 echo.
 
@@ -54,5 +54,5 @@ echo Deployment complete! Your API endpoint:
 terraform output api_endpoint
 
 echo.
-echo Save this endpoint URL for your StallionSync client configuration.
+echo Save this endpoint URL for your FyteClub client configuration.
 pause

@@ -3,7 +3,10 @@ const { ipcRenderer } = require('electron');
 let currentStep = 1;
 const totalSteps = 5;
 
-function updateProgress() {
+function up            // Save configuration to FyteClub
+            await ipcRenderer.invoke('save-aws-config', outputs);
+            
+            addLog('Configuration saved to FyteClub');Progress() {
     const progress = (currentStep / totalSteps) * 100;
     document.getElementById('progress').style.width = `${progress}%`;
 }

@@ -1,0 +1,14 @@
+{
+  "testEnvironment": "node",
+  "testMatch": [
+    "**/database-service.test.js",
+    "**/*-isolated.test.js"
+  ],
+  "collectCoverage": true,
+  "coverageDirectory": "coverage",
+  "coverageReporters": ["text", "lcov", "html"],
+  "verbose": true,
+  "forceExit": true,
+  "detectOpenHandles": true,
+  "testTimeout": 10000
+}

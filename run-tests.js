@@ -8,17 +8,19 @@ async function runTests() {
     
     const testDirs = [
         { name: 'Server', dir: 'server' },
-        { name: 'Client', dir: 'client' }
+        { name: 'Client', dir: 'client' },
+        { name: 'Plugin', dir: 'plugin/tests', command: 'dotnet test --logger "console;verbosity=normal"' }
     ];
     
     let totalPassed = 0;
     let totalFailed = 0;
     
-    for (const { name, dir } of testDirs) {
+    for (const testDir of testDirs) {
+        const { name, dir } = testDir;
         console.log(`📋 Testing ${name}...`);
         
         try {
-            const result = await runTestInDir(dir);
+            const result = await runTestInDir(dir, testDir.command);
             console.log(`✅ ${name}: ${result.passed} passed, ${result.failed} failed\n`);
             totalPassed += result.passed;
             totalFailed += result.failed;
@@ -40,12 +42,21 @@ async function runTests() {
     }
 }
 
-function runTestInDir(dir) {
+function runTestInDir(dir, customCommand) {
     return new Promise((resolve, reject) => {
         const isWindows = process.platform === 'win32';
-        const npmCmd = isWindows ? 'npm.cmd' : 'npm';
         
-        const testProcess = spawn(npmCmd, ['test'], {
+        let command, args;
+        if (customCommand) {
+            const parts = customCommand.split(' ');
+            command = parts[0];
+            args = parts.slice(1);
+        } else {
+            command = isWindows ? 'npm.cmd' : 'npm';
+            args = ['test'];
+        }
+        
+        const testProcess = spawn(command, args, {
             cwd: path.join(__dirname, dir),
             stdio: 'pipe',
             shell: isWindows
@@ -64,13 +75,21 @@ function runTestInDir(dir) {
         });
         
         testProcess.on('close', (code) => {
-            // Parse Jest output for pass/fail counts
+            // Parse Jest output for pass/fail counts or dotnet test output
             const testSuitesMatch = output.match(/Test Suites: (\d+) passed(?:, (\d+) failed)?/);
             const testsMatch = output.match(/Tests:\s+(\d+) passed(?:, (\d+) failed)?/);
+            const dotnetMatch = output.match(/Passed!\s*-\s*Failed:\s*(\d+),\s*Passed:\s*(\d+)/);
+            const dotnetMatch2 = output.match(/Total tests: (\d+)\. Passed: (\d+)\. Failed: (\d+)/);
             
             if (testsMatch) {
                 passed = parseInt(testsMatch[1]) || 0;
                 failed = parseInt(testsMatch[2]) || 0;
+            } else if (dotnetMatch) {
+                failed = parseInt(dotnetMatch[1]) || 0;
+                passed = parseInt(dotnetMatch[2]) || 0;
+            } else if (dotnetMatch2) {
+                passed = parseInt(dotnetMatch2[2]) || 0;
+                failed = parseInt(dotnetMatch2[3]) || 0;
             }
             
             if (code === 0) {

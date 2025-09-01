@@ -112,13 +112,13 @@ class AWSSetup {
     // Alternative to Terraform - CloudFormation template for one-click deploy
     const template = {
       AWSTemplateFormatVersion: '2010-09-09',
-      Description: 'StallionSync Infrastructure',
+      Description: 'FyteClub Infrastructure',
       Resources: {
         // DynamoDB Tables
         PlayersTable: {
           Type: 'AWS::DynamoDB::Table',
           Properties: {
-            TableName: 'stallionsync-players',
+            TableName: 'fyteclub-players',
             BillingMode: 'PAY_PER_REQUEST',
             AttributeDefinitions: [
               { AttributeName: 'playerId', AttributeType: 'S' }
@@ -132,7 +132,7 @@ class AWSSetup {
         ModsBucket: {
           Type: 'AWS::S3::Bucket',
           Properties: {
-            BucketName: { 'Fn::Sub': 'stallionsync-mods-${AWS::AccountId}' },
+            BucketName: { 'Fn::Sub': 'fyteclub-mods-${AWS::AccountId}' },
             LifecycleConfiguration: {
               Rules: [{
                 Status: 'Enabled',
@@ -145,7 +145,7 @@ class AWSSetup {
         ApiFunction: {
           Type: 'AWS::Lambda::Function',
           Properties: {
-            FunctionName: 'stallionsync-api',
+            FunctionName: 'fyteclub-api',
             Runtime: 'nodejs18.x',
             Handler: 'index.handler',
             Code: {
@@ -158,7 +158,7 @@ class AWSSetup {
         ApiGateway: {
           Type: 'AWS::ApiGateway::RestApi',
           Properties: {
-            Name: 'stallionsync-api'
+            Name: 'fyteclub-api'
           }
         }
       },

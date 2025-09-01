@@ -1,4 +1,4 @@
-# FyteClub Architecture Guide v2.0
+# FyteClub Architecture Guide v3.0
 
 ## 🏗️ **System Overview**
 
@@ -221,17 +221,19 @@ When you change appearance:
 
 ---
 
-## 🎯 **Key Improvements from v1.0**
+## 🎯 **Key Improvements Across Versions**
 
-| Feature | v1.0 | v2.0 |
-|---------|------|------|
-| **Communication** | HTTP polling | WebSocket real-time |
-| **Requests** | Individual per player | Batch operations |
-| **Filtering** | Check all players | Movement-based filtering |
-| **Caching** | None | 5-minute memory cache |
-| **Network Traffic** | High (20+ req/min) | Low (1-3 req/min) |
-| **Response Time** | 3-5 seconds | Instant (<100ms) |
-| **Hanging Issues** | Frequent timeouts | Eliminated |
+| Feature | v1.0 | v2.0 | v3.0 |
+|---------|------|------|------|
+| **Communication** | HTTP polling | WebSocket real-time | Enhanced WebSocket + REST |
+| **Requests** | Individual per player | Batch operations | Optimized batch + deduplication |
+| **Filtering** | Check all players | Movement-based filtering | Smart filtering + caching |
+| **Caching** | None | 5-minute memory cache | Redis + memory fallback |
+| **Storage** | Basic file storage | Improved organization | SHA-256 deduplication |
+| **Network Traffic** | High (20+ req/min) | Low (1-3 req/min) | Minimal (optimized) |
+| **Response Time** | 3-5 seconds | Instant (<100ms) | Ultra-fast (<50ms) |
+| **Hanging Issues** | Frequent timeouts | Eliminated | Eliminated |
+| **Database** | Basic SQLite | Enhanced queries | Optimized with indexes |
 
 ---
 

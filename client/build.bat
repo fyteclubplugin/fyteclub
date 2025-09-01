@@ -1,5 +1,5 @@
 @echo off
-echo Building StallionSync Windows Installer...
+echo Building FyteClub Windows Installer...
 echo.
 
 REM Check if Node.js is installed
@@ -48,5 +48,5 @@ echo.
 echo Installers created in dist/ folder:
 dir dist\*.exe dist\*.msi 2>nul
 echo.
-echo Ready to distribute StallionSync! 🐎
+echo Ready to distribute FyteClub!
 pause

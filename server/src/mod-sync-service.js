@@ -1,10 +1,17 @@
 const path = require('path');
 const fs = require('fs');
+const DeduplicationService = require('./deduplication-service');
+const CacheService = require('./cache-service');
 
 class ModSyncService {
     constructor(dataDir) {
         this.dataDir = dataDir;
         this.modsDir = path.join(dataDir, 'mods');
+        this.deduplication = new DeduplicationService(dataDir);
+        this.cache = new CacheService({
+            ttl: 300, // 5 minutes
+            enableFallback: true
+        });
         this.ensureModsDirectory();
     }
 
@@ -50,18 +57,34 @@ class ModSyncService {
 
     async updatePlayerMods(playerId, encryptedMods) {
         try {
-            // Store encrypted mod data
+            // Store mod data with deduplication
+            const contentBuffer = Buffer.from(JSON.stringify(encryptedMods));
+            const storeResult = await this.deduplication.storeContent(contentBuffer);
+            
+            // Store metadata pointing to deduplicated content
             const modFile = path.join(this.modsDir, `${playerId}.json`);
             const modData = {
                 playerId,
-                encryptedMods,
+                contentHash: storeResult.hash,
+                size: storeResult.size,
+                isDuplicate: storeResult.isDuplicate,
                 updatedAt: Date.now()
             };
             
             fs.writeFileSync(modFile, JSON.stringify(modData, null, 2));
-            console.log(`💾 Updated mods for player ${playerId}`);
             
-            return { success: true };
+            // Update cache
+            const cacheKey = `player_mods:${playerId}`;
+            await this.cache.set(cacheKey, encryptedMods, 300); // 5 minutes
+            
+            const dedupeMsg = storeResult.isDuplicate ? ' (deduplicated)' : ' (new content)';
+            console.log(`💾 Updated mods for player ${playerId}${dedupeMsg}`);
+            
+            return { 
+                success: true,
+                isDuplicate: storeResult.isDuplicate,
+                hash: storeResult.hash
+            };
         } catch (error) {
             console.error('Error updating player mods:', error);
             throw error;
@@ -70,6 +93,13 @@ class ModSyncService {
 
     async getPlayerMods(playerId) {
         try {
+            // Check cache first
+            const cacheKey = `player_mods:${playerId}`;
+            const cachedMods = await this.cache.get(cacheKey);
+            if (cachedMods) {
+                return cachedMods;
+            }
+
             const modFile = path.join(this.modsDir, `${playerId}.json`);
             
             if (!fs.existsSync(modFile)) {
@@ -82,12 +112,33 @@ class ModSyncService {
             // Check if data is stale (older than 24 hours)
             const maxAge = 24 * 60 * 60 * 1000; // 24 hours
             if (Date.now() - modData.updatedAt > maxAge) {
-                // Clean up stale data
+                // Clean up stale data and remove content reference
+                if (modData.contentHash) {
+                    await this.deduplication.removeContentReference(modData.contentHash);
+                }
                 fs.unlinkSync(modFile);
                 return null;
             }
             
-            return modData.encryptedMods;
+            let encryptedMods = null;
+            
+            // Retrieve deduplicated content
+            if (modData.contentHash) {
+                const contentBuffer = await this.deduplication.getContent(modData.contentHash);
+                if (contentBuffer) {
+                    encryptedMods = JSON.parse(contentBuffer.toString());
+                }
+            } else {
+                // Fallback for old format
+                encryptedMods = modData.encryptedMods || null;
+            }
+            
+            // Cache the result for future requests
+            if (encryptedMods) {
+                await this.cache.set(cacheKey, encryptedMods, 300); // 5 minutes
+            }
+            
+            return encryptedMods;
         } catch (error) {
             console.error('Error getting player mods:', error);
             return null;
@@ -104,16 +155,24 @@ class ModSyncService {
                 if (!file.endsWith('.json')) continue;
                 
                 const filePath = path.join(this.modsDir, file);
-                const stats = fs.statSync(filePath);
+                const data = fs.readFileSync(filePath, 'utf8');
+                const modData = JSON.parse(data);
                 
-                if (Date.now() - stats.mtime.getTime() > maxAge) {
+                if (Date.now() - modData.updatedAt > maxAge) {
+                    // Remove content reference for deduplication
+                    if (modData.contentHash) {
+                        await this.deduplication.removeContentReference(modData.contentHash);
+                    }
                     fs.unlinkSync(filePath);
                     cleaned++;
                 }
             }
             
-            if (cleaned > 0) {
-                console.log(`🧹 Cleaned up ${cleaned} old mod files`);
+            // Also cleanup orphaned content
+            const orphansCleanedCount = await this.deduplication.cleanup();
+            
+            if (cleaned > 0 || orphansCleanedCount > 0) {
+                console.log(`🧹 Cleaned up ${cleaned} old mod files and ${orphansCleanedCount} orphaned content files`);
             }
         } catch (error) {
             console.error('Error cleaning up old mods:', error);
@@ -132,16 +191,26 @@ class ModSyncService {
                 totalSize += stats.size;
             }
             
+            // Get deduplication stats
+            const dedupeStats = this.deduplication.getStats();
+            
+            // Get cache stats
+            const cacheStats = this.cache.getStats();
+            
             return {
                 totalPlayers: modFiles.length,
                 totalDataSize: totalSize,
-                dataDirectory: this.dataDir
+                dataDirectory: this.dataDir,
+                deduplication: dedupeStats,
+                cache: cacheStats
             };
         } catch (error) {
             return {
                 totalPlayers: 0,
                 totalDataSize: 0,
-                dataDirectory: this.dataDir
+                dataDirectory: this.dataDir,
+                deduplication: { error: error.message },
+                cache: { error: error.message }
             };
         }
     }
