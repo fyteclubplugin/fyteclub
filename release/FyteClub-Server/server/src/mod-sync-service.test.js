@@ -16,10 +16,14 @@ describe('ModSyncService', () => {
         fs.mkdirSync(testDataDir, { recursive: true });
         
         service = new ModSyncService(testDataDir);
-        await service.initialize();
     });
 
     afterEach(async () => {
+        // Close cache connections
+        if (service && service.cache) {
+            await service.cache.close();
+        }
+        
         if (fs.existsSync(testDataDir)) {
             fs.rmSync(testDataDir, { recursive: true });
         }
@@ -28,8 +32,8 @@ describe('ModSyncService', () => {
     describe('constructor', () => {
         it('should initialize with deduplication and cache services', () => {
             expect(service.dataDir).toBe(testDataDir);
-            expect(service.deduplicationService).toBeInstanceOf(DeduplicationService);
-            expect(service.cacheService).toBeInstanceOf(CacheService);
+            expect(service.deduplication).toBeInstanceOf(DeduplicationService);
+            expect(service.cache).toBeInstanceOf(CacheService);
         });
     });
 

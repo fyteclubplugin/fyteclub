@@ -145,12 +145,122 @@ if "%redis_choice%"=="1" (
     echo.
     echo [INFO] Docker Desktop Redis Setup:
     echo.
-    echo 1. Install Docker Desktop from https://docker.com/products/docker-desktop
-    echo 2. After Docker is running, open command prompt and run:
-    echo    docker run -d --name fyteclub-redis -p 6379:6379 redis:alpine
-    echo 3. Restart your FyteClub server to use Redis
+    
+    REM Check if Docker is running
+    docker --version >nul 2>&1
+    if %ERRORLEVEL% EQU 0 (
+        echo [DETECTED] Docker is available
+        
+        REM Check if Docker Desktop is running
+        docker ps >nul 2>&1
+        if %ERRORLEVEL% EQU 0 (
+            echo [RUNNING] Docker Desktop is running
+            
+            REM Check if FyteClub Redis container already exists and is running
+            docker ps --filter "name=fyteclub-redis" --format "{{.Names}}" | findstr "fyteclub-redis" >nul 2>&1
+            if %ERRORLEVEL% EQU 0 (
+                echo [FOUND] FyteClub Redis container is already running!
+                echo [TEST] Testing existing Redis connection...
+                docker exec fyteclub-redis redis-cli ping >nul 2>&1
+                if %ERRORLEVEL% EQU 0 (
+                    echo [OK] Existing Redis is working perfectly!
+                    echo [SKIP] No need to create new container
+                ) else (
+                    echo [WARNING] Existing Redis not responding, restarting...
+                    docker restart fyteclub-redis
+                    timeout /t 3 /nobreak >nul
+                    docker exec fyteclub-redis redis-cli ping >nul 2>&1
+                    if %ERRORLEVEL% EQU 0 (
+                        echo [OK] Redis restarted successfully
+                    ) else (
+                        echo [ERROR] Redis restart failed
+                    )
+                )
+            ) else (
+                REM Check if container exists but is stopped
+                docker ps -a --filter "name=fyteclub-redis" --format "{{.Names}}" | findstr "fyteclub-redis" >nul 2>&1
+                if %ERRORLEVEL% EQU 0 (
+                    echo [FOUND] FyteClub Redis container exists but is stopped
+                    echo [START] Starting existing container...
+                    docker start fyteclub-redis
+                    if %ERRORLEVEL% EQU 0 (
+                        echo [SUCCESS] Existing Redis container started!
+                        timeout /t 3 /nobreak >nul
+                        docker exec fyteclub-redis redis-cli ping >nul 2>&1
+                        if %ERRORLEVEL% EQU 0 (
+                            echo [OK] Redis is responding to ping
+                        ) else (
+                            echo [WARNING] Redis may still be starting up
+                        )
+                    ) else (
+                        echo [ERROR] Failed to start existing container, creating new one...
+                        docker rm fyteclub-redis >nul 2>&1
+                        docker run -d --name fyteclub-redis -p 6379:6379 redis:alpine
+                    )
+                ) else (
+                    echo [CREATE] Creating new FyteClub Redis container...
+                    docker run -d --name fyteclub-redis -p 6379:6379 redis:alpine
+                    if %ERRORLEVEL% EQU 0 (
+                        echo [SUCCESS] Redis container created successfully!
+                        echo [TEST] Testing Redis connection...
+                        timeout /t 3 /nobreak >nul
+                        docker exec fyteclub-redis redis-cli ping >nul 2>&1
+                        if %ERRORLEVEL% EQU 0 (
+                            echo [OK] Redis is responding to ping
+                        ) else (
+                            echo [WARNING] Redis may still be starting up
+                        )
+                    ) else (
+                        echo [ERROR] Failed to create Redis container
+                    )
+                )
+            )
+        ) else (
+            echo [NOT RUNNING] Docker Desktop is not running
+            echo.
+            echo [ACTION] Opening Docker Desktop...
+            start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe" 2>nul || (
+                echo [INFO] Could not auto-start Docker Desktop
+                echo Please manually start Docker Desktop and then run:
+                echo    docker run -d --name fyteclub-redis -p 6379:6379 redis:alpine
+            )
+            echo.
+            echo [WAIT] Waiting for Docker Desktop to start...
+            echo Press any key after Docker Desktop is running to continue...
+            pause >nul
+            goto :retry_docker
+        )
+    ) else (
+        echo [NOT INSTALLED] Docker is not installed
+        echo.
+        echo [DOWNLOAD] Opening Docker Desktop download page...
+        start https://docker.com/products/docker-desktop
+        echo.
+        echo After installing Docker Desktop:
+        echo 1. Start Docker Desktop
+        echo 2. Open command prompt and run:
+        echo    docker run -d --name fyteclub-redis -p 6379:6379 redis:alpine
+        echo 3. Restart your FyteClub server to use Redis
+    )
     echo.
-    echo [OK] Docker Redis instructions provided
+    echo [OK] Docker Redis setup completed
+    
+    :retry_docker
+    if "%redis_choice%"=="1" (
+        docker ps >nul 2>&1
+        if %ERRORLEVEL% NEQ 0 (
+            echo [RETRY] Docker still not ready. Try starting Redis manually:
+            echo    docker run -d --name fyteclub-redis -p 6379:6379 redis:alpine
+        ) else (
+            echo [RETRY] Docker is now ready. Starting Redis...
+            docker stop fyteclub-redis >nul 2>&1
+            docker rm fyteclub-redis >nul 2>&1
+            docker run -d --name fyteclub-redis -p 6379:6379 redis:alpine
+            if %ERRORLEVEL% EQU 0 (
+                echo [SUCCESS] Redis container started after retry!
+            )
+        )
+    )
 ) else if "%redis_choice%"=="2" (
     echo.
     echo [INFO] WSL2 Redis Setup:

@@ -15,31 +15,24 @@ class CacheService {
             enableFallback: options.enableFallback !== false
         };
         
-        this.initializeRedis();
+        // Start Redis initialization but don't wait for it
+        this.initializeRedis().catch(err => {
+            console.log('🟡 Redis: Initialization failed, using fallback cache:', err.message);
+            this.isEnabled = false;
+        });
     }
 
     async initializeRedis() {
         try {
-            // Create Redis client
-            const clientOptions = {
+            // Create Redis client with simpler options
+            this.client = redis.createClient({
                 socket: {
                     host: this.options.host,
                     port: this.options.port,
-                    reconnectStrategy: (retries) => {
-                        if (retries > this.options.retryAttempts) {
-                            console.log('🔴 Redis: Max retry attempts reached, using fallback cache');
-                            return false;
-                        }
-                        return Math.min(retries * this.options.retryDelay, 3000);
-                    }
-                }
-            };
-
-            if (this.options.password) {
-                clientOptions.password = this.options.password;
-            }
-
-            this.client = redis.createClient(clientOptions);
+                    connectTimeout: 2000,
+                },
+                password: this.options.password
+            });
 
             // Setup event handlers
             this.client.on('connect', () => {
@@ -50,17 +43,19 @@ class CacheService {
             this.client.on('error', (err) => {
                 console.log('🟡 Redis: Connection error, using fallback cache:', err.message);
                 this.isEnabled = false;
+                this.client = null;
             });
 
-            this.client.on('reconnecting', () => {
-                console.log('🟡 Redis: Reconnecting...');
-            });
+            // Try to connect with a simple timeout
+            await Promise.race([
+                this.client.connect(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+            ]);
 
-            // Attempt connection
-            await this.client.connect();
         } catch (error) {
             console.log('🟡 Redis: Failed to initialize, using fallback cache:', error.message);
             this.isEnabled = false;
+            this.client = null;
         }
     }
 

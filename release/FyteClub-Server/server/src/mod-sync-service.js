@@ -26,17 +26,28 @@ class ModSyncService {
             // Update player's current session
             const database = require('./database-service');
             
+            if (!nearbyPlayers || !Array.isArray(nearbyPlayers)) {
+                throw new Error('nearbyPlayers must be an array');
+            }
+            
             // For each nearby player, check if we have their mods
             const playerModData = [];
             
             for (const player of nearbyPlayers) {
-                const mods = await this.getPlayerMods(player.contentId.toString());
+                // Validate player object structure
+                if (!player || !player.contentId) {
+                    console.warn(`Invalid player object: ${JSON.stringify(player)}`);
+                    continue;
+                }
+                
+                const playerIdStr = typeof player.contentId === 'string' ? player.contentId : player.contentId.toString();
+                const mods = await this.getPlayerMods(playerIdStr);
                 if (mods) {
                     playerModData.push({
-                        playerId: player.contentId.toString(),
-                        playerName: player.name,
+                        playerId: playerIdStr,
+                        playerName: player.name || 'Unknown',
                         encryptedMods: mods,
-                        distance: player.distance
+                        distance: player.distance || 0
                     });
                 }
             }
@@ -57,6 +68,14 @@ class ModSyncService {
 
     async updatePlayerMods(playerId, encryptedMods) {
         try {
+            if (!playerId) {
+                throw new Error('Player ID is required');
+            }
+            
+            if (!encryptedMods) {
+                throw new Error('Encrypted mods data is required');
+            }
+            
             // Store mod data with deduplication
             const contentBuffer = Buffer.from(JSON.stringify(encryptedMods));
             const storeResult = await this.deduplication.storeContent(contentBuffer);

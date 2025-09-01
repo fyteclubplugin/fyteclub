@@ -59,6 +59,10 @@ class FyteClubServer {
         // Health check
         // Health check endpoint
         this.app.get('/health', (req, res) => {
+            // Log health check requests (connectivity tests)
+            const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+            console.log(`[HEALTH CHECK] Connection test from ${clientIP}`);
+            
             res.json({
                 service: 'fyteclub',
                 status: 'healthy',
@@ -122,9 +126,21 @@ class FyteClubServer {
         this.app.get('/api/mods/:playerId', async (req, res) => {
             try {
                 const { playerId } = req.params;
+                
+                // Log player connection request
+                console.log(`[CONNECTION] ${playerId} requested mods from server`);
+                
                 const mods = await this.modSyncService.getPlayerMods(playerId);
-                res.json({ mods });
+                
+                if (mods) {
+                    console.log(`[SUCCESS] Sent mod data for ${playerId}`);
+                    res.json({ mods });
+                } else {
+                    console.log(`[NOT FOUND] No mods found for ${playerId}`);
+                    res.status(404).json({ error: 'Player not found or no mods available' });
+                }
             } catch (error) {
+                console.error(`[ERROR] Failed to get mods for ${playerId}: ${error.message}`);
                 res.status(500).json({ error: error.message });
             }
         });
@@ -254,8 +270,18 @@ class FyteClubServer {
 
     async stop() {
         if (this.server) {
-            this.server.close();
+            // Properly await server close
+            await new Promise((resolve) => {
+                this.server.close(resolve);
+            });
+            
             await this.database.close();
+            
+            // Close cache service if it exists
+            if (this.modSyncService && this.modSyncService.cache) {
+                await this.modSyncService.cache.close();
+            }
+            
             console.log('👋 FyteClub server stopped');
         }
     }
