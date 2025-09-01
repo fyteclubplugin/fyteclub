@@ -14,6 +14,7 @@ class FyteClubServer {
         this.port = options.port || 3000;
         this.name = options.name || 'FyteClub Server';
         this.dataDir = options.dataDir || path.join(process.env.HOME || process.env.USERPROFILE, '.fyteclub');
+        this.serverPassword = options.password || null; // Password protection
         
         this.app = express();
         this.modSyncService = new ModSyncService(this.dataDir);
@@ -33,6 +34,25 @@ class FyteClubServer {
         }));
         this.app.use(express.json({ limit: '50mb' }));
         this.app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+        
+        // Password authentication middleware
+        if (this.serverPassword) {
+            this.app.use('/api', (req, res, next) => {
+                // Skip authentication for health check
+                if (req.path === '/status') {
+                    return next();
+                }
+                
+                const providedPassword = req.headers['x-fyteclub-password'] || req.query.password;
+                if (providedPassword !== this.serverPassword) {
+                    return res.status(401).json({
+                        error: 'Authentication required',
+                        message: 'Invalid or missing password'
+                    });
+                }
+                next();
+            });
+        }
     }
 
     setupRoutes() {
@@ -245,7 +265,25 @@ module.exports = FyteClubServer;
 
 // Start server if this file is run directly
 if (require.main === module) {
-    const server = new FyteClubServer();
+    // Parse command line arguments
+    const args = process.argv.slice(2);
+    const options = {};
+    
+    // Parse named arguments
+    for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--name' && i + 1 < args.length) {
+            options.name = args[i + 1];
+            i++;
+        } else if (args[i] === '--port' && i + 1 < args.length) {
+            options.port = parseInt(args[i + 1]);
+            i++;
+        } else if (args[i] === '--password' && i + 1 < args.length) {
+            options.password = args[i + 1];
+            i++;
+        }
+    }
+    
+    const server = new FyteClubServer(options);
     server.start();
     
     // Handle graceful shutdown

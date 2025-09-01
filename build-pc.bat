@@ -110,12 +110,33 @@ echo   • Test local: http://localhost:3000/health
 echo   • Check firewall: Allow port 3000
 echo   • Check antivirus: Whitelist FyteClub folder
 echo.
+echo 🔐 Security Setup:
+echo [?] Do you want to set a password for your server? (Y/N)
+set /p password_choice="Enter choice: "
+set SERVER_PASSWORD=
+if /i "%password_choice%"=="Y" (
+    echo.
+    echo Enter a password for your FyteClub server:
+    echo Note: This password will be required for friends to connect
+    set /p SERVER_PASSWORD="Password: "
+    echo.
+    echo ✅ Password protection enabled
+) else (
+    echo.
+    echo ⚠️  No password set - server will be open to anyone who can connect
+)
+
+echo.
 echo [?] Start server now? (Y/N)
 set /p choice="Enter choice: "
 if /i "%choice%"=="Y" (
     echo.
     echo Starting FyteClub server...
-    start "FyteClub Server" /d "%CD%\server" start-fyteclub.bat
+    if defined SERVER_PASSWORD (
+        start "FyteClub Server" /d "%CD%\server" cmd /c "node src/server.js --name \"%COMPUTERNAME% FyteClub Server\" --password \"%SERVER_PASSWORD%\" & pause"
+    ) else (
+        start "FyteClub Server" /d "%CD%\server" start-fyteclub.bat
+    )
     echo ✅ Server started in new window
     echo.
     echo Keep that window open while friends are connected!
@@ -123,8 +144,12 @@ if /i "%choice%"=="Y" (
 ) else (
     echo.
     echo ✅ Setup complete! Start the server when ready:
-    echo   • Desktop shortcut: "FyteClub Server"
-    echo   • Manual: server\start-fyteclub.bat
+    if defined SERVER_PASSWORD (
+        echo   • Manual with password: node src/server.js --name "%COMPUTERNAME% FyteClub Server" --password "%SERVER_PASSWORD%"
+    ) else (
+        echo   • Desktop shortcut: "FyteClub Server"
+        echo   • Manual: server\start-fyteclub.bat
+    )
     echo.
     echo Press any key to close...
 )

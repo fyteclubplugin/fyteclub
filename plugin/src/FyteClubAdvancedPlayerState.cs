@@ -31,8 +31,11 @@ namespace FyteClub
         public List<string> Mods { get; set; } = new();
         public string? ActiveCollection { get; set; }
         public string? GlamourerDesign { get; set; }
+        public string? GlamourerData { get; set; } // Additional field for full Glamourer data
         public string? CustomizePlusProfile { get; set; }
+        public string? CustomizePlusData { get; set; } // Additional field for full Customize+ data
         public float? SimpleHeelsOffset { get; set; }
+        public string? HeelsData { get; set; } // Additional field for full heels data
         public string? HonorificTitle { get; set; }
         
         // Lock and sync information

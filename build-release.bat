@@ -30,10 +30,26 @@ cd ..
 :: Create Plugin Package
 echo [2/6] Creating Plugin package...
 mkdir "release\FyteClub-Plugin"
+
+:: Copy main plugin files
 copy "plugin\bin\Release\FyteClub.dll" "release\FyteClub-Plugin\"
 copy "plugin\bin\Release\FyteClub.deps.json" "release\FyteClub-Plugin\"
 copy "plugin\FyteClub.json" "release\FyteClub-Plugin\"
-echo ✅ Plugin files copied
+
+:: Copy runtime dependencies if they exist
+if exist "plugin\bin\Release\runtimes" (
+    echo Copying runtime dependencies...
+    xcopy "plugin\bin\Release\runtimes" "release\FyteClub-Plugin\runtimes\" /E /I /Q
+)
+
+:: Copy any additional dependency DLLs that might be needed
+for %%f in ("plugin\bin\Release\*.dll") do (
+    if not "%%~nf"=="FyteClub" (
+        copy "%%f" "release\FyteClub-Plugin\"
+    )
+)
+
+echo ✅ Plugin files and dependencies copied
 
 :: Create Plugin README
 echo [3/6] Creating Plugin README...
