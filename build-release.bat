@@ -1,15 +1,15 @@
 @echo off
-:: FyteClub Release Builder v3.0.0
+:: FyteClub Release Builder v3.0.3
 :: Updated for Enhanced Storage & Caching Architecture (September 2025)
 :: 
-:: v3.0.0 Features:
+:: v3.0.3 Features:
 :: - Storage deduplication with SHA-256 hashing
 :: - Redis caching with memory fallback
 :: - Enhanced database operations with proper indexing
 :: - Comprehensive test suite (54/54 tests passing)
 :: - Optimized network communication
 ::
-echo Building FyteClub v3.0.0 Releases (Enhanced Storage and Caching)...
+echo Building FyteClub v3.0.3 Releases (Enhanced Storage and Caching)...
 
 :: Clean previous builds
 if exist "release" rmdir /s /q "release"
@@ -53,7 +53,7 @@ echo [OK] Plugin files and dependencies copied
 
 :: Create Plugin README
 echo [3/6] Creating Plugin README...
-powershell -command "@('# FyteClub Plugin v3.0.0 - Enhanced Mod Sharing', '', 'FyteClub v3.0.0 brings advanced storage deduplication, Redis caching,', 'and optimized database operations for enhanced performance.', '', 'INSTALLATION:', '1. Install XIVLauncher and Dalamud', '2. Copy all files to: %APPDATA%\XIVLauncher\installedPlugins\FyteClub\latest\', '3. Restart FFXIV', '4. Use /fyteclub command in-game', '', 'COMMANDS:', '/fyteclub - Open configuration window', '/fyteclub block PlayerName - Block a user', '/fyteclub unblock PlayerName - Unblock a user', '', 'NEW IN v3.0.0:', '- Storage deduplication eliminates duplicate mod files', '- Redis caching for ultra-fast response times (<50ms)', '- Enhanced database with proper indexing', '- Comprehensive error handling and logging', '- 54/54 tests passing for maximum reliability') | Out-File 'release\FyteClub-Plugin\README.txt' -Encoding UTF8"
+powershell -command "@('# FyteClub Plugin v3.0.3 - Enhanced Mod Sharing', '', 'FyteClub v3.0.3 brings advanced storage deduplication, Redis caching,', 'and optimized database operations for enhanced performance.', '', 'INSTALLATION:', '1. Install XIVLauncher and Dalamud', '2. Copy all files to: %APPDATA%\XIVLauncher\installedPlugins\FyteClub\latest\', '3. Restart FFXIV', '4. Use /fyteclub command in-game', '', 'COMMANDS:', '/fyteclub - Open configuration window', '/fyteclub block PlayerName - Block a user', '/fyteclub unblock PlayerName - Unblock a user', '', 'NEW IN v3.0.3:', '- Storage deduplication eliminates duplicate mod files', '- Redis caching for ultra-fast response times (<50ms)', '- Enhanced database with proper indexing', '- Comprehensive error handling and logging', '- 54/54 tests passing for maximum reliability') | Out-File 'release\FyteClub-Plugin\README.txt' -Encoding UTF8"
 echo [OK] Plugin README created
 
 :: Create Server Package
@@ -70,7 +70,7 @@ if exist "server-readme-template.txt" (
     echo [OK] Comprehensive README.txt copied with proper UTF-8 encoding
 ) else (
     echo [WARN] Template not found, creating basic README...
-    powershell -command "@('FyteClub Server v3.0.0 - Setup Guide', '', 'Choose your installation method:', '1. Gaming PC: run build-pc.bat', '2. Raspberry Pi: run build-pi.sh', '3. AWS Cloud: run build-aws.bat') | Out-File 'release\FyteClub-Server\README.txt' -Encoding UTF8"
+    powershell -command "@('FyteClub Server v3.0.3 - Setup Guide', '', 'Choose your installation method:', '1. Gaming PC: run build-pc.bat', '2. Raspberry Pi: run build-pi.sh', '3. AWS Cloud: run build-aws.bat') | Out-File 'release\FyteClub-Server\README.txt' -Encoding UTF8"
 )
 echo [OK] Server files and documentation ready
 
@@ -91,14 +91,14 @@ cd ..
 echo [6/6] Build verification...
 echo.
 echo ===============================================
-echo [*] FyteClub v3.0.0 Build Complete!
+echo [*] FyteClub v3.0.3 Build Complete!
 echo ===============================================
 echo.
 echo [>] Release Packages Created:
-echo   • FyteClub-Plugin.zip - FFXIV plugin with v3.0.0 enhancements
+echo   • FyteClub-Plugin.zip - FFXIV plugin with v3.0.3 enhancements
 echo   • FyteClub-Server.zip - Complete server package with setup scripts
 echo.
-echo [>] New in v3.0.0:
+echo [>] New in v3.0.3:
 echo   • Storage deduplication with SHA-256 hashing
 echo   • Redis caching with memory fallback
 echo   • Enhanced database operations
@@ -121,4 +121,4 @@ echo 📁 Release folder contents:
 dir release\*.zip
 echo.
 echo [INFO] Ready for GitHub release upload!
-echo Next: Create release tag with: git tag -a v3.0.0 -m "FyteClub v3.0.0 - Enhanced Storage and Caching"
+echo Next: Create release tag with: git tag -a v3.0.3 -m "FyteClub v3.0.3 - Connection Status & Infrastructure Fixes"

@@ -97,7 +97,7 @@ namespace FyteClub
             CheckModSystemAvailability();
             LoadConfiguration();
 
-            _pluginLog.Info("FyteClub v3.0.0 initialized - Enhanced mod sharing with Penumbra, Glamourer, Customize+, and Simple Heels integration");
+            _pluginLog.Info("FyteClub v3.0.3 initialized - Enhanced mod sharing with Penumbra, Glamourer, Customize+, and Simple Heels integration");
         }
 
         private void CheckModSystemAvailability()
@@ -545,6 +545,12 @@ namespace FyteClub
                     $"SimpleHeels: {(_plugin._modSystemIntegration.IsHeelsAvailable ? "Available" : "Unavailable")}");
                 ImGui.TextColored(_plugin._modSystemIntegration.IsHonorificAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
                     $"Honorific: {(_plugin._modSystemIntegration.IsHonorificAvailable ? "Available" : "Unavailable")}");
+                
+                // Add refresh button for plugin detection
+                if (ImGui.Button("Refresh Plugin Detection"))
+                {
+                    _plugin._modSystemIntegration.RefreshPluginDetection();
+                }
                     
                 var syncingCount = _plugin.GetRecentlySyncedUsers().Count();
                 ImGui.Text($"Syncing with: {syncingCount} nearby players");

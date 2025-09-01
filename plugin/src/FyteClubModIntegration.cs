@@ -60,6 +60,12 @@ namespace FyteClub
             InitializeModSystemIPC();
         }
 
+        public void RefreshPluginDetection()
+        {
+            _pluginLog.Information("Refreshing plugin detection...");
+            InitializeModSystemIPC();
+        }
+
         private void InitializeModSystemIPC()
         {
             try
