@@ -134,24 +134,35 @@ echo [!] Redis Cache Setup (Optional - Recommended for 20+ users):
 echo Redis dramatically improves performance but requires additional setup.
 echo Without Redis, the server uses memory caching (still works great for small groups).
 echo.
-echo Redis Installation Options:
-echo   1. Docker Desktop (Recommended) - Easiest setup
-echo   2. WSL + Redis - For advanced users
+echo Redis Installation Options for Windows:
+echo   1. Docker Desktop - Easiest, current Redis version
+echo   2. WSL2 + Ubuntu Redis - Best performance, current Redis version
 echo   3. Skip Redis - Use memory cache fallback
 echo.
-echo [?] Install Redis via Docker Desktop? (Y/N)
-set /p redis_choice="Enter choice: "
-if /i "%redis_choice%"=="Y" (
+echo [?] Which Redis option do you prefer? (1-3)
+set /p redis_choice="Enter choice (1-3): "
+if "%redis_choice%"=="1" (
     echo.
-    echo [INFO] Redis Docker Setup Instructions:
+    echo [INFO] Docker Desktop Redis Setup:
     echo.
     echo 1. Install Docker Desktop from https://docker.com/products/docker-desktop
-    echo 2. After Docker is running, open a new command prompt and run:
+    echo 2. After Docker is running, open command prompt and run:
     echo    docker run -d --name fyteclub-redis -p 6379:6379 redis:alpine
-    echo 3. Restart this FyteClub server to use Redis caching
+    echo 3. Restart your FyteClub server to use Redis
     echo.
-    echo [OK] Redis setup instructions provided
-    echo     Your server will use memory cache until Redis is running
+    echo [OK] Docker Redis instructions provided
+) else if "%redis_choice%"=="2" (
+    echo.
+    echo [INFO] WSL2 Redis Setup:
+    echo.
+    echo 1. Enable WSL2: wsl --install
+    echo 2. Install Ubuntu from Microsoft Store
+    echo 3. In Ubuntu terminal run:
+    echo    sudo apt update ^&^& sudo apt install redis-server
+    echo    sudo service redis-server start
+    echo 4. Restart your FyteClub server to use Redis
+    echo.
+    echo [OK] WSL2 Redis instructions provided
 ) else (
     echo.
     echo [OK] Using memory cache fallback - Redis can be added later
