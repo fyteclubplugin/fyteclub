@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "EXCBR+KF2JY=",
+  "dgSpecHash": "k9Mb3hnDPC8=",
   "success": true,
-  "projectFilePath": "C:\\Users\\Me\\git\\fyteclub\\plugin\\tests\\FyteClubPlugin.Tests.csproj",
+  "projectFilePath": "c:\\Users\\Me\\git\\fyteclub\\plugin\\tests\\FyteClubPlugin.Tests.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\Me\\.nuget\\packages\\castle.core\\5.1.1\\castle.core.5.1.1.nupkg.sha512",
     "C:\\Users\\Me\\.nuget\\packages\\coverlet.collector\\6.0.0\\coverlet.collector.6.0.0.nupkg.sha512",

@@ -4,7 +4,7 @@
   "Punchline": "You do not talk about FyteClub",
   "Description": "Sync with friends",
   "InternalName": "FyteClub",
-  "AssemblyVersion": "3.0.3",
+    "AssemblyVersion": "3.0.4.0",
   "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
   "ApplicableVersion": "any",
   "Tags": [

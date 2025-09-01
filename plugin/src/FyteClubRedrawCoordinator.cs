@@ -28,7 +28,7 @@ namespace FyteClub
                 // Rate limiting pattern: Prevent excessive redraws
                 if (ShouldThrottleRedraw(playerId))
                 {
-                    _pluginLog.Debug($"FyteClub: Throttling redraw for {playerId}");
+                    // _pluginLog.Debug($"FyteClub: Throttling redraw for {playerId}");
                     return;
                 }
 

@@ -127,16 +127,16 @@ class FyteClubServer {
             try {
                 const { playerId } = req.params;
                 
-                // Log player connection request
-                console.log(`[CONNECTION] ${playerId} requested mods from server`);
+                // Log player mod lookup request
+                console.log(`[LOOKUP] Checking if ${playerId} is registered with server`);
                 
                 const mods = await this.modSyncService.getPlayerMods(playerId);
                 
                 if (mods) {
-                    console.log(`[SUCCESS] Sent mod data for ${playerId}`);
+                    console.log(`[FOUND] Returning mod data for ${playerId}`);
                     res.json({ mods });
                 } else {
-                    console.log(`[NOT FOUND] No mods found for ${playerId}`);
+                    console.log(`[NOT REGISTERED] ${playerId} has no mods registered on server`);
                     res.status(404).json({ error: 'Player not found or no mods available' });
                 }
             } catch (error) {

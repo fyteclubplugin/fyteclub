@@ -48,6 +48,7 @@ namespace FyteClub
         // Detection retry system
         private int _detectionRetryCount = 0;
         private DateTime _lastDetectionRetry = DateTime.MinValue;
+        private bool _hasLoggedNoModSystems = false;
 
         // IPC with version checking - established patterns
         private readonly ICallGateSubscriber<bool>? _penumbraEnabled;
@@ -97,7 +98,7 @@ namespace FyteClub
             CheckModSystemAvailability();
             LoadConfiguration();
 
-            _pluginLog.Info("FyteClub v3.0.3 initialized - Enhanced mod sharing with Penumbra, Glamourer, Customize+, and Simple Heels integration");
+            _pluginLog.Info("FyteClub v3.0.4 initialized - Enhanced mod sharing with Penumbra, Glamourer, Customize+, and Simple Heels integration");
         }
 
         private void CheckModSystemAvailability()
@@ -110,9 +111,9 @@ namespace FyteClub
             //    _pluginLog.Info($"FyteClub: Available mod systems: {systems}");
             //}
             //else
-            {
-                _pluginLog.Warning("FyteClub: No mod systems detected. Plugin will work in limited mode.");
-            }
+            //{
+            //    _pluginLog.Warning("FyteClub: No mod systems detected. Plugin will work in limited mode.");
+            //}
         }
 
         private void CheckPenumbraApi()
@@ -156,10 +157,12 @@ namespace FyteClub
                         if (detectedSystems.Count > 0)
                         {
                             _pluginLog.Info($"FyteClub: Final detection results - Found: {string.Join(", ", detectedSystems)}");
+                            _hasLoggedNoModSystems = false; // Reset flag if we find systems
                         }
-                        else
+                        else if (!_hasLoggedNoModSystems)
                         {
                             _pluginLog.Warning("FyteClub: No mod systems detected. Plugin will work in limited mode.");
+                            _hasLoggedNoModSystems = true; // Set flag to prevent spam
                         }
                     }
                 }
@@ -175,8 +178,8 @@ namespace FyteClub
             // Only retry if we haven't reached max attempts and enough time has passed
             if (_detectionRetryCount >= 10) return false;
             
-            // Retry every 5 seconds for the first minute
-            if ((DateTime.UtcNow - _lastDetectionRetry).TotalSeconds < 5) return false;
+            // Retry every 15 seconds instead of 5 to reduce spam
+            if ((DateTime.UtcNow - _lastDetectionRetry).TotalSeconds < 15) return false;
             
             // Check if we need to retry (at least one system is missing that we expect to find)
             return !_modSystemIntegration.IsPenumbraAvailable || 
@@ -235,8 +238,7 @@ namespace FyteClub
                             _loadingStates[playerName] = LoadingState.Applying;
                             
                             // Apply mods using comprehensive mod system integration
-                            //var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, playerName);
-                            var success = true; // Temporary while fixing compilation
+                            var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, playerName);
                             
                             _loadingStates[playerName] = success ? LoadingState.Complete : LoadingState.Failed;
                             
@@ -519,6 +521,9 @@ namespace FyteClub
                 // Block List Section - NEW FEATURE as requested
                 DrawBlockListSection();
                 
+                // Mod Cache Management Section
+                DrawModCacheSection();
+                
                 // Actions Section
                 DrawActionsSection();
             }
@@ -671,6 +676,51 @@ namespace FyteClub
                 }
             }
             
+            private void DrawModCacheSection()
+            {
+                if (ImGui.CollapsingHeader("🎨 Mod Application Cache"))
+                {
+                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Prevents unnecessary re-applications of identical mods");
+                    
+                    var cacheStatus = _plugin._modSystemIntegration.GetCacheStatus();
+                    
+                    if (cacheStatus.Count == 0)
+                    {
+                        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "No cached mod applications");
+                    }
+                    else
+                    {
+                        ImGui.Text($"Cached applications: {cacheStatus.Count}");
+                        ImGui.Separator();
+                        
+                        foreach (var entry in cacheStatus.OrderBy(x => x.Key))
+                        {
+                            var playerName = entry.Key;
+                            var (hash, lastApplied) = entry.Value;
+                            var timeSince = DateTime.UtcNow - lastApplied;
+                            
+                            ImGui.Text($"• {playerName}");
+                            ImGui.SameLine();
+                            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), $"({hash}) - {timeSince.TotalMinutes:F0}m ago");
+                            
+                            ImGui.SameLine();
+                            if (ImGui.SmallButton($"Clear##{playerName}"))
+                            {
+                                _plugin._modSystemIntegration.ClearPlayerModCache(playerName);
+                            }
+                        }
+                        
+                        ImGui.Separator();
+                        if (ImGui.Button("Clear All Cache"))
+                        {
+                            _plugin._modSystemIntegration.ClearAllModCaches();
+                        }
+                        ImGui.SameLine();
+                        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Force re-application of all mods");
+                    }
+                }
+            }
+
             private void DrawActionsSection()
             {
                 // Action buttons (like v2.0.1 Resync button)

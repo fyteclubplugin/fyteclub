@@ -12,11 +12,11 @@ using System.Reflection;
 
 [assembly: System.Reflection.AssemblyCompanyAttribute("FyteClubPlugin.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
-[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+09ec82c8de75a1023440d143ad323604be23c34d")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("3.0.3.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("3.0.3+3c039c6ee5de1421e8a35eacbcbe34ca50675f47")]
 [assembly: System.Reflection.AssemblyProductAttribute("FyteClubPlugin.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("FyteClubPlugin.Tests")]
-[assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
+[assembly: System.Reflection.AssemblyVersionAttribute("3.0.3.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows7.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows7.0")]
 

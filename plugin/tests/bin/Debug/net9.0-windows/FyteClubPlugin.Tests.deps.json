@@ -6,9 +6,9 @@
   "compilationOptions": {},
   "targets": {
     ".NETCoreApp,Version=v9.0": {
-      "FyteClubPlugin.Tests/1.0.0": {
+      "FyteClubPlugin.Tests/3.0.3": {
         "dependencies": {
-          "FyteClub": "3.0.0",
+          "FyteClub": "3.0.3",
           "Microsoft.NET.Test.Sdk": "17.8.0",
           "Moq": "4.20.69",
           "coverlet.collector": "6.0.0",
@@ -1064,7 +1064,7 @@
         }
       },
       "xunit.runner.visualstudio/2.5.3": {},
-      "FyteClub/3.0.0": {
+      "FyteClub/3.0.3": {
         "dependencies": {
           "DalamudPackager": "13.0.0"
         },
@@ -1078,7 +1078,7 @@
     }
   },
   "libraries": {
-    "FyteClubPlugin.Tests/1.0.0": {
+    "FyteClubPlugin.Tests/3.0.3": {
       "type": "project",
       "serviceable": false,
       "sha512": ""
@@ -1734,7 +1734,7 @@
       "path": "xunit.runner.visualstudio/2.5.3",
       "hashPath": "xunit.runner.visualstudio.2.5.3.nupkg.sha512"
     },
-    "FyteClub/3.0.0": {
+    "FyteClub/3.0.3": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

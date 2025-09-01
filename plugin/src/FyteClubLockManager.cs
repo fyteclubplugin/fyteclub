@@ -26,16 +26,16 @@ namespace FyteClub
             var semaphore = GetPlayerSemaphore(playerId);
             await semaphore.WaitAsync(cancellationToken);
             
-            _pluginLog.Debug($"FyteClub: Acquired lock for player {playerId}");
-            return new LockReleaser(semaphore, () => _pluginLog.Debug($"FyteClub: Released lock for player {playerId}"));
+            // _pluginLog.Debug($"FyteClub: Acquired lock for player {playerId}");
+            return new LockReleaser(semaphore, () => { /* _pluginLog.Debug($"FyteClub: Released lock for player {playerId}"); */ });
         }
 
         public async Task<IDisposable> AcquireGlobalLockAsync(CancellationToken cancellationToken = default)
         {
             await _globalLock.WaitAsync(cancellationToken);
             
-            _pluginLog.Debug("FyteClub: Acquired global lock");
-            return new LockReleaser(_globalLock, () => _pluginLog.Debug("FyteClub: Released global lock"));
+            // _pluginLog.Debug("FyteClub: Acquired global lock");
+            return new LockReleaser(_globalLock, () => { /* _pluginLog.Debug("FyteClub: Released global lock"); */ });
         }
 
         public bool TryAcquirePlayerLock(string playerId, out IDisposable lockReleaser)
@@ -43,8 +43,8 @@ namespace FyteClub
             var semaphore = GetPlayerSemaphore(playerId);
             if (semaphore.Wait(0))
             {
-                _pluginLog.Debug($"FyteClub: Acquired immediate lock for player {playerId}");
-                lockReleaser = new LockReleaser(semaphore, () => _pluginLog.Debug($"FyteClub: Released lock for player {playerId}"));
+                // _pluginLog.Debug($"FyteClub: Acquired immediate lock for player {playerId}");
+                lockReleaser = new LockReleaser(semaphore, () => { /* _pluginLog.Debug($"FyteClub: Released lock for player {playerId}"); */ });
                 return true;
             }
 

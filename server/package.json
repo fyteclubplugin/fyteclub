@@ -1,6 +1,6 @@
 {
   "name": "fyteclub-server",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "description": "Self-hosted FyteClub server for friend groups",
   "main": "src/server.js",
   "bin": {
