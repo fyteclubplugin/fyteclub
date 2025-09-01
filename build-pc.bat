@@ -88,6 +88,7 @@ echo [i] Server Information:
 echo   Computer Name: %COMPUTERNAME%
 echo   Local IP: %LOCAL_IP%
 echo   Port: 3000
+echo   Cache: Memory fallback (Redis optional for better performance)
 echo.
 echo [i] Connection URLs:
 echo   Local Network: http://%LOCAL_IP%:3000
@@ -109,6 +110,8 @@ echo [?] Troubleshooting:
 echo   - Test local: http://localhost:3000/health
 echo   - Check firewall: Allow port 3000
 echo   - Check antivirus: Whitelist FyteClub folder
+echo   - Redis setup: Server works without Redis (uses memory cache)
+echo   - Performance: Install Redis via Docker for better caching
 echo.
 echo [#] Security Setup:
 echo [?] Do you want to set a password for your server? (Y/N)
@@ -124,6 +127,35 @@ if /i "%password_choice%"=="Y" (
 ) else (
     echo.
     echo [!] No password set - server will be open to anyone who can connect
+)
+
+echo.
+echo [!] Redis Cache Setup (Optional - Recommended for 20+ users):
+echo Redis dramatically improves performance but requires additional setup.
+echo Without Redis, the server uses memory caching (still works great for small groups).
+echo.
+echo Redis Installation Options:
+echo   1. Docker Desktop (Recommended) - Easiest setup
+echo   2. WSL + Redis - For advanced users
+echo   3. Skip Redis - Use memory cache fallback
+echo.
+echo [?] Install Redis via Docker Desktop? (Y/N)
+set /p redis_choice="Enter choice: "
+if /i "%redis_choice%"=="Y" (
+    echo.
+    echo [INFO] Redis Docker Setup Instructions:
+    echo.
+    echo 1. Install Docker Desktop from https://docker.com/products/docker-desktop
+    echo 2. After Docker is running, open a new command prompt and run:
+    echo    docker run -d --name fyteclub-redis -p 6379:6379 redis:alpine
+    echo 3. Restart this FyteClub server to use Redis caching
+    echo.
+    echo [OK] Redis setup instructions provided
+    echo     Your server will use memory cache until Redis is running
+) else (
+    echo.
+    echo [OK] Using memory cache fallback - Redis can be added later
+    echo     Server will work perfectly for small to medium groups
 )
 
 echo.
