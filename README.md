@@ -1,8 +1,8 @@
 # FyteClub
 
-A decentralized, self-hosted mod-sharing system for Final Fa## Project Status
+A decentralized, self-hosted mod-sharing system for friends! 
 
-### **✅ Complete and Working**
+Project Status
 - ✅ **FFXIV Plugin**: All-in-one solution with direct server communication
 - ✅ **Player Detection**: 50m range scanning with established patterns  
 - ✅ **Multi-Server Management**: Add/remove friend servers with UI
