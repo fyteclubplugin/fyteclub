@@ -8,7 +8,7 @@
     ".NETCoreApp,Version=v9.0": {
       "FyteClubPlugin.Tests/3.0.3": {
         "dependencies": {
-          "FyteClub": "3.0.3",
+          "FyteClub": "3.0.5",
           "Microsoft.NET.Test.Sdk": "17.8.0",
           "Moq": "4.20.69",
           "coverlet.collector": "6.0.0",
@@ -1064,14 +1064,32 @@
         }
       },
       "xunit.runner.visualstudio/2.5.3": {},
-      "FyteClub/3.0.3": {
+      "FyteClub/3.0.5": {
         "dependencies": {
-          "DalamudPackager": "13.0.0"
+          "DalamudPackager": "13.0.0",
+          "Glamourer.Api": "2.6.0",
+          "Penumbra.Api": "5.12.0"
         },
         "runtime": {
           "FyteClub.dll": {
-            "assemblyVersion": "1.0.0.0",
-            "fileVersion": "1.0.0.0"
+            "assemblyVersion": "3.0.3.0",
+            "fileVersion": "3.0.3.0"
+          }
+        }
+      },
+      "Glamourer.Api/2.6.0": {
+        "runtime": {
+          "Glamourer.Api.dll": {
+            "assemblyVersion": "2.6.0.0",
+            "fileVersion": "2.6.0.0"
+          }
+        }
+      },
+      "Penumbra.Api/5.12.0": {
+        "runtime": {
+          "Penumbra.Api.dll": {
+            "assemblyVersion": "5.12.0.0",
+            "fileVersion": "5.12.0.0"
           }
         }
       }
@@ -1734,7 +1752,17 @@
       "path": "xunit.runner.visualstudio/2.5.3",
       "hashPath": "xunit.runner.visualstudio.2.5.3.nupkg.sha512"
     },
-    "FyteClub/3.0.3": {
+    "FyteClub/3.0.5": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Glamourer.Api/2.6.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Penumbra.Api/5.12.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

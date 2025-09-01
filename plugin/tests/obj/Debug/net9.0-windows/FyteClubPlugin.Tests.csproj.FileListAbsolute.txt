@@ -105,3 +105,7 @@ c:\Users\Me\git\fyteclub\plugin\tests\obj\Debug\net9.0-windows\refint\FyteClubPl
 c:\Users\Me\git\fyteclub\plugin\tests\obj\Debug\net9.0-windows\FyteClubPlugin.Tests.pdb
 c:\Users\Me\git\fyteclub\plugin\tests\obj\Debug\net9.0-windows\FyteClubPlugin.Tests.genruntimeconfig.cache
 c:\Users\Me\git\fyteclub\plugin\tests\obj\Debug\net9.0-windows\ref\FyteClubPlugin.Tests.dll
+c:\Users\Me\git\fyteclub\plugin\tests\bin\Debug\net9.0-windows\Glamourer.Api.dll
+c:\Users\Me\git\fyteclub\plugin\tests\bin\Debug\net9.0-windows\Penumbra.Api.dll
+c:\Users\Me\git\fyteclub\plugin\tests\bin\Debug\net9.0-windows\Glamourer.Api.xml
+c:\Users\Me\git\fyteclub\plugin\tests\bin\Debug\net9.0-windows\Penumbra.Api.xml

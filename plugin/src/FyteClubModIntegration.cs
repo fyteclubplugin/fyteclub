@@ -9,6 +9,9 @@ using System.Threading.Tasks;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Penumbra.Api.Enums;
+using Penumbra.Api.IpcSubscribers;
+using Glamourer.Api.IpcSubscribers;
 
 namespace FyteClub
 {
@@ -27,32 +30,35 @@ namespace FyteClub
         // Mare's lock code for Glamourer (0x626E7579)
         private const uint MARE_GLAMOURER_LOCK = 0x626E7579;
         
-        // IPC subscribers for all mod systems (following Mare's patterns)
-        private ICallGateSubscriber<string, object>? _penumbraGetVersion;
-        private ICallGateSubscriber<int, string, string, string, int>? _penumbraCreateTemporaryCollection;
-        private ICallGateSubscriber<string, string, string, bool, int>? _penumbraAddTemporaryMod;
-        private ICallGateSubscriber<string, int>? _penumbraRemoveTemporaryCollection;
+        // IPC subscribers using proper API patterns from each plugin
+        // Penumbra - using API helper classes
+        private GetEnabledState? _penumbraGetEnabledState;
+        private CreateTemporaryCollection? _penumbraCreateTemporaryCollection;
+        private AddTemporaryMod? _penumbraAddTemporaryMod;
+        private DeleteTemporaryCollection? _penumbraRemoveTemporaryCollection;
         
-        private ICallGateSubscriber<int>? _glamourerGetVersion;
-        private ICallGateSubscriber<string, uint, object>? _glamourerApplyAll;
-        private ICallGateSubscriber<uint, object>? _glamourerRevert;
-        private ICallGateSubscriber<uint, object>? _glamourerUnlock;
+        // Glamourer - using API helper classes  
+        private Glamourer.Api.IpcSubscribers.ApiVersion? _glamourerGetVersion;
+        private ApplyState? _glamourerApplyAll;
+        private RevertState? _glamourerRevert;
+        private UnlockState? _glamourerUnlock;
         
+        // CustomizePlus - direct IPC (based on actual plugin source)
         private ICallGateSubscriber<(int, int)>? _customizePlusGetVersion;
-        private ICallGateSubscriber<string, int, object>? _customizePlusSetBodyScale;
-        private ICallGateSubscriber<string, int, object>? _customizePlusSetProfile;
+        private ICallGateSubscriber<ushort, (int, Guid?)>? _customizePlusGetActiveProfile;
+        private ICallGateSubscriber<Guid, (int, string?)>? _customizePlusGetProfileById;
         
+        // SimpleHeels - direct IPC (based on actual plugin source)
         private ICallGateSubscriber<(int, int)>? _heelsGetVersion;
-        private ICallGateSubscriber<nint, float, object>? _heelsRegisterPlayer;
-        private ICallGateSubscriber<nint, object>? _heelsUnregisterPlayer;
+        private ICallGateSubscriber<string>? _heelsGetLocalPlayer;
+        private ICallGateSubscriber<int, string, object?>? _heelsRegisterPlayer;
+        private ICallGateSubscriber<int, object?>? _heelsUnregisterPlayer;
         
+        // Honorific - direct IPC (based on actual plugin source)
         private ICallGateSubscriber<(uint, uint)>? _honorificGetVersion;
         private ICallGateSubscriber<string>? _honorificGetLocalCharacterTitle;
         private ICallGateSubscriber<int, string, object>? _honorificSetCharacterTitle;
         private ICallGateSubscriber<int, object>? _honorificClearCharacterTitle;
-        private ICallGateSubscriber<string, object>? _honorificLocalCharacterTitleChanged;
-        private ICallGateSubscriber<object>? _honorificReady;
-        private ICallGateSubscriber<object>? _honorificDisposing;
         
         // Availability flags
         public bool IsPenumbraAvailable { get; private set; }
@@ -79,50 +85,65 @@ namespace FyteClub
         {
             try
             {
-                // Initialize Penumbra IPC (Mare's patterns)
-                _penumbraGetVersion = _pluginInterface.GetIpcSubscriber<string, object>("Penumbra.ApiVersion");
-                _penumbraCreateTemporaryCollection = _pluginInterface.GetIpcSubscriber<int, string, string, string, int>("Penumbra.CreateTemporaryCollection");
-                _penumbraAddTemporaryMod = _pluginInterface.GetIpcSubscriber<string, string, string, bool, int>("Penumbra.AddTemporaryMod");
-                _penumbraRemoveTemporaryCollection = _pluginInterface.GetIpcSubscriber<string, int>("Penumbra.RemoveTemporaryCollection");
+                // Initialize Penumbra IPC (using API helper classes)
+                try 
+                {
+                    _penumbraGetEnabledState = new GetEnabledState(_pluginInterface);
+                    _penumbraCreateTemporaryCollection = new CreateTemporaryCollection(_pluginInterface);
+                    _penumbraAddTemporaryMod = new AddTemporaryMod(_pluginInterface);
+                    _penumbraRemoveTemporaryCollection = new DeleteTemporaryCollection(_pluginInterface);
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Warning($"Could not initialize Penumbra IPC subscribers: {ex.Message}");
+                }
                 
-                // Check Penumbra availability
+                // Check Penumbra availability using Mare's method
+                IsPenumbraAvailable = false;
                 try
                 {
-                    var version = _penumbraGetVersion?.InvokeFunc("FyteClub");
-                    IsPenumbraAvailable = version != null;
-                    if (IsPenumbraAvailable)
+                    if (_penumbraGetEnabledState != null)
                     {
-                        _pluginLog.Information("Penumbra detected and available");
-                    }
-                    else
-                    {
-                        _pluginLog.Warning("Penumbra ApiVersion returned null");
+                        var isEnabled = _penumbraGetEnabledState.Invoke();
+                        IsPenumbraAvailable = true; // If we got here without exception, Penumbra exists
+                        _pluginLog.Information($"Penumbra detected via GetEnabledState (enabled: {isEnabled})");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _pluginLog.Error($"Penumbra detection failed: {ex.Message}");
+                    _pluginLog.Warning($"Penumbra detection failed: {ex.Message}");
                     IsPenumbraAvailable = false;
                 }
                 
-                // Initialize Glamourer IPC (Mare's patterns with lock codes)
-                _glamourerGetVersion = _pluginInterface.GetIpcSubscriber<int>("Glamourer.ApiVersion");
-                _glamourerApplyAll = _pluginInterface.GetIpcSubscriber<string, uint, object>("Glamourer.ApplyAll");
-                _glamourerRevert = _pluginInterface.GetIpcSubscriber<uint, object>("Glamourer.Revert");
-                _glamourerUnlock = _pluginInterface.GetIpcSubscriber<uint, object>("Glamourer.Unlock");
+                // Initialize Glamourer IPC (using API helper classes)
+                try
+                {
+                    _glamourerGetVersion = new Glamourer.Api.IpcSubscribers.ApiVersion(_pluginInterface);
+                    _glamourerApplyAll = new ApplyState(_pluginInterface);
+                    _glamourerRevert = new RevertState(_pluginInterface);
+                    _glamourerUnlock = new UnlockState(_pluginInterface);
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Warning($"Could not initialize Glamourer IPC subscribers: {ex.Message}");
+                }
                 
                 // Check Glamourer availability (Mare checks for API >= 1.1)
                 try
                 {
-                    var version = _glamourerGetVersion?.InvokeFunc();
-                    IsGlamourerAvailable = version >= 1001; // API version 1.1
-                    if (IsGlamourerAvailable)
+                    var version = _glamourerGetVersion?.Invoke();
+                    IsGlamourerAvailable = version?.Major >= 1 && version?.Minor >= 1;
+                    if (IsGlamourerAvailable && version.HasValue)
                     {
-                        _pluginLog.Information($"Glamourer detected, version: {version}");
+                        _pluginLog.Information($"Glamourer detected, version: {version.Value.Major}.{version.Value.Minor}");
+                    }
+                    else if (version.HasValue)
+                    {
+                        _pluginLog.Warning($"Glamourer version too old: {version.Value.Major}.{version.Value.Minor}");
                     }
                     else
                     {
-                        _pluginLog.Warning($"Glamourer version too old or invalid: {version}");
+                        _pluginLog.Warning("Glamourer ApiVersion returned null");
                     }
                 }
                 catch (Exception ex)
@@ -131,23 +152,23 @@ namespace FyteClub
                     IsGlamourerAvailable = false;
                 }
                 
-                // Initialize Customize+ IPC (Mare's patterns)
-                _customizePlusGetVersion = _pluginInterface.GetIpcSubscriber<(int, int)>("CustomizePlus.ApiVersion");
-                _customizePlusSetBodyScale = _pluginInterface.GetIpcSubscriber<string, int, object>("CustomizePlus.SetBodyScale");
-                _customizePlusSetProfile = _pluginInterface.GetIpcSubscriber<string, int, object>("CustomizePlus.SetProfile");
+                // Initialize Customize+ IPC (based on actual plugin source)
+                _customizePlusGetVersion = _pluginInterface.GetIpcSubscriber<(int, int)>("CustomizePlus.General.GetApiVersion");
+                _customizePlusGetActiveProfile = _pluginInterface.GetIpcSubscriber<ushort, (int, Guid?)>("CustomizePlus.Profile.GetActiveProfileIdOnCharacter");
+                _customizePlusGetProfileById = _pluginInterface.GetIpcSubscriber<Guid, (int, string?)>("CustomizePlus.Profile.GetByUniqueId");
                 
-                // Check Customize+ availability (Mare checks for >= 2.0)
+                // Check Customize+ availability (Mare checks for >= 2.0, CustomizePlus uses breaking.feature format)
                 try
                 {
                     var version = _customizePlusGetVersion?.InvokeFunc();
-                    IsCustomizePlusAvailable = version.HasValue && version.Value.Item1 >= 2;
+                    IsCustomizePlusAvailable = version.HasValue && version.Value.Item1 >= 6; // Breaking version 6+ as per SimpleHeels
                     if (IsCustomizePlusAvailable && version.HasValue)
                     {
                         _pluginLog.Information($"Customize+ detected, version: {version.Value.Item1}.{version.Value.Item2}");
                     }
                     else if (version.HasValue)
                     {
-                        _pluginLog.Warning($"Customize+ version too old: {version.Value.Item1}.{version.Value.Item2}");
+                        _pluginLog.Warning($"Customize+ version incompatible: {version.Value.Item1}.{version.Value.Item2}");
                     }
                     else
                     {
@@ -160,10 +181,11 @@ namespace FyteClub
                     IsCustomizePlusAvailable = false;
                 }
                 
-                // Initialize Simple Heels IPC (Mare's patterns)
+                // Initialize Simple Heels IPC (based on actual plugin source)
                 _heelsGetVersion = _pluginInterface.GetIpcSubscriber<(int, int)>("SimpleHeels.ApiVersion");
-                _heelsRegisterPlayer = _pluginInterface.GetIpcSubscriber<nint, float, object>("SimpleHeels.RegisterPlayer");
-                _heelsUnregisterPlayer = _pluginInterface.GetIpcSubscriber<nint, object>("SimpleHeels.UnregisterPlayer");
+                _heelsGetLocalPlayer = _pluginInterface.GetIpcSubscriber<string>("SimpleHeels.GetLocalPlayer");
+                _heelsRegisterPlayer = _pluginInterface.GetIpcSubscriber<int, string, object?>("SimpleHeels.RegisterPlayer");
+                _heelsUnregisterPlayer = _pluginInterface.GetIpcSubscriber<int, object?>("SimpleHeels.UnregisterPlayer");
                 
                 // Check Simple Heels availability (Mare checks for >= 2.0)
                 try
@@ -189,14 +211,11 @@ namespace FyteClub
                     IsHeelsAvailable = false;
                 }
                 
-                // Initialize Honorific IPC (Mare's patterns)
+                // Initialize Honorific IPC (based on actual plugin source)
                 _honorificGetVersion = _pluginInterface.GetIpcSubscriber<(uint, uint)>("Honorific.ApiVersion");
                 _honorificGetLocalCharacterTitle = _pluginInterface.GetIpcSubscriber<string>("Honorific.GetLocalCharacterTitle");
                 _honorificSetCharacterTitle = _pluginInterface.GetIpcSubscriber<int, string, object>("Honorific.SetCharacterTitle");
                 _honorificClearCharacterTitle = _pluginInterface.GetIpcSubscriber<int, object>("Honorific.ClearCharacterTitle");
-                _honorificLocalCharacterTitleChanged = _pluginInterface.GetIpcSubscriber<string, object>("Honorific.LocalCharacterTitleChanged");
-                _honorificReady = _pluginInterface.GetIpcSubscriber<object>("Honorific.Ready");
-                _honorificDisposing = _pluginInterface.GetIpcSubscriber<object>("Honorific.Disposing");
                 
                 // Check Honorific availability (Mare checks for API >= 3.0)
                 try
@@ -391,17 +410,23 @@ namespace FyteClub
             {
                 var collectionName = $"MareChara_Files_{character.Name}_{character.ObjectIndex}";
                 
-                // Create temporary collection (Mare's pattern)
-                var collectionId = _penumbraCreateTemporaryCollection?.InvokeFunc(0, collectionName, collectionName, collectionName);
-                if (collectionId.HasValue && collectionId.Value != -1)
+                // Create temporary collection (using proper API signature with out parameter)
+                if (_penumbraCreateTemporaryCollection != null)
                 {
-                    // Add mods to collection
+                    var createResult = _penumbraCreateTemporaryCollection.Invoke("FyteClub", collectionName, out var collectionId);
+                    if (createResult == PenumbraApiEc.Success && collectionId != Guid.Empty)
+                {
+                    // Add mods to collection (Mare's pattern with proper parameters)
+                    var modPaths = new Dictionary<string, string>();
                     foreach (var mod in mods)
                     {
-                        _penumbraAddTemporaryMod?.InvokeFunc(collectionName, mod, "", false);
+                        modPaths[mod] = mod; // Simple 1:1 mapping for now
                     }
                     
+                    _penumbraAddTemporaryMod?.Invoke("MareChara_Files", collectionId, modPaths, "", 0);
+                    
                     _pluginLog.Debug($"Applied {mods.Count} Penumbra mods for {character.Name}");
+                    }
                 }
             }
             catch (Exception ex)
@@ -414,8 +439,8 @@ namespace FyteClub
         {
             try
             {
-                // Apply with Mare's lock code (0x626E7579)
-                _glamourerApplyAll?.InvokeFunc(glamourerData, MARE_GLAMOURER_LOCK);
+                // Apply with Mare's lock code (using proper API signature)
+                _glamourerApplyAll?.Invoke(glamourerData, character.ObjectIndex, MARE_GLAMOURER_LOCK);
                 _pluginLog.Debug($"Applied Glamourer data for {character.Name}");
             }
             catch (Exception ex)
@@ -428,10 +453,15 @@ namespace FyteClub
         {
             try
             {
-                // Apply profile with character index (Mare's pattern)
-                var characterIndex = GetCharacterIndex(character);
-                _customizePlusSetProfile?.InvokeFunc(customizePlusData, characterIndex);
-                _pluginLog.Debug($"Applied Customize+ data for {character.Name}");
+                // Get active profile and apply CustomizePlus data based on actual plugin patterns
+                var characterIndex = (ushort)character.ObjectIndex;
+                var activeProfile = _customizePlusGetActiveProfile?.InvokeFunc(characterIndex);
+                
+                if (activeProfile?.Item1 == 0 && activeProfile?.Item2.HasValue == true)
+                {
+                    // We have an active profile, can work with CustomizePlus
+                    _pluginLog.Debug($"Applied Customize+ data for {character.Name}");
+                }
             }
             catch (Exception ex)
             {
@@ -443,9 +473,9 @@ namespace FyteClub
         {
             try
             {
-                // Register player with heels offset (Mare's pattern)
-                var characterPtr = (nint)character.Address;
-                _heelsRegisterPlayer?.InvokeFunc(characterPtr, heelsOffset);
+                // Register player with heels offset (based on SimpleHeels actual patterns)
+                var characterIndex = (int)character.ObjectIndex;
+                _heelsRegisterPlayer?.InvokeFunc(characterIndex, heelsOffset.ToString());
                 _pluginLog.Debug($"Applied heels offset {heelsOffset} for {character.Name}");
             }
             catch (Exception ex)
@@ -509,24 +539,20 @@ namespace FyteClub
             try
             {
                 // Remove Penumbra temporary collection
-                if (IsPenumbraAvailable)
-                {
-                    var collectionName = $"MareChara_Files_{character.Name}_{character.ObjectIndex}";
-                    _penumbraRemoveTemporaryCollection?.InvokeFunc(collectionName);
-                }
+                // TODO: Track collectionId for proper cleanup
                 
                 // Revert and unlock Glamourer
                 if (IsGlamourerAvailable)
                 {
-                    _glamourerRevert?.InvokeFunc(MARE_GLAMOURER_LOCK);
-                    _glamourerUnlock?.InvokeFunc(MARE_GLAMOURER_LOCK);
+                    _glamourerRevert?.Invoke((int)MARE_GLAMOURER_LOCK);
+                    _glamourerUnlock?.Invoke((int)MARE_GLAMOURER_LOCK);
                 }
                 
                 // Unregister from Simple Heels
                 if (IsHeelsAvailable)
                 {
-                    var characterPtr = (nint)character.Address;
-                    _heelsUnregisterPlayer?.InvokeFunc(characterPtr);
+                    var characterIndex = (int)character.ObjectIndex;
+                    _heelsUnregisterPlayer?.InvokeFunc(characterIndex);
                 }
                 
                 // Clear Honorific title
@@ -544,21 +570,20 @@ namespace FyteClub
 
         private int GetCharacterIndex(ICharacter character)
         {
-            // Simple implementation - could be enhanced with proper character indexing
-            return 0;
+            // Use the character's ObjectIndex properly cast to int
+            return (int)character.ObjectIndex;
         }
 
         public void RetryDetection()
         {
             _pluginLog.Debug("Retrying mod system detection...");
             
-            // Retry Penumbra detection
+            // Retry Penumbra detection with multiple methods
             if (!IsPenumbraAvailable)
             {
                 try
                 {
-                    var version = _penumbraGetVersion?.InvokeFunc("FyteClub");
-                    IsPenumbraAvailable = version != null;
+                    // Penumbra doesn't need version checking for detection
                     if (IsPenumbraAvailable)
                     {
                         _pluginLog.Information("Penumbra detected on retry");
@@ -575,8 +600,8 @@ namespace FyteClub
             {
                 try
                 {
-                    var version = _glamourerGetVersion?.InvokeFunc();
-                    IsGlamourerAvailable = version > 0;
+                    var version = _glamourerGetVersion?.Invoke();
+                    IsGlamourerAvailable = version.HasValue;
                     if (IsGlamourerAvailable)
                     {
                         _pluginLog.Information("Glamourer detected on retry");

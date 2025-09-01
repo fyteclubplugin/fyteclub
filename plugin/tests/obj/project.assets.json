@@ -1773,17 +1773,39 @@
           "build/net6.0/xunit.runner.visualstudio.props": {}
         }
       },
-      "FyteClub/3.0.3": {
+      "FyteClub/3.0.5": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v9.0",
         "dependencies": {
-          "DalamudPackager": "13.0.0"
+          "DalamudPackager": "13.0.0",
+          "Glamourer.Api": "2.6.0",
+          "Penumbra.Api": "5.12.0"
         },
         "compile": {
           "bin/placeholder/FyteClub.dll": {}
         },
         "runtime": {
           "bin/placeholder/FyteClub.dll": {}
+        }
+      },
+      "Glamourer.Api/2.6.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v9.0",
+        "compile": {
+          "bin/placeholder/Glamourer.Api.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/Glamourer.Api.dll": {}
+        }
+      },
+      "Penumbra.Api/5.12.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v9.0",
+        "compile": {
+          "bin/placeholder/Penumbra.Api.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/Penumbra.Api.dll": {}
         }
       }
     }
@@ -5673,15 +5695,25 @@
         "xunit.runner.visualstudio.nuspec"
       ]
     },
-    "FyteClub/3.0.3": {
+    "FyteClub/3.0.5": {
       "type": "project",
       "path": "../FyteClub.csproj",
       "msbuildProject": "../FyteClub.csproj"
+    },
+    "Glamourer.Api/2.6.0": {
+      "type": "project",
+      "path": "../../../Glamourer.Api/Glamourer.Api.csproj",
+      "msbuildProject": "../../../Glamourer.Api/Glamourer.Api.csproj"
+    },
+    "Penumbra.Api/5.12.0": {
+      "type": "project",
+      "path": "../../../Penumbra.Api/Penumbra.Api.csproj",
+      "msbuildProject": "../../../Penumbra.Api/Penumbra.Api.csproj"
     }
   },
   "projectFileDependencyGroups": {
     "net9.0-windows7.0": [
-      "FyteClub >= 3.0.3",
+      "FyteClub >= 3.0.5",
       "Microsoft.NET.Test.Sdk >= 17.8.0",
       "Moq >= 4.20.69",
       "coverlet.collector >= 6.0.0",
