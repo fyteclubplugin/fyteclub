@@ -53,28 +53,7 @@ echo ✅ Plugin files and dependencies copied
 
 :: Create Plugin README
 echo [3/6] Creating Plugin README...
-echo # FyteClub Plugin v3.0.0 - Enhanced Mod Sharing > "release\FyteClub-Plugin\README.txt"
-echo. >> "release\FyteClub-Plugin\README.txt"
-echo FyteClub v3.0.0 brings advanced storage deduplication, Redis caching, >> "release\FyteClub-Plugin\README.txt"
-echo and optimized database operations for enhanced performance. >> "release\FyteClub-Plugin\README.txt"
-echo. >> "release\FyteClub-Plugin\README.txt"
-echo INSTALLATION: >> "release\FyteClub-Plugin\README.txt"
-echo 1. Install XIVLauncher and Dalamud >> "release\FyteClub-Plugin\README.txt"
-echo 2. Copy all files to: %%APPDATA%%\XIVLauncher\installedPlugins\FyteClub\latest\ >> "release\FyteClub-Plugin\README.txt"
-echo 3. Restart FFXIV >> "release\FyteClub-Plugin\README.txt"
-echo 4. Use /fyteclub command in-game >> "release\FyteClub-Plugin\README.txt"
-echo. >> "release\FyteClub-Plugin\README.txt"
-echo COMMANDS: >> "release\FyteClub-Plugin\README.txt"
-echo /fyteclub - Open configuration window >> "release\FyteClub-Plugin\README.txt"
-echo /fyteclub block PlayerName - Block a user >> "release\FyteClub-Plugin\README.txt"
-echo /fyteclub unblock PlayerName - Unblock a user >> "release\FyteClub-Plugin\README.txt"
-echo. >> "release\FyteClub-Plugin\README.txt"
-echo NEW IN v3.0.0: >> "release\FyteClub-Plugin\README.txt"
-echo - Storage deduplication eliminates duplicate mod files >> "release\FyteClub-Plugin\README.txt"
-echo - Redis caching for ultra-fast response times ^(^<50ms^) >> "release\FyteClub-Plugin\README.txt"
-echo - Enhanced database with proper indexing >> "release\FyteClub-Plugin\README.txt"
-echo - Comprehensive error handling and logging >> "release\FyteClub-Plugin\README.txt"
-echo - 54/54 tests passing for maximum reliability >> "release\FyteClub-Plugin\README.txt"
+powershell -command "@('# FyteClub Plugin v3.0.0 - Enhanced Mod Sharing', '', 'FyteClub v3.0.0 brings advanced storage deduplication, Redis caching,', 'and optimized database operations for enhanced performance.', '', 'INSTALLATION:', '1. Install XIVLauncher and Dalamud', '2. Copy all files to: %APPDATA%\XIVLauncher\installedPlugins\FyteClub\latest\', '3. Restart FFXIV', '4. Use /fyteclub command in-game', '', 'COMMANDS:', '/fyteclub - Open configuration window', '/fyteclub block PlayerName - Block a user', '/fyteclub unblock PlayerName - Unblock a user', '', 'NEW IN v3.0.0:', '- Storage deduplication eliminates duplicate mod files', '- Redis caching for ultra-fast response times (<50ms)', '- Enhanced database with proper indexing', '- Comprehensive error handling and logging', '- 54/54 tests passing for maximum reliability') | Out-File 'release\FyteClub-Plugin\README.txt' -Encoding UTF8"
 echo ✅ Plugin README created
 
 :: Create Server Package
@@ -87,15 +66,11 @@ copy "build-pc.bat" "release\FyteClub-Server\"
 
 :: Copy the comprehensive README template
 if exist "server-readme-template.txt" (
-    copy "server-readme-template.txt" "release\FyteClub-Server\README.txt"
-    echo ✅ Comprehensive README.txt copied
+    powershell -command "Get-Content 'server-readme-template.txt' -Encoding UTF8 | Out-File 'release\FyteClub-Server\README.txt' -Encoding UTF8"
+    echo ✅ Comprehensive README.txt copied with proper encoding
 ) else (
     echo ⚠️  Template not found, creating basic README...
-    echo FyteClub Server v3.0.0 - Setup Guide > "release\FyteClub-Server\README.txt"
-    echo Choose your installation method: >> "release\FyteClub-Server\README.txt"
-    echo 1. Gaming PC: run build-pc.bat >> "release\FyteClub-Server\README.txt"
-    echo 2. Raspberry Pi: run build-pi.sh >> "release\FyteClub-Server\README.txt"
-    echo 3. AWS Cloud: run build-aws.bat >> "release\FyteClub-Server\README.txt"
+    powershell -command "@('FyteClub Server v3.0.0 - Setup Guide', '', 'Choose your installation method:', '1. Gaming PC: run build-pc.bat', '2. Raspberry Pi: run build-pi.sh', '3. AWS Cloud: run build-aws.bat') | Out-File 'release\FyteClub-Server\README.txt' -Encoding UTF8"
 )
 echo ✅ Server files and documentation ready
 
