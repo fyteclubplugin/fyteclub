@@ -417,10 +417,18 @@ namespace FyteClub
                 var connectionColor = connectedServers > 0 ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1);
                 
                 ImGui.TextColored(connectionColor, $"Connected Servers: {connectedServers}");
+                
+                // Display all 5 supported mod plugin statuses
                 ImGui.TextColored(_plugin._modSystemIntegration.IsPenumbraAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
                     $"Penumbra: {(_plugin._modSystemIntegration.IsPenumbraAvailable ? "Available" : "Unavailable")}");
                 ImGui.TextColored(_plugin._modSystemIntegration.IsGlamourerAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
                     $"Glamourer: {(_plugin._modSystemIntegration.IsGlamourerAvailable ? "Available" : "Unavailable")}");
+                ImGui.TextColored(_plugin._modSystemIntegration.IsCustomizePlusAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
+                    $"Customize+: {(_plugin._modSystemIntegration.IsCustomizePlusAvailable ? "Available" : "Unavailable")}");
+                ImGui.TextColored(_plugin._modSystemIntegration.IsHeelsAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
+                    $"SimpleHeels: {(_plugin._modSystemIntegration.IsHeelsAvailable ? "Available" : "Unavailable")}");
+                ImGui.TextColored(_plugin._modSystemIntegration.IsHonorificAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
+                    $"Honorific: {(_plugin._modSystemIntegration.IsHonorificAvailable ? "Available" : "Unavailable")}");
                     
                 var syncingCount = _plugin.GetRecentlySyncedUsers().Count();
                 ImGui.Text($"Syncing with: {syncingCount} nearby players");
