@@ -2,7 +2,7 @@
 :: FyteClub API Update Script
 :: pulls latest API versions
 
-echo FyteClub API Update Script v3.1.1
+echo FyteClub API Update Script v4.0.0
 echo.
 
 set API_DIR=C:\Users\Me\git

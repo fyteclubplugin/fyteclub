@@ -1,4 +1,6 @@
-# Quick Start Guide
+# Quick Start Guide - FyteClub v4.0.0
+
+Get mod sharing working.
 
 ## For the person hosting the server
 
@@ -22,7 +24,7 @@
 
 ### Install the plugin
 1. Download FyteClub-Plugin.zip from releases
-2. Extract to `%APPDATA%\XIVLauncher\installedPlugins\FyteClub\latest\`
+2. Extract to `%APPDATA%\XIVLauncher\installedPlugins\FyteClub\4.0.0\`
 3. Restart FFXIV
 
 ### Connect to the server
@@ -31,9 +33,17 @@
 3. Test the connection
 4. Enable syncing
 
-## That's it!
+## That's it
 
-Now when you play near each other in FFXIV, your mods will sync automatically.
+Your mods will sync when you're near other players. Version 4.0.0 detects changes automatically and uploads them.
+
+## New in v4.0.0! 🎉
+
+**Automatic Change Detection**: Your mods are uploaded automatically when you change them. Just equip a new glamour, enable a mod, or adjust your Customize+ settings and it'll sync within 30 seconds!
+
+**Smart Uploads**: No more duplicate uploads on restart - the plugin remembers what you've already shared.
+
+**Manual Override**: Still want to force a sync? Use the "Check for Changes" button in the plugin UI.
 
 ## Troubleshooting
 
@@ -100,4 +110,4 @@ fyteclub-server --port 3001
 
 ---
 
-**Ready to share mods with friends? Start with the Quick Start above!** 🥊
+Ready to share mods with friends? Start with the guide above.

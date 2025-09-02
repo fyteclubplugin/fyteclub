@@ -1,4 +1,4 @@
-FyteClub Server v3.1.1 
+FyteClub Server v4.0.0 
  
 Quick setup: 
   PC: run build-pc.bat 

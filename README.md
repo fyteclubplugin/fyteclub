@@ -1,19 +1,29 @@
-# FyteClub
+# FyteClub v4.0.0
 
-Share your FFXIV mods with friends automatically when you play together.
+Share FFXIV mods with friends automatically. Now with change detection.
 
 ## What it does
 
-When you're near other players in FFXIV, it syncs your character mods. One person hosts a server, everyone connects to it, and mods get shared automatically.
+When you're near other players in FFXIV, it syncs your mods. One person hosts a server, everyone connects, mods get shared. The plugin detects when you change your mods and uploads them automatically.
+
+## New in v4.0.0
+
+- Automatic change detection: plugin watches for mod changes and uploads them
+- Smart uploading: only uploads when your mods actually change
+- Sync happens within 30 seconds of making changes
+- Fixed duplicate uploads on plugin restart
+- Better performance with optimized mod tracking
 
 ## Features
 
 - Works with Penumbra, Glamourer, CustomizePlus, SimpleHeels, Honorific
+- Automatic mod change detection and uploading
 - Detects nearby players (50m range)
 - Encrypted mod sharing
 - Self-hosted servers (no central service)
 - Save multiple friend servers
 - Direct IP connections
+- Manual sync button when you need it
 
 ## How to use
 
@@ -77,10 +87,7 @@ Use `/fyteclub` in-game to:
 - View who's online
 
 ### Server Setup
-The server config file lets you set:
-- Port (default: 3000)
-- Database location
-- SSL settings
+The server walks you through setup with a few different options. Easy enough that anyone can get it running.
 
 ## Privacy & Security
 

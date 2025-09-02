@@ -1,4 +1,11 @@
-# FyteClub Plugin Build & Update Guide
+# FyteClub v4.0.0 Plugin Build & Update Guide
+
+## What's New in v4.0.0
+
+- Automatic change detection: plugin watches for mod changes and uploads automatically
+- Smart upload system: only uploads when mods actually change
+- Fixed duplicate database entries on plugin restart
+- New UI shows change detection status
 
 ## Quick Build
 
@@ -7,7 +14,7 @@
 # Build complete release package
 build-release.bat
 
-# Output: FyteClub-Complete-Release.zip
+# Output: FyteClub-Complete-v4.0.0-Release.zip
 # Contains: Plugin, Server, Client, Deployment Scripts, Documentation
 ```
 
@@ -16,7 +23,7 @@ build-release.bat
 # Build plugin package only
 build-plugin-release.bat
 
-# Output: FyteClub-Plugin.zip
+# Output: FyteClub-Plugin-v4.0.0.zip
 ```
 
 ## 📋 Prerequisites
@@ -57,7 +64,7 @@ fyteclub/
 ```bash
 cd plugin
 dotnet build --configuration Release
-# Output: plugin/bin/Release/FyteClub.dll
+# Output: plugin/bin/Release/FyteClub.dll (v4.0.0)
 ```
 
 ### 2. Client Daemon Build (Node.js)
@@ -72,8 +79,8 @@ npm run build
 ```bash
 # Master build (everything)
 build-release.bat
-# Creates: FyteClub-Complete-Release.zip containing:
-# - FyteClub-Plugin.zip (plugin package)
+# Creates: FyteClub-Complete-v4.0.0-Release.zip containing:
+# - FyteClub-Plugin-v4.0.0.zip (plugin package)
 # - server/ (complete server source)
 # - client/ (client executable)
 # - build-*.* (deployment scripts)
@@ -81,8 +88,8 @@ build-release.bat
 
 # Plugin only build
 build-plugin-release.bat
-# Creates: FyteClub-Plugin.zip containing:
-# - FyteClub.dll (plugin)
+# Creates: FyteClub-Plugin-v4.0.0.zip containing:
+# - FyteClub.dll (plugin with automatic change detection)
 # - FyteClub.json (manifest)
 # - fyteclub.exe (client daemon)
 ```
