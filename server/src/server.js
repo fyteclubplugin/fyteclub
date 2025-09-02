@@ -185,7 +185,14 @@ class FyteClubServer {
                 // Log player mod lookup request
                 console.log(`[LOOKUP-MODS] ${clientIP} requesting mods for player: ${playerId}`);
                 
-                const mods = await this.modSyncService.getPlayerMods(playerId);
+                let mods = await this.modSyncService.getPlayerMods(playerId);
+                
+                // If not found with full name and it contains @, try just the character name
+                if (!mods && playerId.includes('@')) {
+                    const characterName = playerId.split('@')[0];
+                    console.log(`[LOOKUP-FALLBACK] Trying character name only: ${characterName}`);
+                    mods = await this.modSyncService.getPlayerMods(characterName);
+                }
                 
                 if (mods) {
                     const modData = JSON.parse(mods);

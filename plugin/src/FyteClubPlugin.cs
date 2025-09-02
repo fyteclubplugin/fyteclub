@@ -38,6 +38,7 @@ namespace FyteClub
         private readonly WindowSystem _windowSystem;
         private readonly ConfigWindow _configWindow;
         private readonly FyteClubModIntegration _modSystemIntegration;
+        private readonly FyteClubRedrawCoordinator _redrawCoordinator;
 
         // FyteClub's multi-server friend network - your key innovation
         private readonly List<ServerInfo> _servers = new();
@@ -97,7 +98,8 @@ namespace FyteClub
             _pluginLog = pluginLog;
 
             // Initialize mod system integration
-            _modSystemIntegration = new FyteClubModIntegration(pluginInterface, pluginLog);
+            _modSystemIntegration = new FyteClubModIntegration(pluginInterface, pluginLog, objectTable, framework);
+            _redrawCoordinator = new FyteClubRedrawCoordinator(pluginLog, _mediator, _modSystemIntegration);
             _playerDetection = new PlayerDetectionService(objectTable, _mediator, _pluginLog);
 
             _windowSystem = new WindowSystem("FyteClub");
@@ -1104,27 +1106,64 @@ namespace FyteClub
             }
 
             var parts = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2)
+            if (parts.Length >= 1)
             {
                 var subcommand = parts[0].ToLower();
-                var playerName = parts[1];
 
                 switch (subcommand)
                 {
+                    case "redraw":
+                        if (parts.Length >= 2)
+                        {
+                            var playerName = parts[1];
+                            _redrawCoordinator.RedrawCharacterIfFound(playerName);
+                            _pluginLog.Info($"Command: Triggered redraw for {playerName}");
+                        }
+                        else
+                        {
+                            _redrawCoordinator.RequestRedrawAll(RedrawReason.ManualRefresh);
+                            _pluginLog.Info("Command: Triggered redraw for all characters");
+                        }
+                        break;
                     case "block":
-                        BlockUser(playerName);
-                        _pluginLog.Info($"Command: Blocked user {playerName}");
+                        if (parts.Length >= 2)
+                        {
+                            var playerName = parts[1];
+                            BlockUser(playerName);
+                            _pluginLog.Info($"Command: Blocked user {playerName}");
+                        }
+                        else
+                        {
+                            _pluginLog.Info("Usage: /fyteclub block <playerName>");
+                        }
                         break;
                     case "unblock":
-                        UnblockUser(playerName);
-                        _pluginLog.Info($"Command: Unblocked user {playerName}");
+                        if (parts.Length >= 2)
+                        {
+                            var playerName = parts[1];
+                            UnblockUser(playerName);
+                            _pluginLog.Info($"Command: Unblocked user {playerName}");
+                        }
+                        else
+                        {
+                            _pluginLog.Info("Usage: /fyteclub unblock <playerName>");
+                        }
                         break;
                     case "testuser":
-                        TestBlockUser(playerName);
-                        _pluginLog.Info($"Command: Added test user {playerName}");
+                        if (parts.Length >= 2)
+                        {
+                            var playerName = parts[1];
+                            TestBlockUser(playerName);
+                            _pluginLog.Info($"Command: Added test user {playerName}");
+                        }
+                        else
+                        {
+                            _pluginLog.Info("Usage: /fyteclub testuser <playerName>");
+                        }
                         break;
                     default:
-                        _pluginLog.Info("Usage: /fyteclub [block|unblock|testuser] <playerName>");
+                        _pluginLog.Info("Usage: /fyteclub [redraw|block|unblock|testuser] <playerName>");
+                        _pluginLog.Info("       /fyteclub redraw [playerName] - Redraw specific player or all");
                         break;
                 }
             }

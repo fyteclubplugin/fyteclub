@@ -4,6 +4,7 @@ using System.Linq;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.ClientState.Objects;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using Dalamud.Plugin.Ipc;
 using System.Threading.Tasks;
@@ -22,6 +23,8 @@ namespace FyteClub
     {
         private readonly IDalamudPluginInterface _pluginInterface;
         private readonly IPluginLog _pluginLog;
+        private readonly IObjectTable _objectTable;
+        private readonly IFramework _framework;
         
         // Mod state tracking for intelligent application
         private readonly Dictionary<string, string> _appliedModHashes = new();
@@ -34,9 +37,11 @@ namespace FyteClub
         // IPC subscribers using proper API patterns from each plugin
         // Penumbra - using API helper classes
         private GetEnabledState? _penumbraGetEnabledState;
+        private Penumbra.Api.IpcSubscribers.GetGameObjectResourcePaths? _penumbraGetResourcePaths;
         private CreateTemporaryCollection? _penumbraCreateTemporaryCollection;
         private AddTemporaryMod? _penumbraAddTemporaryMod;
         private DeleteTemporaryCollection? _penumbraRemoveTemporaryCollection;
+        private RedrawObject? _penumbraRedraw;
         
         // Glamourer - using API helper classes  
         private Glamourer.Api.IpcSubscribers.ApiVersion? _glamourerGetVersion;
@@ -68,12 +73,49 @@ namespace FyteClub
         public bool IsHeelsAvailable { get; private set; }
         public bool IsHonorificAvailable { get; private set; }
 
-        public FyteClubModIntegration(IDalamudPluginInterface pluginInterface, IPluginLog pluginLog)
+        public FyteClubModIntegration(IDalamudPluginInterface pluginInterface, IPluginLog pluginLog, IObjectTable objectTable, IFramework framework)
         {
             _pluginInterface = pluginInterface;
             _pluginLog = pluginLog;
+            _objectTable = objectTable;
+            _framework = framework;
             
             InitializeModSystemIPC();
+        }
+
+        // Find a character in the object table by name
+        private ICharacter? FindCharacterByName(string characterName)
+        {
+            try
+            {
+                // Clean the character name (remove server suffix if present)
+                var cleanName = characterName.Contains('@') ? characterName.Split('@')[0] : characterName;
+                
+                // Access ObjectTable directly - if we're not on the framework thread, this will fail gracefully
+                try
+                {
+                    foreach (var obj in _objectTable)
+                    {
+                        if (obj is ICharacter character && character.Name.TextValue.Equals(cleanName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return character;
+                        }
+                    }
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("main thread"))
+                {
+                    _pluginLog.Warning($"Cannot access ObjectTable from background thread for '{cleanName}' - character lookup skipped");
+                    return null;
+                }
+                
+                _pluginLog.Debug($"Character '{cleanName}' not found in object table");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Error finding character '{characterName}': {ex.Message}");
+                return null;
+            }
         }
 
         public void RefreshPluginDetection()
@@ -90,9 +132,11 @@ namespace FyteClub
                 try 
                 {
                     _penumbraGetEnabledState = new GetEnabledState(_pluginInterface);
+                    _penumbraGetResourcePaths = new Penumbra.Api.IpcSubscribers.GetGameObjectResourcePaths(_pluginInterface);
                     _penumbraCreateTemporaryCollection = new CreateTemporaryCollection(_pluginInterface);
                     _penumbraAddTemporaryMod = new AddTemporaryMod(_pluginInterface);
                     _penumbraRemoveTemporaryCollection = new DeleteTemporaryCollection(_pluginInterface);
+                    _penumbraRedraw = new RedrawObject(_pluginInterface);
                 }
                 catch (Exception ex)
                 {
@@ -256,6 +300,14 @@ namespace FyteClub
                 // Calculate hash of the player's mod data
                 var modDataHash = CalculateModDataHash(playerInfo);
                 
+                // Debug: Log what data we received
+                _pluginLog.Info($"FyteClub: Received mod data for {playerName}:");
+                _pluginLog.Info($"  - Mods count: {playerInfo.Mods?.Count ?? 0}");
+                _pluginLog.Info($"  - Glamourer data: {(string.IsNullOrEmpty(playerInfo.GlamourerData) ? "None" : $"{playerInfo.GlamourerData.Length} chars")}");
+                _pluginLog.Info($"  - Customize+ data: {(string.IsNullOrEmpty(playerInfo.CustomizePlusData) ? "None" : "Present")}");
+                _pluginLog.Info($"  - Simple Heels: {playerInfo.SimpleHeelsOffset?.ToString() ?? "None"}");
+                _pluginLog.Info($"  - Honorific: {(string.IsNullOrEmpty(playerInfo.HonorificTitle) ? "None" : "Present")}");
+                
                 // Check if we've already applied these exact mods recently
                 if (ShouldSkipApplication(playerName, modDataHash))
                 {
@@ -265,9 +317,29 @@ namespace FyteClub
 
                 _pluginLog.Info($"FyteClub: Applying new mod configuration for {playerName}");
                 
-                // TODO: Find the character object for this player and apply mods
-                // For now, just simulate the application
-                await Task.Delay(100); // Realistic delay for mod processing
+                // Find the character object and apply the mods for real
+                // Schedule this for the framework thread since ObjectTable access requires it
+                await _framework.RunOnFrameworkThread(() =>
+                {
+                    var character = FindCharacterByName(playerName);
+                    if (character != null)
+                    {
+                        _pluginLog.Info($"FyteClub: Found character {character.Name}, applying mods...");
+                        ApplyAdvancedPlayerInfo(character, playerInfo);
+                        _pluginLog.Info($"FyteClub: Applied mods to character {character.Name}");
+                        
+                        // Trigger redraw on the framework thread as well
+                        if (IsPenumbraAvailable)
+                        {
+                            _pluginLog.Info($"FyteClub: Triggering redraw for {character.Name} after mod sync");
+                            RedrawCharacter(character);
+                        }
+                    }
+                    else
+                    {
+                        _pluginLog.Warning($"FyteClub: Character {playerName} not found in object table, cannot apply mods");
+                    }
+                });
                 
                 // Track successful application
                 _appliedModHashes[playerName] = modDataHash;
@@ -697,7 +769,7 @@ namespace FyteClub
             }
         }
 
-        public Task<AdvancedPlayerInfo?> GetCurrentPlayerMods(string playerName)
+        public async Task<AdvancedPlayerInfo?> GetCurrentPlayerMods(string playerName)
         {
             try
             {
@@ -711,22 +783,56 @@ namespace FyteClub
                     HonorificTitle = null
                 };
 
-                // Get Penumbra mods (enabled mods for current character)
-                if (IsPenumbraAvailable && _penumbraGetEnabledState != null)
+                // Find the character to get their object index (must be on framework thread)
+                ICharacter? character = null;
+                try
+                {
+                    character = await _framework.RunOnFrameworkThread(() => FindCharacterByName(playerName));
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Warning($"Failed to find character '{playerName}' on framework thread: {ex.Message}");
+                    return playerInfo;
+                }
+
+                if (character == null)
+                {
+                    _pluginLog.Warning($"Character '{playerName}' not found for mod collection - they may be out of range");
+                    return playerInfo;
+                }
+
+                // Get Penumbra mods (current resource paths for this character - Mare's pattern)
+                if (IsPenumbraAvailable && _penumbraGetResourcePaths != null)
                 {
                     try
                     {
-                        var isEnabled = _penumbraGetEnabledState.Invoke();
-                        if (isEnabled)
+                        _pluginLog.Debug($"Getting Penumbra resource paths for {playerName} (object index {character.ObjectIndex})");
+                        
+                        // Use Mare's pattern: GetGameObjectResourcePaths
+                        var resourcePaths = _penumbraGetResourcePaths.Invoke(character.ObjectIndex);
+                        
+                        if (resourcePaths != null && resourcePaths.Length > 0)
                         {
-                            // For now, just mark that Penumbra is enabled
-                            playerInfo.Mods.Add("penumbra-enabled");
+                            var modPaths = resourcePaths[0]; // First element contains the mod paths
+                            if (modPaths != null)
+                            {
+                                foreach (var modPath in modPaths)
+                                {
+                                    playerInfo.Mods.Add($"{modPath.Key}");
+                                    _pluginLog.Debug($"  - Mod path: {modPath.Key} -> {modPath.Value.FirstOrDefault()}");
+                                }
+                            }
+                            
+                            _pluginLog.Debug($"Collected {playerInfo.Mods.Count} Penumbra resource paths for {playerName}");
                         }
-                        _pluginLog.Debug($"Penumbra enabled: {isEnabled} for {playerName}");
+                        else
+                        {
+                            _pluginLog.Debug($"No active Penumbra resource paths found for {playerName}");
+                        }
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog.Warning($"Failed to get Penumbra mods: {ex.Message}");
+                        _pluginLog.Warning($"Failed to get Penumbra resource paths for {playerName}: {ex.Message}");
                     }
                 }
 
@@ -801,12 +907,12 @@ namespace FyteClub
                     }
                 }
 
-                return Task.FromResult<AdvancedPlayerInfo?>(playerInfo);
+                return playerInfo;
             }
             catch (Exception ex)
             {
                 _pluginLog.Error($"Failed to collect mods for {playerName}: {ex.Message}");
-                return Task.FromResult<AdvancedPlayerInfo?>(null);
+                return null;
             }
         }
 
@@ -815,5 +921,79 @@ namespace FyteClub
             // Cleanup any remaining state
             _pluginLog.Debug("ModSystemIntegration disposed");
         }
+
+        // Trigger character redraw using Penumbra API (Mare's pattern)
+        public void RedrawCharacter(ICharacter character)
+        {
+            try
+            {
+                if (!IsPenumbraAvailable || _penumbraRedraw == null)
+                {
+                    _pluginLog.Warning("Cannot redraw character - Penumbra not available");
+                    return;
+                }
+
+                _pluginLog.Info($"FyteClub: Triggering redraw for {character.Name}");
+                _penumbraRedraw.Invoke(character.ObjectIndex, RedrawType.Redraw);
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Failed to redraw character {character.Name}: {ex.Message}");
+            }
+        }
+
+        // Trigger redraw for a character by name (finds them in object table)
+        public void RedrawCharacterByName(string characterName)
+        {
+            try
+            {
+                var character = FindCharacterByName(characterName);
+                if (character != null)
+                {
+                    RedrawCharacter(character);
+                }
+                else
+                {
+                    _pluginLog.Info($"FyteClub: Character '{characterName}' not found for redraw - they may be out of range");
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Failed to redraw character '{characterName}': {ex.Message}");
+            }
+        }
+
+        // Trigger redraw for all characters in the area (useful after mod sync)
+        public void RedrawAllCharacters()
+        {
+            try
+            {
+                if (!IsPenumbraAvailable || _penumbraRedraw == null)
+                {
+                    _pluginLog.Warning("Cannot redraw all - Penumbra not available");
+                    return;
+                }
+
+                _pluginLog.Info("FyteClub: Triggering redraw for all characters");
+                _penumbraRedraw.Invoke(0, RedrawType.Redraw); // Object index 0 = all
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Failed to redraw all characters: {ex.Message}");
+            }
+        }
+    }
+
+    // Penumbra IPC Classes
+    internal class GetEnabledState
+    {
+        private readonly Func<bool> _getEnabledState;
+
+        public GetEnabledState(IDalamudPluginInterface pluginInterface)
+        {
+            _getEnabledState = pluginInterface.GetIpcSubscriber<bool>("Penumbra.GetEnabledState").InvokeFunc;
+        }
+
+        public bool Invoke() => _getEnabledState();
     }
 }

@@ -12,13 +12,15 @@ namespace FyteClub
     {
         private readonly IPluginLog _pluginLog;
         private readonly FyteClubMediator _mediator;
+        private readonly FyteClubModIntegration _modIntegration;
         private readonly Dictionary<string, DateTime> _lastRedrawTimes = new();
         private readonly TimeSpan _minimumRedrawInterval = TimeSpan.FromMilliseconds(500);
 
-        public FyteClubRedrawCoordinator(IPluginLog pluginLog, FyteClubMediator mediator)
+        public FyteClubRedrawCoordinator(IPluginLog pluginLog, FyteClubMediator mediator, FyteClubModIntegration modIntegration)
         {
             _pluginLog = pluginLog;
             _mediator = mediator;
+            _modIntegration = modIntegration;
         }
 
         public async Task RequestRedrawAsync(string playerId, RedrawReason reason)
@@ -55,6 +57,10 @@ namespace FyteClub
         public void RequestRedrawAll(RedrawReason reason)
         {
             _pluginLog.Information($"FyteClub: Requesting redraw for all players - {reason}");
+            
+            // Actually trigger the Penumbra redraw
+            _modIntegration.RedrawAllCharacters();
+            
             _mediator.Publish(new RedrawAllRequestedMessage { Reason = reason });
         }
 
@@ -69,6 +75,21 @@ namespace FyteClub
         public void ClearRedrawHistory(string playerId)
         {
             _lastRedrawTimes.Remove(playerId);
+        }
+
+        // Trigger redraw for a specific character if they're found in the game world
+        public void RedrawCharacterIfFound(string characterName)
+        {
+            try
+            {
+                // Use targeted redraw instead of redrawing all characters
+                _pluginLog.Information($"FyteClub: Triggering targeted redraw for {characterName}");
+                _modIntegration.RedrawCharacterByName(characterName);
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"FyteClub: Failed to redraw character {characterName}: {ex.Message}");
+            }
         }
     }
 
