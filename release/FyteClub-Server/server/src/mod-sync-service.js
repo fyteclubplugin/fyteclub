@@ -233,6 +233,30 @@ class ModSyncService {
             };
         }
     }
+
+    async getAllRegisteredPlayers() {
+        try {
+            const files = fs.readdirSync(this.modsDir);
+            const modFiles = files.filter(f => f.endsWith('.json'));
+            
+            const players = [];
+            for (const file of modFiles) {
+                try {
+                    const filePath = path.join(this.modsDir, file);
+                    const data = fs.readFileSync(filePath, 'utf8');
+                    const playerData = JSON.parse(data);
+                    players.push(playerData);
+                } catch (error) {
+                    console.error(`Error reading player file ${file}:`, error.message);
+                }
+            }
+            
+            return players;
+        } catch (error) {
+            console.error('Error getting registered players:', error.message);
+            return [];
+        }
+    }
 }
 
 module.exports = ModSyncService;

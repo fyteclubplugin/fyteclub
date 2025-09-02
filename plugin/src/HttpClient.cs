@@ -21,9 +21,9 @@ namespace FyteClub
             pluginLog = log;
         }
 
-        public void AddServer(string address, string name)
+        public void AddServer(string address, string name, string password = "")
         {
-            servers.Add(new ServerInfo { Address = address, Name = name, Enabled = true });
+            servers.Add(new ServerInfo { Address = address, Name = name, Password = password, Enabled = true });
         }
 
         public void RemoveServer(string address)
@@ -54,7 +54,18 @@ namespace FyteClub
                     var json = JsonSerializer.Serialize(request);
                     var content = new StringContent(json, Encoding.UTF8, "application/json");
                     
-                    var response = await httpClient.PostAsync($"http://{server.Address}/api/player-mods", content);
+                    var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"http://{server.Address}/api/player-mods")
+                    {
+                        Content = content
+                    };
+                    
+                    // Add password header if server has one
+                    if (!string.IsNullOrEmpty(server.Password))
+                    {
+                        httpRequest.Headers.Add("x-fyteclub-password", server.Password);
+                    }
+                    
+                    var response = await httpClient.SendAsync(httpRequest);
                     
                     if (response.IsSuccessStatusCode)
                     {
@@ -92,7 +103,18 @@ namespace FyteClub
                     var json = JsonSerializer.Serialize(request);
                     var content = new StringContent(json, Encoding.UTF8, "application/json");
                     
-                    var response = await httpClient.PostAsync($"http://{server.Address}/api/register-mods", content);
+                    var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"http://{server.Address}/api/register-mods")
+                    {
+                        Content = content
+                    };
+                    
+                    // Add password header if server has one
+                    if (!string.IsNullOrEmpty(server.Password))
+                    {
+                        httpRequest.Headers.Add("x-fyteclub-password", server.Password);
+                    }
+                    
+                    var response = await httpClient.SendAsync(httpRequest);
                     
                     if (response.IsSuccessStatusCode)
                     {

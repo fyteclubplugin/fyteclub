@@ -91,6 +91,26 @@ class FyteClubServer {
             }
         });
 
+        // Debug endpoint to see all registered players
+        this.app.get('/api/debug/players', async (req, res) => {
+            try {
+                const players = await this.modSyncService.getAllRegisteredPlayers();
+                console.log(`[DEBUG] Found ${players.length} registered players`);
+                res.json({ 
+                    count: players.length,
+                    players: players.map(p => ({
+                        playerId: p.playerId,
+                        playerName: p.playerName,
+                        modCount: (p.mods || []).length,
+                        lastUpdated: p.lastUpdated
+                    }))
+                });
+            } catch (error) {
+                console.error(`[DEBUG ERROR] Failed to get registered players: ${error.message}`);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
         // Player management
         this.app.post('/api/players/register', async (req, res) => {
             try {
@@ -127,8 +147,14 @@ class FyteClubServer {
         this.app.post('/api/register-mods', async (req, res) => {
             try {
                 const { playerId, playerName, mods, glamourerDesign, customizePlusProfile, simpleHeelsOffset, honorificTitle } = req.body;
+                const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
                 
-                console.log(`[REGISTER] Registering mods for ${playerName || playerId}`);
+                console.log(`[REGISTER-MODS] ${clientIP} - Player: ${playerName || playerId}`);
+                console.log(`[REGISTER-MODS] Mod count: ${(mods || []).length}`);
+                console.log(`[REGISTER-MODS] Has Glamourer: ${!!glamourerDesign}`);
+                console.log(`[REGISTER-MODS] Has CustomizePlus: ${!!customizePlusProfile}`);
+                console.log(`[REGISTER-MODS] Has SimpleHeels: ${!!simpleHeelsOffset}`);
+                console.log(`[REGISTER-MODS] Has Honorific: ${!!honorificTitle}`);
                 
                 const playerInfo = {
                     playerId,
@@ -142,7 +168,7 @@ class FyteClubServer {
                 };
                 
                 await this.modSyncService.updatePlayerMods(playerId, JSON.stringify(playerInfo));
-                console.log(`[REGISTERED] Successfully registered ${(mods || []).length} mods for ${playerName || playerId}`);
+                console.log(`[REGISTER-SUCCESS] ${playerName || playerId} - ${(mods || []).length} mods registered`);
                 
                 res.json({ success: true, message: 'Mods registered successfully' });
             } catch (error) {
@@ -154,17 +180,19 @@ class FyteClubServer {
         this.app.get('/api/mods/:playerId', async (req, res) => {
             try {
                 const { playerId } = req.params;
+                const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
                 
                 // Log player mod lookup request
-                console.log(`[LOOKUP] Checking if ${playerId} is registered with server`);
+                console.log(`[LOOKUP-MODS] ${clientIP} requesting mods for player: ${playerId}`);
                 
                 const mods = await this.modSyncService.getPlayerMods(playerId);
                 
                 if (mods) {
-                    console.log(`[FOUND] Returning mod data for ${playerId}`);
+                    const modData = JSON.parse(mods);
+                    console.log(`[FOUND-MODS] ${playerId} has ${(modData.mods || []).length} mods registered`);
                     res.json({ mods });
                 } else {
-                    console.log(`[NOT REGISTERED] ${playerId} has no mods registered on server`);
+                    console.log(`[NOT-FOUND] ${playerId} has no mods registered on server`);
                     res.status(404).json({ error: 'Player not found or no mods available' });
                 }
             } catch (error) {

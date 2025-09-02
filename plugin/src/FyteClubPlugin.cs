@@ -59,6 +59,10 @@ namespace FyteClub
         // Server reconnection system
         private DateTime _lastReconnectionAttempt = DateTime.MinValue;
         private readonly TimeSpan _reconnectionInterval = TimeSpan.FromMinutes(2); // Try reconnecting every 2 minutes
+        
+        // Periodic health check system - test ALL servers regularly
+        private DateTime _lastHealthCheckAttempt = DateTime.MinValue;
+        private readonly TimeSpan _healthCheckInterval = TimeSpan.FromMinutes(5); // Health check all servers every 5 minutes
 
         // IPC with version checking - established patterns
         private readonly ICallGateSubscriber<bool>? _penumbraEnabled;
@@ -155,6 +159,13 @@ namespace FyteClub
                 {
                     _ = Task.Run(AttemptServerReconnections);
                     _lastReconnectionAttempt = DateTime.UtcNow;
+                }
+                
+                // Periodic health check for ALL servers (including ones marked as connected)
+                if (ShouldPerformHealthCheck())
+                {
+                    _ = Task.Run(PerformHealthCheckOnAllServers);
+                    _lastHealthCheckAttempt = DateTime.UtcNow;
                 }
                 
                 // Clean up old player-server associations periodically (every 10 minutes)
@@ -265,6 +276,39 @@ namespace FyteClub
                 
                 // Add a small delay between reconnection attempts to avoid overwhelming servers
                 await Task.Delay(1000);
+            }
+        }
+
+        private bool ShouldPerformHealthCheck()
+        {
+            // Check if enough time has passed since last health check
+            if ((DateTime.UtcNow - _lastHealthCheckAttempt) < _healthCheckInterval) return false;
+            
+            // Only run health check if we have enabled servers
+            return _servers.Any(s => s.Enabled);
+        }
+
+        private async Task PerformHealthCheckOnAllServers()
+        {
+            var enabledServers = _servers.Where(s => s.Enabled).ToList();
+            
+            if (enabledServers.Count == 0) return;
+            
+            _pluginLog.Debug($"FyteClub: Performing health check on {enabledServers.Count} enabled servers...");
+            
+            foreach (var server in enabledServers)
+            {
+                try
+                {
+                    await TestServerConnectivity(server);
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Debug($"FyteClub: Health check failed for {server.Name}: {ex.Message}");
+                }
+                
+                // Small delay between health checks to avoid overwhelming servers
+                await Task.Delay(500);
             }
         }
 
@@ -455,12 +499,13 @@ namespace FyteClub
         }
 
         // FyteClub's friend server management - keep your UI innovations
-        public void AddServer(string address, string name)
+        public void AddServer(string address, string name, string password = "")
         {
             var server = new ServerInfo 
             { 
                 Address = address, 
-                Name = name, 
+                Name = name,
+                Password = password,
                 Enabled = true,
                 Connected = false
             };
@@ -506,7 +551,14 @@ namespace FyteClub
         public void ReconnectAllServers()
         {
             _pluginLog.Info("FyteClub: Manually triggering reconnection to all servers...");
-            _ = Task.Run(AttemptServerReconnections);
+            _ = Task.Run(async () =>
+            {
+                foreach (var server in _servers.Where(s => s.Enabled))
+                {
+                    await TestServerConnectivity(server);
+                    await Task.Delay(500); // Small delay between tests
+                }
+            });
         }
 
         public void RemoveServer(int index)
@@ -658,7 +710,18 @@ namespace FyteClub
                                     var json = System.Text.Json.JsonSerializer.Serialize(request);
                                     var content = new StringContent(json, Encoding.UTF8, "application/json");
                                     
-                                    var response = await _httpClient.PostAsync($"http://{server.Address}/api/register-mods", content);
+                                    var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"http://{server.Address}/api/register-mods")
+                                    {
+                                        Content = content
+                                    };
+                                    
+                                    // Add password header if server has one
+                                    if (!string.IsNullOrEmpty(server.Password))
+                                    {
+                                        httpRequest.Headers.Add("x-fyteclub-password", server.Password);
+                                    }
+                                    
+                                    var response = await _httpClient.SendAsync(httpRequest);
                                     
                                     if (response.IsSuccessStatusCode)
                                     {
@@ -716,7 +779,18 @@ namespace FyteClub
                         var json = System.Text.Json.JsonSerializer.Serialize(request);
                         var content = new StringContent(json, Encoding.UTF8, "application/json");
                         
-                        var response = await _httpClient.PostAsync($"http://{server.Address}/api/register-mods", content);
+                        var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"http://{server.Address}/api/register-mods")
+                        {
+                            Content = content
+                        };
+                        
+                        // Add password header if server has one
+                        if (!string.IsNullOrEmpty(server.Password))
+                        {
+                            httpRequest.Headers.Add("x-fyteclub-password", server.Password);
+                        }
+                        
+                        var response = await _httpClient.SendAsync(httpRequest);
                         
                         if (response.IsSuccessStatusCode)
                         {
@@ -876,7 +950,7 @@ namespace FyteClub
                 {
                     if (!string.IsNullOrEmpty(_newAddress))
                     {
-                        _plugin.AddServer(_newAddress, string.IsNullOrEmpty(_newName) ? _newAddress : _newName);
+                        _plugin.AddServer(_newAddress, string.IsNullOrEmpty(_newName) ? _newAddress : _newName, _newPassword);
                         _newAddress = "";
                         _newName = "";
                         _newPassword = "";
@@ -1064,6 +1138,7 @@ namespace FyteClub
     {
         public string Address { get; set; } = "";
         public string Name { get; set; } = "";
+        public string Password { get; set; } = "";
         public bool Enabled { get; set; } = true;
         public bool Connected { get; set; } = false;
         public DateTime? LastConnected { get; set; } = null;
