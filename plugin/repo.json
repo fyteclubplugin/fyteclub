@@ -2,10 +2,10 @@
   {
     "Author": "FyteClub Team",
     "Name": "FyteClub",
-    "Punchline": "You do not talk about FyteClub",
-    "Description": "[v3.0 ENHANCED] Advanced mod sharing with storage deduplication, Redis caching, and optimized database operations. Enhanced performance and reliability.",
+    "Punchline": "Share your mods with friends",
+    "Description": "Sync mods between players using Penumbra, Glamourer, and other plugins",
     "InternalName": "FyteClub",
-    "AssemblyVersion": "3.0.5",
+    "AssemblyVersion": "3.1.0",
     "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
     "ApplicableVersion": "any",
     "Tags": [
