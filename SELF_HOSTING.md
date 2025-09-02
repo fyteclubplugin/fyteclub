@@ -1,138 +1,111 @@
 # FyteClub Self-Hosting Guide
 
-## 🎯 **100% Friend-to-Friend - No Central Servers**
+## How it works
 
-FyteClub has **ZERO** centralized infrastructure. We don't host anything for anyone. Every server is run by someone in your friend group.
+FyteClub has no central servers. Someone in your friend group runs a server, everyone else connects to it.
 
-## **How Friend Groups Work**
+## Who runs the server
 
-### **Someone in Your Group Runs the Server**
-- **Your gaming buddy** runs it on their PC
-- **Your FC leader** runs it on a Raspberry Pi
-- **Your tech-savvy friend** runs it on their VPS
-- **You** run it yourself for your friends
+- Anyone in your friend group with a computer
+- Your FC leader with a Raspberry Pi
+- Someone with a VPS or cloud server
+- You can run it yourself
 
-### **Everyone Else Just Connects**
+## Hosting options
+
+### Your PC
+Run the server on your gaming computer:
 ```bash
-# Server host (one person)
-$ fyteclub start-server
-📋 Share Code: ABC123
-
-# Everyone else (friends)
-$ fyteclub connect ABC123
-✅ Connected to [Friend's Name]'s server
+cd server
+npm start
 ```
+Share your IP:port with friends (like `192.168.1.100:3000`).
 
-## **Hosting Options (Pick One)**
-
-### **Option 1: Your Gaming PC** 💻
-```bash
-# Run server on your main computer
-$ fyteclub start-server --port 3000
-🚀 FyteClub server running on your PC
-📋 Share Code: ABC123
-🌐 Friends connect to: your-ip:3000
-```
-
-**Pros**: Free, easy setup, full control
+**Pros**: Free and easy
 **Cons**: Only works when your PC is on
 
-### **Option 2: Raspberry Pi** 🥧
+### Raspberry Pi
+A $35 Pi can run the server 24/7:
 ```bash
-# $35 Pi runs 24/7 in your closet
-$ sudo apt install nodejs npm
-$ npm install -g fyteclub-server
-$ fyteclub start-server --daemon
-📡 Server running 24/7 on Pi
-💡 Power usage: ~3 watts
+sudo apt install nodejs npm
+cd fyteclub/server
+npm install
+npm start
 ```
 
-**Pros**: 24/7 uptime, low power, cheap
-**Cons**: Initial setup required
+**Pros**: Always on, low power
+**Cons**: Need to set up the Pi
 
-### **Option 3: Your Own AWS** ☁️
+### Cloud server
+Use AWS, DigitalOcean, or similar:
 ```bash
-# Deploy to YOUR AWS account (not ours)
-$ fyteclub deploy aws --region us-east-1
-💳 Uses YOUR AWS account
-💰 YOU pay the bills (~$3-5/month)
-🔒 YOU control the data
+# After setting up your VPS
+ssh user@your-server.com
+cd fyteclub/server
+npm install
+npm start
 ```
 
-**Pros**: Professional uptime, scalable
-**Cons**: Monthly cost, technical setup
-
-### **Option 4: VPS Provider** 🖥️
-```bash
-# $5/month DigitalOcean droplet
-$ ssh root@your-vps.com
-$ npm install -g fyteclub-server
-$ fyteclub start-server --production
-```
-
-**Pros**: Cheap, reliable, 24/7
+**Pros**: Always online, reliable
 **Cons**: Monthly cost
 
-## **What We Provide vs What You Do**
+## What's included
 
-### **✅ What FyteClub Provides (Free)**
-- **Plugin code** - FFXIV Dalamud plugin
-- **Client code** - Node.js application
-- **Server code** - Self-hosting server software
-- **Documentation** - Setup guides and tutorials
-- **Support** - Help with technical issues
+The FyteClub download includes:
+- FFXIV plugin code
+- Server software
+- Setup scripts
+- Documentation
 
-### **❌ What FyteClub Does NOT Provide**
-- **Hosting** - You host your own server
-- **Infrastructure** - You provide the hardware/cloud
-- **Data storage** - Your data stays on your systems
-- **Uptime guarantees** - Your server, your responsibility
-- **User support** - You support your own users
+You provide:
+- Hardware or cloud server
+- Internet connection
+- Basic setup
 
-## **Share Code System (Decentralized)**
+## Network setup
 
-### **How Share Codes Work**
-```
-1. You start server → Generates code "ABC123"
-2. Code registered → With public directory service*
-3. Friend enters code → Looks up your server IP
-4. Direct connection → Friend connects to YOUR server
+### Port forwarding
+If hosting from home, forward port 3000 in your router settings.
 
-*Directory service only stores: code → IP mapping
-*No mod data, no user data, just IP addresses
-```
+### Firewall
+Allow incoming connections on port 3000 (or whatever port you choose).
 
-### **Directory Service Options**
+### Dynamic DNS
+If your home IP changes, use a service like DuckDNS to get a stable hostname.
+
+## Server management
+
+### Starting the server
 ```bash
-# Option 1: Use community directory (default)
-$ fyteclub start-server --directory community
-
-# Option 2: Run your own directory
-$ fyteclub start-directory --port 8080
-$ fyteclub start-server --directory http://your-ip:8080
-
-# Option 3: No directory (direct IP only)
-$ fyteclub start-server --no-directory
+cd server
+npm start
 ```
 
-## **Complete Self-Hosting Example**
+The server will show you the URL to share with friends.
 
-### **Real Example: FC Server Setup**
-```bash
-# FC Leader (Sarah) sets up server
-Sarah$ fyteclub start-server --name "Awesome FC Server"
-🚀 Server started on Sarah's PC
-📋 Share Code: XYZ789
+### Stopping the server
+Press Ctrl+C in the terminal where the server is running.
 
-# FC members connect to Sarah's server
-Bob$ fyteclub connect XYZ789
-Alice$ fyteclub connect XYZ789
-Charlie$ fyteclub connect XYZ789
-✅ All connected to Sarah's server
+### Server settings
+Edit the config file to change:
+- Port number
+- Password protection
+- Database location
 
-# When Sarah's PC is off, everyone loses connection
-# When Sarah's online, everyone can share mods
-```
+## Example setup
+
+### FC server
+Let's say Sarah wants to run a server for her Free Company:
+
+1. Sarah downloads the server files
+2. Runs `npm start` on her gaming PC
+3. Shares her IP with FC members: `192.168.1.100:3000`
+4. FC members add her server in their FyteClub plugin
+5. When they play together, mods sync automatically
+
+When Sarah's PC is off, the server is down. When she's online, everyone can share mods.
+
+## Troubleshooting
 
 ### **Scenario: Dedicated Pi Server**
 ```bash
@@ -144,92 +117,46 @@ $ fyteclub start-server --daemon --name "FC Server"
 
 # FC gets 24/7 uptime for $35 + $2/month
 # Still 100% under FC control
-```
+## Troubleshooting
 
-## **Cost Breakdown (Your Costs)**
+### Server won't start
+- Make sure Node.js is installed
+- Check if port 3000 is already in use
+- Try a different port in the config
 
-### **Free Options**
-- **Your PC**: $0/month (electricity ~$5/month)
-- **Friend's PC**: $0/month (if they host)
+### Friends can't connect
+- Check firewall settings
+- Verify port forwarding if hosting from home  
+- Make sure you gave them the right IP:port
 
-### **Paid Options**
-- **Raspberry Pi**: $35 one-time + $2/month electricity
-- **VPS**: $5-10/month (DigitalOcean, Linode, etc.)
-- **Your AWS**: $3-5/month (small groups), $10-20/month (large groups)
+### Server runs slowly
+- Check available RAM and CPU
+- Restart the server occasionally
+- Consider moving to a better computer/server
 
-### **What You're NOT Paying For**
-- ❌ FyteClub hosting fees
-- ❌ FyteClub subscription
-- ❌ FyteClub premium features
-- ❌ FyteClub data storage
+## Costs
 
-## **Technical Architecture**
+### Free options
+- Your PC (just electricity)
+- Friend's PC (if they host)
 
-### **Fully Decentralized**
-```
-Your Server ←→ Friend's Client (Direct P2P)
-Your Server ←→ FC Member's Client (Direct P2P)
-Your Server ←→ Another Friend's Client (Direct P2P)
+### Paid options  
+- Raspberry Pi: $35 one-time + $2/month electricity
+- VPS: $5-10/month
+- AWS/cloud: $3-10/month depending on usage
 
-NO CENTRAL SERVERS IN THE MIDDLE
-```
+## Privacy
 
-### **Directory Service (Optional)**
-```
-Share Code Directory (Community or Self-Hosted)
-├── ABC123 → 203.45.67.89:3000
-├── XYZ789 → 198.51.100.42:3000
-└── DEF456 → 192.0.2.123:3000
+When you self-host:
+- Your mod data stays on your server
+- You control who can join
+- No third parties can access your data
+- You decide what to log and store
 
-Only stores: Code → IP mapping
-No mod data, no user data, no tracking
-```
+## Support
 
-## **Privacy & Control**
-
-### **Your Data Stays Yours**
-- **Mod files**: Stored on your server only
-- **User data**: Stored on your server only
-- **Logs**: Stored on your server only
-- **Backups**: Your responsibility
-
-### **You Control Everything**
-- **Who can join**: Your server, your rules
+Check the GitHub wiki or open an issue if you need help setting up your server.
 - **What mods**: Your server, your content policy
-- **Uptime**: Your server, your schedule
-- **Costs**: Your server, your budget
+## Support
 
-## **Support Model**
-
-### **What We Help With**
-- ✅ **Setup guides** - How to install and configure
-- ✅ **Troubleshooting** - Technical issues with the software
-- ✅ **Documentation** - Comprehensive guides and tutorials
-- ✅ **Bug fixes** - Issues with the FyteClub code
-
-### **What We Don't Help With**
-- ❌ **Your server costs** - You pay your own bills
-- ❌ **Your server uptime** - You maintain your own infrastructure
-- ❌ **Your user support** - You support your own community
-- ❌ **Your data recovery** - You backup your own data
-
-## **Getting Started**
-
-### **Step 1: Choose Your Hosting**
-Pick one of the 4 options above based on your needs and budget.
-
-### **Step 2: Install FyteClub Server**
-```bash
-$ npm install -g fyteclub-server
-$ fyteclub start-server
-```
-
-### **Step 3: Share With Friends**
-Give them your share code or direct IP address.
-
-### **Step 4: You're Done**
-Your friends connect directly to YOUR server. No middleman, no central authority, no monthly fees to us.
-
----
-
-**Remember**: FyteClub is a tool, not a service. We give you the hammer, you build the house. 🔨🏠
+Check the GitHub wiki or open an issue if you need help setting up your server.

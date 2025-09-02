@@ -123,6 +123,34 @@ class FyteClubServer {
             }
         });
 
+        // Register/upload player mods
+        this.app.post('/api/register-mods', async (req, res) => {
+            try {
+                const { playerId, playerName, mods, glamourerDesign, customizePlusProfile, simpleHeelsOffset, honorificTitle } = req.body;
+                
+                console.log(`[REGISTER] Registering mods for ${playerName || playerId}`);
+                
+                const playerInfo = {
+                    playerId,
+                    playerName: playerName || playerId,
+                    mods: mods || [],
+                    glamourerDesign,
+                    customizePlusProfile,
+                    simpleHeelsOffset,
+                    honorificTitle,
+                    lastUpdated: new Date().toISOString()
+                };
+                
+                await this.modSyncService.updatePlayerMods(playerId, JSON.stringify(playerInfo));
+                console.log(`[REGISTERED] Successfully registered ${(mods || []).length} mods for ${playerName || playerId}`);
+                
+                res.json({ success: true, message: 'Mods registered successfully' });
+            } catch (error) {
+                console.error(`[REGISTER ERROR] Failed to register mods for ${req.body.playerName || req.body.playerId}: ${error.message}`);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
         this.app.get('/api/mods/:playerId', async (req, res) => {
             try {
                 const { playerId } = req.params;

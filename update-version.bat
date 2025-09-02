@@ -4,7 +4,7 @@ REM Updates all version references across the entire repository
 
 if "%1"=="" (
     echo Usage: update-version.bat [NEW_VERSION]
-    echo Example: update-version.bat 3.1.0
+    echo Example: update-version.bat 3.1.1
     echo.
     echo This script will update version numbers in:
     echo   - VERSION file

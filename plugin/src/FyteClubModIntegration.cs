@@ -668,6 +668,116 @@ namespace FyteClub
             }
         }
 
+        public Task<AdvancedPlayerInfo?> GetCurrentPlayerMods(string playerName)
+        {
+            try
+            {
+                var playerInfo = new AdvancedPlayerInfo
+                {
+                    PlayerName = playerName,
+                    Mods = new List<string>(),
+                    GlamourerDesign = null,
+                    CustomizePlusProfile = null,
+                    SimpleHeelsOffset = 0.0f,
+                    HonorificTitle = null
+                };
+
+                // Get Penumbra mods (enabled mods for current character)
+                if (IsPenumbraAvailable && _penumbraGetEnabledState != null)
+                {
+                    try
+                    {
+                        var isEnabled = _penumbraGetEnabledState.Invoke();
+                        if (isEnabled)
+                        {
+                            // For now, just mark that Penumbra is enabled
+                            playerInfo.Mods.Add("penumbra-enabled");
+                        }
+                        _pluginLog.Debug($"Penumbra enabled: {isEnabled} for {playerName}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Warning($"Failed to get Penumbra mods: {ex.Message}");
+                    }
+                }
+
+                // Get Glamourer design (current character appearance)
+                if (IsGlamourerAvailable)
+                {
+                    try
+                    {
+                        // Note: This would need proper Glamourer API to get current design
+                        // For now, we'll mark that glamourer is active
+                        playerInfo.GlamourerDesign = "active";
+                        _pluginLog.Debug($"Glamourer design detected for {playerName}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Warning($"Failed to get Glamourer design: {ex.Message}");
+                    }
+                }
+
+                // Get Customize+ profile (current active profile)
+                if (IsCustomizePlusAvailable && _customizePlusGetActiveProfile != null)
+                {
+                    try
+                    {
+                        var activeProfile = _customizePlusGetActiveProfile.InvokeFunc(0); // Character index 0
+                        if (activeProfile.Item2.HasValue)
+                        {
+                            playerInfo.CustomizePlusProfile = activeProfile.Item2.Value.ToString();
+                            _pluginLog.Debug($"Customize+ profile {playerInfo.CustomizePlusProfile} found for {playerName}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Warning($"Failed to get Customize+ profile: {ex.Message}");
+                    }
+                }
+
+                // Get Simple Heels local player info
+                if (IsHeelsAvailable && _heelsGetLocalPlayer != null)
+                {
+                    try
+                    {
+                        var localPlayer = _heelsGetLocalPlayer.InvokeFunc();
+                        if (!string.IsNullOrEmpty(localPlayer))
+                        {
+                            playerInfo.SimpleHeelsOffset = 1.0f; // Mark that heels are active
+                            _pluginLog.Debug($"Simple Heels active for {playerName}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Warning($"Failed to get Simple Heels info: {ex.Message}");
+                    }
+                }
+
+                // Get Honorific title (current active title)
+                if (IsHonorificAvailable)
+                {
+                    try
+                    {
+                        // Note: This would need proper Honorific API to get current title
+                        // For now, we'll mark that honorific is active
+                        playerInfo.HonorificTitle = "active";
+                        _pluginLog.Debug($"Honorific title detected for {playerName}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Warning($"Failed to get Honorific title: {ex.Message}");
+                    }
+                }
+
+                return Task.FromResult<AdvancedPlayerInfo?>(playerInfo);
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Failed to collect mods for {playerName}: {ex.Message}");
+                return Task.FromResult<AdvancedPlayerInfo?>(null);
+            }
+        }
+
         public void Dispose()
         {
             // Cleanup any remaining state

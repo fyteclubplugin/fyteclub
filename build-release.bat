@@ -1,5 +1,5 @@
 @echo off
-:: FyteClub Release Builder v3.1.0
+:: FyteClub Release Builder v3.1.1
 :: Automated build with API dependency management
 
 set /p CURRENT_VERSION=<VERSION

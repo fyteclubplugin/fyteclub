@@ -1,83 +1,56 @@
-# Quick Start Guide - v3.0.0
+# Quick Start Guide
 
-## Enhanced All-Plugin Architecture
+## For the person hosting the server
 
-Simple setup with direct HTTP communication, now featuring storage deduplication and Redis caching for optimal performance.
+### Option 1: Your PC
+1. Download FyteClub-Server.zip
+2. Extract and run `build-pc.bat`
+3. Share your IP:port with friends (like `192.168.1.100:3000`)
 
-### **Option 1: Run on Your Gaming PC**
-```bash
-# Install server
-npm install -g fyteclub-server
+### Option 2: Raspberry Pi
+1. Download FyteClub-Server.zip to your Pi
+2. Run `build-pi.sh`
+3. Share your Pi's IP:port with friends
 
-# Start server
-fyteclub-server --name "My FC Server"
+### Option 3: Cloud server
+1. Download FyteClub-Server.zip
+2. Upload to your VPS/AWS/etc.
+3. Run `npm install && npm start`
+4. Share your server's IP:port
 
-# Share the code with friends
-# Example output: Share Code: ABC123
-```
+## For everyone else (your friends)
 
-### **Option 2: Run on Raspberry Pi (24/7)**
-```bash
-# On your Pi
-sudo apt update && sudo apt install nodejs npm
-npm install -g fyteclub-server
+### Install the plugin
+1. Download FyteClub-Plugin.zip from releases
+2. Extract to `%APPDATA%\XIVLauncher\installedPlugins\FyteClub\latest\`
+3. Restart FFXIV
 
-# Start as daemon
-fyteclub-server --daemon --name "FC Pi Server"
-```
+### Connect to the server
+1. In FFXIV, type `/fyteclub`
+2. Add your friend's server (their IP:port)
+3. Test the connection
+4. Enable syncing
 
-### **Option 3: Deploy to Your AWS**
-```bash
-# Deploy to YOUR AWS account (you pay ~$3-5/month)
-fyteclub deploy aws --region us-east-1
-```
+## That's it!
 
-## **For Everyone Else (Friends Connecting)**
+Now when you play near each other in FFXIV, your mods will sync automatically.
 
-### **Step 1: Install FyteClub Client**
-```bash
-npm install -g fyteclub-client
-```
+## Troubleshooting
 
-### **Step 2: Install FFXIV Plugin**
-1. Open XIVLauncher
-2. Go to Settings → Dalamud Settings → Experimental
-3. Add plugin repository: `https://raw.githubusercontent.com/fyteclubplugin/fyteclub/main/plugin/repo.json`
-4. Install "FyteClub" plugin
+**Plugin won't load?**
+- Make sure XIVLauncher and Dalamud are updated
+- Check the plugin is in the right folder
+- Restart FFXIV
 
-### **Step 3: Connect to Friend's Server**
-```bash
-# Connect using share code from your friend
-fyteclub connect ABC123
+**Can't connect to server?**
+- Double-check the IP:port
+- Make sure the server is running
+- Check firewall settings
 
-# Start the client daemon
-fyteclub start
-```
-
-### **Step 4: Play FFXIV**
-- Load into game with plugin enabled
-- Stand near friends (within 50 meters)
-- Mods sync automatically
-- See their customizations on their character
-
-## **CLI Commands**
-
-### **Connection**
-```bash
-fyteclub connect ABC123 "Friend Server"  # Connect and save
-fyteclub disconnect                       # Disconnect
-fyteclub status                          # Show status
-```
-
-### **Server Management**
-```bash
-fyteclub list                            # List saved servers
-fyteclub switch "Friend Server"          # Switch servers
-fyteclub save "New Name"                 # Save current server
-fyteclub remove "Old Server"             # Remove server
-fyteclub favorite "Best Server"          # Toggle favorite
-fyteclub quick                           # Quick switch to recent
-```
+**Mods not syncing?**
+- Stand within 50 meters of your friend
+- Check both players have syncing enabled
+- Restart the plugin if needed
 
 ## **Troubleshooting**
 

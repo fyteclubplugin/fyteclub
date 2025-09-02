@@ -70,6 +70,48 @@ namespace FyteClub
             return null;
         }
 
+        public async Task<bool> UploadPlayerMods(string playerId, string playerName, AdvancedPlayerInfo playerInfo)
+        {
+            bool anySuccess = false;
+            foreach (var server in servers.Where(s => s.Enabled))
+            {
+                try
+                {
+                    var request = new
+                    {
+                        playerId,
+                        playerName,
+                        mods = playerInfo.Mods,
+                        glamourerDesign = playerInfo.GlamourerDesign,
+                        customizePlusProfile = playerInfo.CustomizePlusProfile,
+                        simpleHeelsOffset = playerInfo.SimpleHeelsOffset,
+                        honorificTitle = playerInfo.HonorificTitle,
+                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    };
+
+                    var json = JsonSerializer.Serialize(request);
+                    var content = new StringContent(json, Encoding.UTF8, "application/json");
+                    
+                    var response = await httpClient.PostAsync($"http://{server.Address}/api/register-mods", content);
+                    
+                    if (response.IsSuccessStatusCode)
+                    {
+                        pluginLog.Info($"Successfully uploaded mods to {server.Address}");
+                        anySuccess = true;
+                    }
+                    else
+                    {
+                        pluginLog.Warning($"Failed to upload mods to {server.Address}: HTTP {response.StatusCode}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    pluginLog.Warning($"Failed to upload mods to {server.Address}: {ex.Message}");
+                }
+            }
+            return anySuccess;
+        }
+
         public void Dispose()
         {
             httpClient?.Dispose();
