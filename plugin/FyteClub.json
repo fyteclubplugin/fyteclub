@@ -1,10 +1,10 @@
 {
   "Author": "FyteClub Team",
   "Name": "FyteClub",
-  "Punchline": "You do not talk about FyteClub",
-  "Description": "Sync with friends",
+  "Punchline": "Share mods seamlessly with friends across all systems",
+  "Description": "Complete mod synchronization with Penumbra, Glamourer, CustomizePlus, SimpleHeels, and Honorific support",
   "InternalName": "FyteClub",
-    "AssemblyVersion": "3.0.5",
+    "AssemblyVersion": "3.1.0",
   "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
   "ApplicableVersion": "any",
   "Tags": [
