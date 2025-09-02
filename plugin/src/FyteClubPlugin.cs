@@ -124,7 +124,7 @@ namespace FyteClub
             CheckModSystemAvailability();
             LoadConfiguration();
 
-            _pluginLog.Info("FyteClub v3.1.1 initialized - Enhanced mod sharing with Penumbra, Glamourer, Customize+, and Simple Heels integration");
+            _pluginLog.Info("FyteClub v4.0.0 initialized - Enhanced mod sharing with automatic change detection, Penumbra, Glamourer, Customize+, and Simple Heels integration");
         }
 
         private void CheckModSystemAvailability()
