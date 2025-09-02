@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Dalamud.Game.ClientState.Objects.Types;
@@ -198,16 +199,16 @@ namespace FyteClub
                     }
                     else if (version.HasValue)
                     {
-                        _pluginLog.Warning($"Simple Heels version too old: {version.Value.Item1}.{version.Value.Item2}");
+                        _pluginLog.Debug($"Simple Heels version too old: {version.Value.Item1}.{version.Value.Item2}");
                     }
                     else
                     {
-                        _pluginLog.Warning("Simple Heels ApiVersion returned null");
+                        _pluginLog.Debug("Simple Heels ApiVersion returned null");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _pluginLog.Error($"Simple Heels detection failed: {ex.Message}");
+                    _pluginLog.Debug($"Simple Heels detection failed: {ex.Message}");
                     IsHeelsAvailable = false;
                 }
                 
@@ -311,17 +312,31 @@ namespace FyteClub
         {
             try
             {
-                // Create a consistent representation of the mod data for hashing
+                // Create a stable, deterministic representation of the mod data for hashing
+                // Sort collections and normalize data to ensure consistent hashes across sessions
                 var hashData = new
                 {
-                    Mods = playerInfo.Mods ?? new List<string>(),
-                    GlamourerData = playerInfo.GlamourerData ?? "",
-                    CustomizePlusData = playerInfo.CustomizePlusData ?? "",
-                    SimpleHeelsOffset = playerInfo.SimpleHeelsOffset ?? 0.0f,
-                    HonorificTitle = playerInfo.HonorificTitle ?? ""
+                    // Sort mods list to ensure consistent ordering
+                    Mods = (playerInfo.Mods ?? new List<string>()).OrderBy(x => x).ToList(),
+                    
+                    // Normalize string data - trim and handle nulls consistently
+                    GlamourerData = NormalizeDataForHash(playerInfo.GlamourerData),
+                    CustomizePlusData = NormalizeDataForHash(playerInfo.CustomizePlusData),
+                    HonorificTitle = NormalizeDataForHash(playerInfo.HonorificTitle),
+                    
+                    // Round float values to avoid precision differences
+                    SimpleHeelsOffset = Math.Round(playerInfo.SimpleHeelsOffset ?? 0.0f, 3)
                 };
 
-                var json = JsonSerializer.Serialize(hashData, new JsonSerializerOptions { WriteIndented = false });
+                // Use consistent JSON serialization options
+                var jsonOptions = new JsonSerializerOptions 
+                { 
+                    WriteIndented = false,
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+                };
+                
+                var json = JsonSerializer.Serialize(hashData, jsonOptions);
                 using var sha256 = SHA256.Create();
                 var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(json));
                 return Convert.ToHexString(hashBytes);
@@ -331,6 +346,20 @@ namespace FyteClub
                 _pluginLog.Warning($"FyteClub: Failed to calculate mod hash, using fallback: {ex.Message}");
                 return Guid.NewGuid().ToString(); // Fallback to always apply
             }
+        }
+
+        private string NormalizeDataForHash(string? data)
+        {
+            // Normalize data for consistent hashing
+            if (string.IsNullOrWhiteSpace(data))
+                return "";
+            
+            // Trim whitespace and convert to consistent case for hashing
+            var normalized = data.Trim();
+            
+            // Remove any session-specific identifiers that might change between restarts
+            // This is a simple approach - could be enhanced based on actual data formats
+            return normalized;
         }
 
         public void ClearPlayerModCache(string playerName)
@@ -735,21 +764,24 @@ namespace FyteClub
                     }
                 }
 
-                // Get Simple Heels local player info
-                if (IsHeelsAvailable && _heelsGetLocalPlayer != null)
+                // Get Simple Heels status (simplified approach)
+                if (IsHeelsAvailable)
                 {
                     try
                     {
-                        var localPlayer = _heelsGetLocalPlayer.InvokeFunc();
-                        if (!string.IsNullOrEmpty(localPlayer))
+                        // Try to get the API version as a simple availability check
+                        var version = _heelsGetVersion?.InvokeFunc();
+                        if (version.HasValue)
                         {
-                            playerInfo.SimpleHeelsOffset = 1.0f; // Mark that heels are active
-                            _pluginLog.Debug($"Simple Heels active for {playerName}");
+                            // Just mark that Simple Heels is available and working
+                            playerInfo.SimpleHeelsOffset = 0.1f; // Small non-zero value to indicate presence
+                            _pluginLog.Debug($"Simple Heels available for {playerName}");
                         }
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog.Warning($"Failed to get Simple Heels info: {ex.Message}");
+                        _pluginLog.Debug($"Simple Heels version check failed: {ex.Message}");
+                        // Don't treat as error, plugin might not be fully loaded
                     }
                 }
 
