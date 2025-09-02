@@ -86,14 +86,25 @@ xcopy "server\start-fyteclub.bat" "release\FyteClub-Server\server\" /Y >nul
 xcopy "server\src" "release\FyteClub-Server\server\src\" /E /I >nul
 if exist "server\bin" xcopy "server\bin" "release\FyteClub-Server\server\bin\" /E /I >nul
 
-:: copy client
-xcopy "client" "release\FyteClub-Server\client\" /E /I >nul
+:: copy client (essential files only)
+mkdir "release\FyteClub-Server\client"
+xcopy "client\package.json" "release\FyteClub-Server\client\" /Y >nul
+xcopy "client\src" "release\FyteClub-Server\client\src\" /E /I >nul
+xcopy "client\ui" "release\FyteClub-Server\client\ui\" /E /I >nul
 
-:: copy docs and setup files
-copy "README.md" "release\FyteClub-Server\" >nul
-copy "INSTALLATION.md" "release\FyteClub-Server\" >nul
-copy "SELF_HOSTING.md" "release\FyteClub-Server\" >nul
-copy "server\start-fyteclub.bat" "release\FyteClub-Server\" >nul
+:: copy build scripts
+copy "build-pc.bat" "release\FyteClub-Server\" >nul
+copy "build-aws.bat" "release\FyteClub-Server\" >nul
+copy "build-pi.sh" "release\FyteClub-Server\" >nul
+
+:: create simple server readme
+echo FyteClub Server v%CURRENT_VERSION% > "release\FyteClub-Server\README.txt"
+echo. >> "release\FyteClub-Server\README.txt"
+echo Quick setup: >> "release\FyteClub-Server\README.txt"
+echo   PC: run build-pc.bat >> "release\FyteClub-Server\README.txt"
+echo   Pi: run build-pi.sh >> "release\FyteClub-Server\README.txt"
+echo   AWS: run build-aws.bat >> "release\FyteClub-Server\README.txt"
+copy "build-pi.sh" "release\FyteClub-Server\" >nul
 
 echo Server package created
 echo.
