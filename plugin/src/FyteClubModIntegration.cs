@@ -41,6 +41,7 @@ namespace FyteClub
         private CreateTemporaryCollection? _penumbraCreateTemporaryCollection;
         private AddTemporaryMod? _penumbraAddTemporaryMod;
         private DeleteTemporaryCollection? _penumbraRemoveTemporaryCollection;
+        private AssignTemporaryCollection? _penumbraAssignTemporaryCollection;
         private RedrawObject? _penumbraRedraw;
         
         // Glamourer - using API helper classes  
@@ -136,6 +137,7 @@ namespace FyteClub
                     _penumbraCreateTemporaryCollection = new CreateTemporaryCollection(_pluginInterface);
                     _penumbraAddTemporaryMod = new AddTemporaryMod(_pluginInterface);
                     _penumbraRemoveTemporaryCollection = new DeleteTemporaryCollection(_pluginInterface);
+                    _penumbraAssignTemporaryCollection = new AssignTemporaryCollection(_pluginInterface);
                     _penumbraRedraw = new RedrawObject(_pluginInterface);
                 }
                 catch (Exception ex)
@@ -509,7 +511,7 @@ namespace FyteClub
         {
             try
             {
-                var collectionName = $"MareChara_Files_{character.Name}_{character.ObjectIndex}";
+                var collectionName = $"FyteClub_{character.Name}_{character.ObjectIndex}";
                 
                 // Create temporary collection (using proper API signature with out parameter)
                 if (_penumbraCreateTemporaryCollection != null)
@@ -517,14 +519,25 @@ namespace FyteClub
                     var createResult = _penumbraCreateTemporaryCollection.Invoke("FyteClub", collectionName, out var collectionId);
                     if (createResult == PenumbraApiEc.Success && collectionId != Guid.Empty)
                 {
-                    // Add mods to collection (Mare's pattern with proper parameters)
+                    // Add mods to collection (FyteClub's own pattern)
                     var modPaths = new Dictionary<string, string>();
                     foreach (var mod in mods)
                     {
                         modPaths[mod] = mod; // Simple 1:1 mapping for now
                     }
                     
-                    _penumbraAddTemporaryMod?.Invoke("MareChara_Files", collectionId, modPaths, "", 0);
+                    _penumbraAddTemporaryMod?.Invoke("FyteClub", collectionId, modPaths, "", 0);
+                    
+                    // CRITICAL: Assign the collection to the character so Penumbra knows to use it
+                    var assignResult = _penumbraAssignTemporaryCollection?.Invoke(collectionId, character.ObjectIndex);
+                    if (assignResult == PenumbraApiEc.Success)
+                    {
+                        _pluginLog.Debug($"Successfully assigned collection {collectionId} to {character.Name}");
+                    }
+                    else
+                    {
+                        _pluginLog.Warning($"Failed to assign collection to {character.Name}: {assignResult}");
+                    }
                     
                     _pluginLog.Debug($"Applied {mods.Count} Penumbra mods for {character.Name}");
                     }

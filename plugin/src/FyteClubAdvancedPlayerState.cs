@@ -120,4 +120,31 @@ namespace FyteClub
             LastModRequest = DateTime.UtcNow;
         }
     }
+
+    public class ChunkedPlayerInfo
+    {
+        public List<ModInfo> Mods { get; set; } = new();
+        public string? GlamourerDesign { get; set; }
+        public string? CustomizePlusProfile { get; set; }
+        public float? SimpleHeelsOffset { get; set; }
+        public string? HonorificTitle { get; set; }
+        public ChunkPagination? Pagination { get; set; }
+        public string PlayerId { get; set; } = "";
+    }
+
+    public class ChunkPagination
+    {
+        public int Offset { get; set; }
+        public int Limit { get; set; }
+        public int Total { get; set; }
+        public bool HasMore { get; set; }
+        public int? NextOffset { get; set; }
+    }
+
+    public class ModInfo
+    {
+        public string ModPath { get; set; } = "";
+        public string ModContent { get; set; } = "";
+        public Dictionary<string, object> Configs { get; set; } = new();
+    }
 }
