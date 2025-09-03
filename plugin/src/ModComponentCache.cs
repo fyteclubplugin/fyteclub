@@ -391,6 +391,35 @@ namespace FyteClub
             }
         }
 
+        /// <summary>
+        /// Log component cache statistics for debugging.
+        /// </summary>
+        public void LogStatistics()
+        {
+            var stats = GetComponentCacheStats();
+            var sizeMB = stats.TotalSizeBytes / (1024.0 * 1024.0);
+            var avgReferences = _components.Values.Count > 0 ? _components.Values.Average(c => c.ReferenceCount) : 0;
+            
+            _pluginLog.Info($"Component Cache: {stats.ComponentCount} components, {stats.RecipeCount} recipes, {sizeMB:F1} MB");
+            _pluginLog.Info($"Average component references: {avgReferences:F1}, Last cleanup: {stats.LastCleanup:yyyy-MM-dd HH:mm:ss}");
+        }
+
+        /// <summary>
+        /// Get component cache statistics.
+        /// </summary>
+        public ComponentCacheStats GetComponentCacheStats()
+        {
+            var totalSize = _components.Values.Sum(c => c.Size);
+            
+            return new ComponentCacheStats
+            {
+                ComponentCount = _components.Count,
+                RecipeCount = _recipes.Count,
+                TotalSizeBytes = totalSize,
+                LastCleanup = DateTime.UtcNow // TODO: Track actual cleanup time
+            };
+        }
+
         public void Dispose()
         {
             try

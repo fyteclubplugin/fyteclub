@@ -146,7 +146,10 @@ namespace FyteClub
             _appearancePollingTimer.AutoReset = true;
             _appearancePollingTimer.Enabled = true;
 
-            _pluginLog.Info("FyteClub v4.0.0 initialized - Enhanced mod sharing with automatic change detection, Penumbra, Glamourer, Customize+, and Simple Heels integration");
+            _pluginLog.Info("FyteClub v4.0.1 initialized - Enhanced mod sharing with client-side caching, reference-based deduplication, and companion support");
+            
+            // Debug: Log all object types to understand minions and mounts
+            DebugLogObjectTypes();
         }
 
         private void CheckModSystemAvailability()
@@ -1418,9 +1421,41 @@ namespace FyteClub
                             _pluginLog.Info("Usage: /fyteclub testuser <playerName>");
                         }
                         break;
+                    case "debug":
+                        _pluginLog.Info("=== Debug: Logging all object types ===");
+                        DebugLogObjectTypes();
+                        break;
+                    case "companions":
+                        _pluginLog.Info("=== Debug: Checking companion mod support ===");
+                        LogMinionsAndMounts();
+                        break;
+                    case "cache":
+                        _pluginLog.Info("=== Cache Statistics ===");
+                        if (_clientCache != null)
+                        {
+                            var stats = _clientCache.GetCacheStats();
+                            _pluginLog.Info($"Client Cache: {stats.TotalPlayers} players, {stats.TotalMods} mods, {stats.TotalSizeBytes / (1024.0 * 1024.0):F1} MB");
+                        }
+                        else
+                        {
+                            _pluginLog.Info("Client Cache: Not initialized");
+                        }
+                        
+                        if (_componentCache != null)
+                        {
+                            _componentCache.LogStatistics();
+                        }
+                        else
+                        {
+                            _pluginLog.Info("Component Cache: Not initialized");
+                        }
+                        break;
                     default:
-                        _pluginLog.Info("Usage: /fyteclub [redraw|block|unblock|testuser] <playerName>");
+                        _pluginLog.Info("Usage: /fyteclub [redraw|block|unblock|testuser|debug|companions|cache] <playerName>");
                         _pluginLog.Info("       /fyteclub redraw [playerName] - Redraw specific player or all");
+                        _pluginLog.Info("       /fyteclub debug - Log all object types in current area");
+                        _pluginLog.Info("       /fyteclub companions - Check minions/mounts mod support");
+                        _pluginLog.Info("       /fyteclub cache - Show cache statistics");
                         break;
                 }
             }
@@ -1804,6 +1839,15 @@ namespace FyteClub
         {
             if (_clientState?.LocalPlayer == null) return;
 
+            // Check players (existing logic)
+            await CheckPlayersForChanges();
+            
+            // Check minions and mounts (new investigation)
+            await CheckCompanionsForChanges();
+        }
+
+        private async Task CheckPlayersForChanges()
+        {
             var nearbyPlayers = _objectTable
                 .Where(obj => obj is ICharacter character && 
                              character.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player &&
@@ -1867,6 +1911,69 @@ namespace FyteClub
                 {
                     _pluginLog.Warning($"Error checking appearance for {character.Name}: {ex.Message}");
                 }
+            }
+        }
+
+        /// <summary>
+        /// Investigate how minions, mounts, and companions work with the mod system.
+        /// </summary>
+        private async Task CheckCompanionsForChanges()
+        {
+            try
+            {
+                // Look for companions (minions), pets, and other non-player objects
+                var companions = _objectTable
+                    .Where(obj => obj != null && 
+                           (obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion ||
+                            obj.ObjectKind.ToString().Contains("Pet") ||
+                            obj.ObjectKind.ToString().Contains("Mount")))
+                    .ToList();
+
+                foreach (var companion in companions)
+                {
+                    try
+                    {
+                        // Check if this companion can be treated as a character
+                        if (companion is ICharacter companionCharacter)
+                        {
+                            var companionName = $"{companion.Name}_{companion.ObjectKind}_{companion.ObjectIndex}";
+                            
+                            // Try to get mod information for this companion
+                            var companionModInfo = await _modSystemIntegration.GetCurrentPlayerMods(companionName);
+                            if (companionModInfo != null && companionModInfo.Mods?.Count > 0)
+                            {
+                                _pluginLog.Info($"Companion {companion.Name} ({companion.ObjectKind}) has {companionModInfo.Mods.Count} mods");
+                                
+                                // Log the mods for analysis
+                                foreach (var mod in companionModInfo.Mods.Take(3)) // Log first 3
+                                {
+                                    _pluginLog.Info($"  - Companion mod: {mod}");
+                                }
+                            }
+
+                            // Check if we can generate an appearance hash for companions
+                            var companionHash = await GenerateComprehensiveAppearanceHash(companionCharacter);
+                            if (!string.IsNullOrEmpty(companionHash))
+                            {
+                                _pluginLog.Debug($"Generated appearance hash for companion {companion.Name}: {companionHash}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Debug($"Error analyzing companion {companion.Name}: {ex.Message}");
+                    }
+                }
+
+                // Log summary every 30 seconds to avoid spam
+                if (DateTime.Now.Second % 30 == 0)
+                {
+                    _pluginLog.Info($"Companion analysis: Found {companions.Count} companions/pets/mounts in range");
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Error in companion analysis: {ex.Message}");
             }
         }
 
@@ -1939,6 +2046,92 @@ namespace FyteClub
             {
                 _loadingStates[playerName] = LoadingState.Failed;
                 _pluginLog.Error($"Error requesting mods for {playerName} (hash: {appearanceHash}): {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Debug method to analyze object types in the game world, specifically looking for minions and mounts.
+        /// </summary>
+        private void DebugLogObjectTypes()
+        {
+            try
+            {
+                _pluginLog.Info("=== FYTECLUB OBJECT TYPE ANALYSIS ===");
+                
+                var objects = _objectTable
+                    .Where(obj => obj != null)
+                    .GroupBy(obj => obj.ObjectKind)
+                    .ToList();
+
+                foreach (var group in objects)
+                {
+                    _pluginLog.Info($"{group.Key}: {group.Count()} objects");
+                    
+                    // Log first few examples of each type
+                    foreach (var obj in group.Take(2))
+                    {
+                        var details = $"  - {obj.Name} (Index: {obj.ObjectIndex})";
+                        
+                        // Check if it's a character and get additional info
+                        if (obj is ICharacter character)
+                        {
+                            details += $" [Character - Level {character.Level}]";
+                        }
+                        
+                        _pluginLog.Info(details);
+                    }
+                }
+
+                // Specifically look for minions and mounts
+                LogMinionsAndMounts();
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Error in object type analysis: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Analyze minions, mounts, and other companion objects.
+        /// </summary>
+        private void LogMinionsAndMounts()
+        {
+            _pluginLog.Info("=== MINION AND MOUNT ANALYSIS ===");
+
+            // Look for objects that might be minions (companions)
+            var possibleMinions = _objectTable
+                .Where(obj => obj != null && 
+                       (obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion || 
+                        obj.Name.TextValue.Contains("minion", StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            _pluginLog.Info($"Found {possibleMinions.Count} possible minions:");
+            foreach (var minion in possibleMinions)
+            {
+                _pluginLog.Info($"  - {minion.Name} (Kind: {minion.ObjectKind})");
+            }
+
+            // Look for mounts
+            var possibleMounts = _objectTable
+                .Where(obj => obj != null && 
+                       (obj.Name.TextValue.Contains("mount", StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            _pluginLog.Info($"Found {possibleMounts.Count} possible mounts:");
+            foreach (var mount in possibleMounts)
+            {
+                _pluginLog.Info($"  - {mount.Name} (Kind: {mount.ObjectKind})");
+            }
+
+            // Check for pets and other companions
+            var pets = _objectTable
+                .Where(obj => obj != null && obj.ObjectKind.ToString().Contains("Pet"))
+                .ToList();
+
+            _pluginLog.Info($"Found {pets.Count} pets:");
+            foreach (var pet in pets)
+            {
+                _pluginLog.Info($"  - {pet.Name} (Kind: {pet.ObjectKind})");
             }
         }
     }
