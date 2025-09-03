@@ -46,7 +46,7 @@ await _httpClient.PostAsync("http://localhost:8080/api/player-detected",
 Keep daemon but:
 - Use HTTP instead of named pipes
 - Minimize plugin-side processing
-- Add performance monitoring like Mare
+- Add performance monitoring like Horse
 - Auto-start/stop with plugin lifecycle
 
 This gives you performance benefits while addressing user concerns through transparency.

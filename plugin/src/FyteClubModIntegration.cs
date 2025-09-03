@@ -17,7 +17,7 @@ using Glamourer.Api.IpcSubscribers;
 
 namespace FyteClub
 {
-    // Comprehensive mod system integration based on Mare's proven implementation patterns
+    // Comprehensive mod system integration based on Horse's proven implementation patterns
     // Handles Penumbra, Glamourer, Customize+, and Simple Heels with proper IPC patterns
     public class FyteClubModIntegration : IDisposable
     {
@@ -31,8 +31,8 @@ namespace FyteClub
         private readonly Dictionary<string, DateTime> _lastApplicationTime = new();
         private readonly TimeSpan _minReapplicationInterval = TimeSpan.FromMinutes(5); // Prevent spam re-applications
         
-        // Mare's lock code for Glamourer (0x626E7579)
-        private const uint MARE_GLAMOURER_LOCK = 0x626E7579;
+        // FyteClub's unique lock code for Glamourer (0x46797465 = "Fyte" in ASCII)
+        private const uint FYTECLUB_GLAMOURER_LOCK = 0x46797465;
         
         // IPC subscribers using proper API patterns from each plugin
         // Penumbra - using API helper classes
@@ -41,6 +41,7 @@ namespace FyteClub
         private CreateTemporaryCollection? _penumbraCreateTemporaryCollection;
         private AddTemporaryMod? _penumbraAddTemporaryMod;
         private DeleteTemporaryCollection? _penumbraRemoveTemporaryCollection;
+        private AssignTemporaryCollection? _penumbraAssignTemporaryCollection;
         private RedrawObject? _penumbraRedraw;
         
         // Glamourer - using API helper classes  
@@ -136,6 +137,7 @@ namespace FyteClub
                     _penumbraCreateTemporaryCollection = new CreateTemporaryCollection(_pluginInterface);
                     _penumbraAddTemporaryMod = new AddTemporaryMod(_pluginInterface);
                     _penumbraRemoveTemporaryCollection = new DeleteTemporaryCollection(_pluginInterface);
+                    _penumbraAssignTemporaryCollection = new AssignTemporaryCollection(_pluginInterface);
                     _penumbraRedraw = new RedrawObject(_pluginInterface);
                 }
                 catch (Exception ex)
@@ -143,7 +145,7 @@ namespace FyteClub
                     _pluginLog.Warning($"Could not initialize Penumbra IPC subscribers: {ex.Message}");
                 }
                 
-                // Check Penumbra availability using Mare's method
+                // Check Penumbra availability using Horse's method
                 IsPenumbraAvailable = false;
                 try
                 {
@@ -173,7 +175,7 @@ namespace FyteClub
                     _pluginLog.Warning($"Could not initialize Glamourer IPC subscribers: {ex.Message}");
                 }
                 
-                // Check Glamourer availability (Mare checks for API >= 1.1)
+                // Check Glamourer availability (Horse checks for API >= 1.1)
                 try
                 {
                     var version = _glamourerGetVersion?.Invoke();
@@ -202,7 +204,7 @@ namespace FyteClub
                 _customizePlusGetActiveProfile = _pluginInterface.GetIpcSubscriber<ushort, (int, Guid?)>("CustomizePlus.Profile.GetActiveProfileIdOnCharacter");
                 _customizePlusGetProfileById = _pluginInterface.GetIpcSubscriber<Guid, (int, string?)>("CustomizePlus.Profile.GetByUniqueId");
                 
-                // Check Customize+ availability (Mare checks for >= 2.0, CustomizePlus uses breaking.feature format)
+                // Check Customize+ availability (Horse checks for >= 2.0, CustomizePlus uses breaking.feature format)
                 try
                 {
                     var version = _customizePlusGetVersion?.InvokeFunc();
@@ -232,7 +234,7 @@ namespace FyteClub
                 _heelsRegisterPlayer = _pluginInterface.GetIpcSubscriber<int, string, object?>("SimpleHeels.RegisterPlayer");
                 _heelsUnregisterPlayer = _pluginInterface.GetIpcSubscriber<int, object?>("SimpleHeels.UnregisterPlayer");
                 
-                // Check Simple Heels availability (Mare checks for >= 2.0)
+                // Check Simple Heels availability (Horse checks for >= 2.0)
                 try
                 {
                     var version = _heelsGetVersion?.InvokeFunc();
@@ -262,7 +264,7 @@ namespace FyteClub
                 _honorificSetCharacterTitle = _pluginInterface.GetIpcSubscriber<int, string, object>("Honorific.SetCharacterTitle");
                 _honorificClearCharacterTitle = _pluginInterface.GetIpcSubscriber<int, object>("Honorific.ClearCharacterTitle");
                 
-                // Check Honorific availability (Mare checks for API >= 3.0)
+                // Check Honorific availability (Horse checks for API >= 3.0)
                 try
                 {
                     var version = _honorificGetVersion?.InvokeFunc();
@@ -462,7 +464,7 @@ namespace FyteClub
             return result;
         }
 
-        // Apply comprehensive mod data using Mare's patterns
+        // Apply comprehensive mod data using Horse's patterns
         public void ApplyAdvancedPlayerInfo(ICharacter character, AdvancedPlayerInfo playerInfo)
         {
             if (character == null || playerInfo == null) return;
@@ -475,7 +477,7 @@ namespace FyteClub
                     ApplyPenumbraMods(character, playerInfo.Mods);
                 }
                 
-                // Apply Glamourer data with Mare's lock code
+                // Apply Glamourer data with FyteClub's lock code
                 if (IsGlamourerAvailable && !string.IsNullOrEmpty(playerInfo.GlamourerData))
                 {
                     ApplyGlamourerData(character, playerInfo.GlamourerData);
@@ -509,7 +511,7 @@ namespace FyteClub
         {
             try
             {
-                var collectionName = $"MareChara_Files_{character.Name}_{character.ObjectIndex}";
+                var collectionName = $"FyteClub_{character.Name}_{character.ObjectIndex}";
                 
                 // Create temporary collection (using proper API signature with out parameter)
                 if (_penumbraCreateTemporaryCollection != null)
@@ -517,14 +519,25 @@ namespace FyteClub
                     var createResult = _penumbraCreateTemporaryCollection.Invoke("FyteClub", collectionName, out var collectionId);
                     if (createResult == PenumbraApiEc.Success && collectionId != Guid.Empty)
                 {
-                    // Add mods to collection (Mare's pattern with proper parameters)
+                    // Add mods to collection (FyteClub's own pattern)
                     var modPaths = new Dictionary<string, string>();
                     foreach (var mod in mods)
                     {
                         modPaths[mod] = mod; // Simple 1:1 mapping for now
                     }
                     
-                    _penumbraAddTemporaryMod?.Invoke("MareChara_Files", collectionId, modPaths, "", 0);
+                    _penumbraAddTemporaryMod?.Invoke("FyteClub", collectionId, modPaths, "", 0);
+                    
+                    // CRITICAL: Assign the collection to the character so Penumbra knows to use it
+                    var assignResult = _penumbraAssignTemporaryCollection?.Invoke(collectionId, character.ObjectIndex);
+                    if (assignResult == PenumbraApiEc.Success)
+                    {
+                        _pluginLog.Debug($"Successfully assigned collection {collectionId} to {character.Name}");
+                    }
+                    else
+                    {
+                        _pluginLog.Warning($"Failed to assign collection to {character.Name}: {assignResult}");
+                    }
                     
                     _pluginLog.Debug($"Applied {mods.Count} Penumbra mods for {character.Name}");
                     }
@@ -540,8 +553,8 @@ namespace FyteClub
         {
             try
             {
-                // Apply with Mare's lock code (using proper API signature)
-                _glamourerApplyAll?.Invoke(glamourerData, character.ObjectIndex, MARE_GLAMOURER_LOCK);
+                // Apply with FyteClub's lock code (using proper API signature)
+                _glamourerApplyAll?.Invoke(glamourerData, character.ObjectIndex, FYTECLUB_GLAMOURER_LOCK);
                 _pluginLog.Debug($"Applied Glamourer data for {character.Name}");
             }
             catch (Exception ex)
@@ -589,7 +602,7 @@ namespace FyteClub
         {
             try
             {
-                // Apply Honorific title using Mare's pattern (Base64 encoded)
+                // Apply Honorific title using Horse's pattern (Base64 encoded)
                 var characterIndex = GetCharacterIndex(character);
                 
                 if (string.IsNullOrEmpty(honorificTitle))
@@ -600,7 +613,7 @@ namespace FyteClub
                 }
                 else
                 {
-                    // Set title (Mare expects Base64 encoded data)
+                    // Set title (Horse expects Base64 encoded data)
                     var titleBytes = System.Text.Encoding.UTF8.GetBytes(honorificTitle);
                     var titleB64 = Convert.ToBase64String(titleBytes);
                     _honorificSetCharacterTitle?.InvokeFunc(characterIndex, titleB64);
@@ -623,7 +636,7 @@ namespace FyteClub
                 var titleB64 = _honorificGetLocalCharacterTitle?.InvokeFunc();
                 if (string.IsNullOrEmpty(titleB64)) return null;
                 
-                // Decode from Base64 (Mare's pattern)
+                // Decode from Base64 (Horse's pattern)
                 var titleBytes = Convert.FromBase64String(titleB64);
                 return System.Text.Encoding.UTF8.GetString(titleBytes);
             }
@@ -634,7 +647,7 @@ namespace FyteClub
             }
         }
 
-        // Clean up mod applications (Mare's cleanup patterns)
+        // Clean up mod applications (Horse's cleanup patterns)
         public void CleanupCharacter(ICharacter character)
         {
             try
@@ -645,8 +658,8 @@ namespace FyteClub
                 // Revert and unlock Glamourer
                 if (IsGlamourerAvailable)
                 {
-                    _glamourerRevert?.Invoke((int)MARE_GLAMOURER_LOCK);
-                    _glamourerUnlock?.Invoke((int)MARE_GLAMOURER_LOCK);
+                    _glamourerRevert?.Invoke((int)FYTECLUB_GLAMOURER_LOCK);
+                    _glamourerUnlock?.Invoke((int)FYTECLUB_GLAMOURER_LOCK);
                 }
                 
                 // Unregister from Simple Heels
@@ -801,14 +814,14 @@ namespace FyteClub
                     return playerInfo;
                 }
 
-                // Get Penumbra mods (current resource paths for this character - Mare's pattern)
+                // Get Penumbra mods (current resource paths for this character - Horse's pattern)
                 if (IsPenumbraAvailable && _penumbraGetResourcePaths != null)
                 {
                     try
                     {
                         _pluginLog.Debug($"Getting Penumbra resource paths for {playerName} (object index {character.ObjectIndex})");
                         
-                        // Use Mare's pattern: GetGameObjectResourcePaths
+                        // Use Horse's pattern: GetGameObjectResourcePaths
                         var resourcePaths = _penumbraGetResourcePaths.Invoke(character.ObjectIndex);
                         
                         if (resourcePaths != null && resourcePaths.Length > 0)
@@ -922,7 +935,7 @@ namespace FyteClub
             _pluginLog.Debug("ModSystemIntegration disposed");
         }
 
-        // Trigger character redraw using Penumbra API (Mare's pattern)
+        // Trigger character redraw using Penumbra API (Horse's pattern)
         public void RedrawCharacter(ICharacter character)
         {
             try

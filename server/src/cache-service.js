@@ -5,6 +5,7 @@ class CacheService {
         this.isEnabled = false;
         this.client = null;
         this.fallbackMap = new Map(); // In-memory fallback
+        this.hasLoggedRedisError = false; // Flag to prevent spam
         this.options = {
             host: options.host || process.env.REDIS_HOST || 'localhost',
             port: options.port || process.env.REDIS_PORT || 6379,
@@ -17,7 +18,10 @@ class CacheService {
         
         // Start Redis initialization but don't wait for it
         this.initializeRedis().catch(err => {
-            console.log('🟡 Redis: Initialization failed, using fallback cache:', err.message);
+            if (!this.hasLoggedRedisError) {
+                console.log('🟡 Redis: Not available, using in-memory cache fallback');
+                this.hasLoggedRedisError = true;
+            }
             this.isEnabled = false;
         });
     }
@@ -41,7 +45,10 @@ class CacheService {
             });
 
             this.client.on('error', (err) => {
-                console.log('🟡 Redis: Connection error, using fallback cache:', err.message);
+                if (!this.hasLoggedRedisError) {
+                    console.log('🟡 Redis: Connection failed, using in-memory cache fallback');
+                    this.hasLoggedRedisError = true;
+                }
                 this.isEnabled = false;
                 this.client = null;
             });
@@ -53,7 +60,10 @@ class CacheService {
             ]);
 
         } catch (error) {
-            console.log('🟡 Redis: Failed to initialize, using fallback cache:', error.message);
+            if (!this.hasLoggedRedisError) {
+                console.log('🟡 Redis: Failed to initialize, using in-memory cache fallback');
+                this.hasLoggedRedisError = true;
+            }
             this.isEnabled = false;
             this.client = null;
         }
@@ -69,7 +79,7 @@ class CacheService {
                 return true;
             }
         } catch (error) {
-            console.log('Cache SET error:', error.message);
+            // Silently disable Redis and fall back to memory cache
             this.isEnabled = false;
         }
 
@@ -94,7 +104,7 @@ class CacheService {
                 }
             }
         } catch (error) {
-            console.log('Cache GET error:', error.message);
+            // Silently disable Redis and fall back to memory cache
             this.isEnabled = false;
         }
 
@@ -118,7 +128,7 @@ class CacheService {
                 await this.client.del(key);
             }
         } catch (error) {
-            console.log('Cache DEL error:', error.message);
+            // Silently handle Redis errors - already logged at startup
         }
 
         // Also remove from fallback
@@ -134,7 +144,7 @@ class CacheService {
                 return exists === 1;
             }
         } catch (error) {
-            console.log('Cache EXISTS error:', error.message);
+            // Silently handle Redis errors - already logged at startup
         }
 
         // Check fallback cache
@@ -156,7 +166,7 @@ class CacheService {
                 await this.client.flushDb();
             }
         } catch (error) {
-            console.log('Cache FLUSH error:', error.message);
+            // Silently handle Redis errors - already logged at startup
         }
 
         // Clear fallback cache
@@ -205,7 +215,7 @@ class CacheService {
                 await this.client.quit();
                 console.log('Redis connection closed');
             } catch (error) {
-                console.log('Error closing Redis connection:', error.message);
+                // Silently handle Redis errors - already logged at startup
             }
         }
     }

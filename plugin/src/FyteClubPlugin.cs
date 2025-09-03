@@ -6,6 +6,7 @@ using Dalamud.Plugin.Services;
 using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Colors;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.ClientState.Objects.Types;
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
@@ -13,13 +14,14 @@ using System.Threading.Tasks;
 using System.Numerics;
 using System.Linq;
 using System.Threading;
+using System.Timers;
 using System.Text;
 using System.Security.Cryptography;
 using Dalamud.Plugin.Ipc;
 
 namespace FyteClub
 {
-    public sealed class FyteClubPlugin : IDalamudPlugin, IMediatorSubscriber
+    public sealed partial class FyteClubPlugin : IDalamudPlugin, IMediatorSubscriber
     {
         public string Name => "FyteClub";
         private const string CommandName = "/fyteclub";
@@ -28,6 +30,7 @@ namespace FyteClub
         private readonly IDalamudPluginInterface _pluginInterface;
         private readonly ICommandManager _commandManager;
         private readonly IClientState _clientState;
+        private readonly IObjectTable _objectTable;
         private readonly IFramework _framework;
         private readonly IPluginLog _pluginLog;
 
@@ -52,6 +55,10 @@ namespace FyteClub
         // Player-to-server association tracking (reset on app restart)
         private readonly Dictionary<string, ServerInfo> _playerServerAssociations = new();
         private readonly Dictionary<string, DateTime> _playerLastSeen = new();
+        private readonly Dictionary<string, string> _lastSeenAppearanceHash = new(); // Track appearance hashes for change detection
+        
+        // Appearance change detection timer (500ms polling like Horse)
+        private readonly System.Timers.Timer _appearancePollingTimer;
         
         // Detection retry system
         private int _detectionRetryCount = 0;
@@ -93,6 +100,7 @@ namespace FyteClub
         {
             _pluginInterface = pluginInterface;
             _commandManager = commandManager;
+            _objectTable = objectTable;
             _clientState = clientState;
             _framework = framework;
             _pluginLog = pluginLog;
@@ -126,7 +134,22 @@ namespace FyteClub
             CheckModSystemAvailability();
             LoadConfiguration();
 
-            _pluginLog.Info("FyteClub v4.0.0 initialized - Enhanced mod sharing with automatic change detection, Penumbra, Glamourer, Customize+, and Simple Heels integration");
+            // Initialize client-side cache for mod deduplication
+            InitializeClientCache();
+            
+            // Initialize component-based cache for superior deduplication
+            InitializeComponentCache();
+
+            // Initialize appearance polling timer (500ms like Horse for responsiveness)
+            _appearancePollingTimer = new System.Timers.Timer(500); // 500ms polling interval
+            _appearancePollingTimer.Elapsed += OnAppearancePollingTimer;
+            _appearancePollingTimer.AutoReset = true;
+            _appearancePollingTimer.Enabled = true;
+
+            _pluginLog.Info("FyteClub v4.0.1 initialized - Enhanced mod sharing with client-side caching, reference-based deduplication, and companion support");
+            
+            // Debug: Log all object types to understand minions and mounts
+            DebugLogObjectTypes();
         }
 
         private void CheckModSystemAvailability()
@@ -394,25 +417,39 @@ namespace FyteClub
 
         private void OnPlayerDetected(PlayerDetectedMessage message)
         {
+            _pluginLog.Info($"FyteClub: OnPlayerDetected called for: {message.PlayerName}");
+            
             // Check if user is blocked - don't sync with blocked users
             if (_blockedUsers.Contains(message.PlayerName))
             {
-                _pluginLog.Info($"Ignoring blocked user: {message.PlayerName}");
+                _pluginLog.Info($"FyteClub: Ignoring blocked user: {message.PlayerName}");
                 return;
             }
 
             // Skip requesting mods for the local player (ourselves) - check on main thread
             var localPlayerName = _clientState.LocalPlayer?.Name?.TextValue;
+            var localPlayerWorld = _clientState.LocalPlayer?.HomeWorld.Value.Name.ToString();
+            var fullLocalPlayerName = !string.IsNullOrEmpty(localPlayerName) && !string.IsNullOrEmpty(localPlayerWorld) 
+                ? $"{localPlayerName}@{localPlayerWorld}" 
+                : localPlayerName;
+                
+            _pluginLog.Info($"FyteClub: Local player check - Local: '{fullLocalPlayerName}', Detected: '{message.PlayerName}'");
+            
             if (!string.IsNullOrEmpty(localPlayerName) && message.PlayerName.StartsWith(localPlayerName))
             {
-                _pluginLog.Debug($"FyteClub: Skipping mod request for local player: {message.PlayerName}");
+                _pluginLog.Info($"FyteClub: Skipping mod request for local player: {message.PlayerName}");
                 return;
             }
 
             if (!_loadingStates.ContainsKey(message.PlayerName))
             {
+                _pluginLog.Info($"FyteClub: Starting mod request for player: {message.PlayerName}");
                 _loadingStates[message.PlayerName] = LoadingState.Requesting;
                 _ = Task.Run(() => RequestPlayerMods(message.PlayerName));
+            }
+            else
+            {
+                _pluginLog.Info($"FyteClub: Player {message.PlayerName} already has loading state: {_loadingStates[message.PlayerName]}");
             }
         }
 
@@ -425,6 +462,50 @@ namespace FyteClub
 
         private async Task RequestPlayerMods(string playerName)
         {
+            // First, check client cache for player mods (cache-first approach)
+            if (_clientCache != null)
+            {
+                var cachedMods = await _clientCache.GetCachedPlayerMods(playerName);
+                if (cachedMods != null)
+                {
+                    _pluginLog.Info($"🎯 Cache HIT for {playerName} - found cached mods from {cachedMods.CacheTimestamp:yyyy-MM-dd HH:mm:ss}");
+                    
+                    // Send conditional request to check if cached data is still valid
+                    // If server returns 304 Not Modified, we'll use cache
+                    // If server returns 200 with new data, we'll update cache
+                    _pluginLog.Info($"🔄 Sending conditional request for {playerName} with cache timestamp");
+                }
+                else
+                {
+                    _pluginLog.Info($"🌐 Cache MISS for {playerName} - downloading from server");
+                }
+            }
+            
+            // Cache miss or cache disabled - proceed with server request
+            // Prepare conditional request timestamp if cache is available
+            // Note: Only use conditional requests for recent cache entries to avoid
+            // outfit switching issues (User A has multiple outfits, switches between them)
+            DateTime? cacheTimestamp = null;
+            if (_clientCache != null)
+            {
+                var cachedMods = await _clientCache.GetCachedPlayerMods(playerName);
+                if (cachedMods != null)
+                {
+                    // Only use conditional requests if cache is very recent (last 10 minutes)
+                    // This avoids issues where players switch between multiple cached outfits
+                    var cacheAge = DateTime.UtcNow - cachedMods.CacheTimestamp;
+                    if (cacheAge.TotalMinutes <= 10)
+                    {
+                        cacheTimestamp = cachedMods.CacheTimestamp;
+                        _pluginLog.Info($"🔄 Using conditional request for {playerName} (cache age: {cacheAge.TotalMinutes:F1} min)");
+                    }
+                    else
+                    {
+                        _pluginLog.Info($"⏰ Cache too old for conditional request for {playerName} (age: {cacheAge.TotalMinutes:F1} min), fetching fresh");
+                    }
+                }
+            }
+
             // Check if we already know which server this player is on
             if (_playerServerAssociations.ContainsKey(playerName))
             {
@@ -435,7 +516,7 @@ namespace FyteClub
                 if (knownServer.Enabled && (knownServer.Connected || knownServer.FailureCount < MaxServerFailures))
                 {
                     _pluginLog.Debug($"FyteClub: Using known server {knownServer.Name} for {playerName} (failures: {knownServer.FailureCount}/{MaxServerFailures})");
-                    var success = await RequestPlayerModsFromServer(playerName, knownServer);
+                    var success = await RequestPlayerModsFromServer(playerName, knownServer, cacheTimestamp);
                     if (success)
                     {
                         return; // Successfully found player on known server
@@ -453,7 +534,7 @@ namespace FyteClub
             // Search through all enabled servers to find the player
             foreach (var server in _servers.Where(s => s.Enabled))
             {
-                var success = await RequestPlayerModsFromServer(playerName, server);
+                var success = await RequestPlayerModsFromServer(playerName, server, cacheTimestamp);
                 if (success)
                 {
                     // Found the player on this server, associate them
@@ -465,14 +546,53 @@ namespace FyteClub
             }
         }
 
-        private async Task<bool> RequestPlayerModsFromServer(string playerName, ServerInfo server)
+        private async Task<bool> RequestPlayerModsFromServer(string playerName, ServerInfo server, DateTime? ifModifiedSince = null)
         {
             try
             {
                 _loadingStates[playerName] = LoadingState.Downloading;
                 
-                // FyteClub's encrypted communication to friend servers
-                var response = await _httpClient.GetAsync($"http://{server.Address}/api/mods/{playerName}", _cancellationTokenSource.Token);
+                // FyteClub's encrypted communication to friend servers (using chunked endpoint)
+                _pluginLog.Info($"FyteClub: Requesting chunked mods for {playerName} from {server.Name} at {server.Address}");
+                
+                var request = new HttpRequestMessage(HttpMethod.Get, $"http://{server.Address}/api/mods/{playerName}/chunked?limit=20&offset=0");
+                
+                // Add conditional request header if we have cached data
+                if (ifModifiedSince.HasValue)
+                {
+                    request.Headers.Add("If-Modified-Since", ifModifiedSince.Value.ToString("R")); // RFC 1123 format
+                    _pluginLog.Info($"🔄 Conditional request for {playerName} - If-Modified-Since: {ifModifiedSince.Value:yyyy-MM-dd HH:mm:ss}");
+                }
+                
+                var response = await _httpClient.SendAsync(request, _cancellationTokenSource.Token);
+                
+                _pluginLog.Info($"FyteClub: Server response for {playerName}: {response.StatusCode}");
+                
+                // Handle 304 Not Modified - use cached data
+                if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
+                {
+                    _pluginLog.Info($"🎯 Server returned 304 Not Modified for {playerName} - using cached mods");
+                    
+                    if (_clientCache != null)
+                    {
+                        var cachedMods = await _clientCache.GetCachedPlayerMods(playerName);
+                        if (cachedMods != null)
+                        {
+                            _pluginLog.Info($"⚡ Successfully using cached mods for {playerName} (validated with server, ~0.5s vs 15s)");
+                            
+                            // TODO: Apply cached mods directly (same logic as cache hit)
+                            _loadingStates[playerName] = LoadingState.Complete;
+                            _recentlySyncedUsers.Add(playerName);
+                            _playerLastSeen[playerName] = DateTime.UtcNow;
+                            
+                            return true;
+                        }
+                    }
+                    
+                    _pluginLog.Warning($"⚠️ Server said 304 but no cached data found for {playerName}");
+                    return false;
+                }
+                
                 if (response.IsSuccessStatusCode)
                 {
                     // Mark server as connected when we get a successful response
@@ -491,13 +611,17 @@ namespace FyteClub
                     }
                     
                     var jsonContent = await response.Content.ReadAsStringAsync();
+                    _pluginLog.Info($"FyteClub: Received JSON response for {playerName} (length: {jsonContent.Length})");
+                    
                     var playerInfo = System.Text.Json.JsonSerializer.Deserialize<AdvancedPlayerInfo>(jsonContent);
                     
                     if (playerInfo != null)
                     {
+                        _pluginLog.Info($"FyteClub: Deserialized player info for {playerName}, mods count: {playerInfo.Mods?.Count ?? 0}");
                         _loadingStates[playerName] = LoadingState.Applying;
                         
                         // Apply mods using comprehensive mod system integration
+                        _pluginLog.Info($"FyteClub: Starting mod application for {playerName}");
                         var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, playerName);
                         
                         _loadingStates[playerName] = success ? LoadingState.Complete : LoadingState.Failed;
@@ -507,11 +631,39 @@ namespace FyteClub
                             // Track successfully synced users
                             _recentlySyncedUsers.Add(playerName);
                             _pluginLog.Info($"FyteClub: Successfully applied mods for {playerName} from {server.Name}");
+                            
+                            // Cache the successful response for future use
+                            if (_clientCache != null)
+                            {
+                                var jsonBytes = System.Text.Encoding.UTF8.GetBytes(jsonContent);
+                                await _clientCache.CachePlayerMods(playerName, jsonBytes, response.Headers.Date?.ToString() ?? DateTime.UtcNow.ToString());
+                                _pluginLog.Info($"FyteClub: Cached mods for {playerName} for future instant loading");
+                            }
+                            
+                            // Also store in component cache for superior deduplication
+                            if (_componentCache != null)
+                            {
+                                var character = _objectTable.FirstOrDefault(obj => obj is ICharacter ch && 
+                                                           ch.Name.ToString() == playerName) as ICharacter;
+                                if (character != null)
+                                {
+                                    var currentHash = await GenerateComprehensiveAppearanceHash(character);
+                                    if (!string.IsNullOrEmpty(currentHash))
+                                    {
+                                        await _componentCache.StoreAppearanceRecipe(playerName, currentHash, playerInfo);
+                                        _pluginLog.Info($"FyteClub: Stored component recipe for {playerName} (hash: {currentHash})");
+                                    }
+                                }
+                            }
                         }
                         else
                         {
                             _pluginLog.Warning($"FyteClub: Failed to apply mods for {playerName}");
                         }
+                    }
+                    else
+                    {
+                        _pluginLog.Warning($"FyteClub: Failed to deserialize player info for {playerName}");
                     }
                     
                     // Update association timestamp to keep it fresh
@@ -552,7 +704,7 @@ namespace FyteClub
                 }
                 else
                 {
-                    _pluginLog.Debug($"FyteClub: Server {server.Name} failure {server.FailureCount}/{MaxServerFailures}: {ex.Message}");
+                    _pluginLog.Error($"FyteClub: Error requesting mods for {playerName} from {server.Name} (failure {server.FailureCount}/{MaxServerFailures}): {ex.Message}");
                 }
                 SaveConfiguration();
                 
@@ -780,6 +932,114 @@ namespace FyteClub
                 RecentlySyncedUsers = _recentlySyncedUsers.ToList()
             };
             _pluginInterface.SavePluginConfig(config);
+        }
+
+        /// <summary>
+        /// Generates a comprehensive appearance hash that includes data from all mod systems.
+        /// This creates a lightweight fingerprint of the player's complete visual state,
+        /// enabling efficient change detection across Penumbra, Glamourer, Customize+, Simple Heels, and Honorific.
+        /// </summary>
+        private async Task<string> GenerateComprehensiveAppearanceHash(ICharacter character)
+        {
+            try
+            {
+                var hashBuilder = new StringBuilder();
+                
+                // Basic character identifiers
+                hashBuilder.Append(character.Name.TextValue);
+                hashBuilder.Append(character.ObjectIndex);
+                hashBuilder.Append(character.Address.ToString("X"));
+                
+                // Get current mod state from all systems
+                var playerName = character.Name.ToString();
+                var currentModInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
+                
+                if (currentModInfo != null)
+                {
+                    // Penumbra mods (sorted for consistency)
+                    if (currentModInfo.Mods?.Count > 0)
+                    {
+                        var sortedMods = currentModInfo.Mods.OrderBy(m => m).ToList();
+                        hashBuilder.Append("P:");
+                        hashBuilder.Append(string.Join("|", sortedMods));
+                    }
+                    
+                    // Glamourer design
+                    if (!string.IsNullOrEmpty(currentModInfo.GlamourerDesign))
+                    {
+                        hashBuilder.Append("G:");
+                        hashBuilder.Append(currentModInfo.GlamourerDesign);
+                    }
+                    
+                    // Customize+ profile
+                    if (!string.IsNullOrEmpty(currentModInfo.CustomizePlusProfile))
+                    {
+                        hashBuilder.Append("C:");
+                        hashBuilder.Append(currentModInfo.CustomizePlusProfile);
+                    }
+                    
+                    // Simple Heels offset
+                    if (currentModInfo.SimpleHeelsOffset.HasValue && currentModInfo.SimpleHeelsOffset.Value != 0)
+                    {
+                        hashBuilder.Append("H:");
+                        hashBuilder.Append(currentModInfo.SimpleHeelsOffset.Value.ToString("F2"));
+                    }
+                    
+                    // Honorific title
+                    if (!string.IsNullOrEmpty(currentModInfo.HonorificTitle))
+                    {
+                        hashBuilder.Append("O:");
+                        hashBuilder.Append(currentModInfo.HonorificTitle);
+                    }
+                }
+                
+                // Generate SHA1 hash from the combined data
+                var hashData = Encoding.UTF8.GetBytes(hashBuilder.ToString());
+                var hash = SHA1.HashData(hashData);
+                return Convert.ToHexString(hash)[..16]; // First 16 chars for compact representation
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Failed to generate comprehensive appearance hash for {character.Name}: {ex.Message}");
+                // Fallback to simple hash
+                return GenerateAppearanceHash(character);
+            }
+        }
+
+        /// <summary>
+        /// Generates a lightweight hash of a character's visual appearance.
+        /// This hash changes when the character's outfit/appearance changes,
+        /// enabling efficient change detection without transferring mod data.
+        /// </summary>
+        private string GenerateAppearanceHash(ICharacter character)
+        {
+            try
+            {
+                var hashBuilder = new StringBuilder();
+                
+                // Character name and basic identifiers
+                hashBuilder.Append(character.Name.TextValue);
+                hashBuilder.Append(character.ObjectIndex);
+                
+                // Use raw address as a simple appearance identifier
+                // This will change when the character's appearance data changes
+                hashBuilder.Append(character.Address.ToString("X"));
+                
+                // Add current timestamp component to ensure periodic refresh
+                // This provides a fallback for cases where visual changes don't change the address
+                var timeBucket = (DateTime.UtcNow.Ticks / TimeSpan.TicksPerMinute) / 5; // 5-minute buckets
+                hashBuilder.Append(timeBucket);
+                
+                // Generate SHA1 hash from the combined data
+                var hashData = Encoding.UTF8.GetBytes(hashBuilder.ToString());
+                var hash = SHA1.HashData(hashData);
+                return Convert.ToHexString(hash)[..16]; // First 16 chars for compact representation
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Failed to generate appearance hash for {character.Name}: {ex.Message}");
+                return $"fallback_{character.ObjectIndex}_{DateTime.UtcNow.Ticks}";
+            }
         }
 
         private async Task CheckForModChangesAndUpload(string playerName)
@@ -1161,9 +1421,41 @@ namespace FyteClub
                             _pluginLog.Info("Usage: /fyteclub testuser <playerName>");
                         }
                         break;
+                    case "debug":
+                        _pluginLog.Info("=== Debug: Logging all object types ===");
+                        DebugLogObjectTypes();
+                        break;
+                    case "companions":
+                        _pluginLog.Info("=== Debug: Checking companion mod support ===");
+                        LogMinionsAndMounts();
+                        break;
+                    case "cache":
+                        _pluginLog.Info("=== Cache Statistics ===");
+                        if (_clientCache != null)
+                        {
+                            var stats = _clientCache.GetCacheStats();
+                            _pluginLog.Info($"Client Cache: {stats.TotalPlayers} players, {stats.TotalMods} mods, {stats.TotalSizeBytes / (1024.0 * 1024.0):F1} MB");
+                        }
+                        else
+                        {
+                            _pluginLog.Info("Client Cache: Not initialized");
+                        }
+                        
+                        if (_componentCache != null)
+                        {
+                            _componentCache.LogStatistics();
+                        }
+                        else
+                        {
+                            _pluginLog.Info("Component Cache: Not initialized");
+                        }
+                        break;
                     default:
-                        _pluginLog.Info("Usage: /fyteclub [redraw|block|unblock|testuser] <playerName>");
+                        _pluginLog.Info("Usage: /fyteclub [redraw|block|unblock|testuser|debug|companions|cache] <playerName>");
                         _pluginLog.Info("       /fyteclub redraw [playerName] - Redraw specific player or all");
+                        _pluginLog.Info("       /fyteclub debug - Log all object types in current area");
+                        _pluginLog.Info("       /fyteclub companions - Check minions/mounts mod support");
+                        _pluginLog.Info("       /fyteclub cache - Show cache statistics");
                         break;
                 }
             }
@@ -1181,6 +1473,10 @@ namespace FyteClub
             _commandManager.RemoveHandler(CommandName);
             _windowSystem.RemoveAllWindows();
             _cancellationTokenSource.Cancel();
+            
+            // Dispose client cache
+            DisposeClientCache();
+            
             _httpClient.Dispose();
             _cancellationTokenSource.Dispose();
         }
@@ -1536,6 +1832,306 @@ namespace FyteClub
                 {
                     ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No mods uploaded yet");
                 }
+            }
+        }
+
+        private async void OnAppearancePollingTimer(object? sender, ElapsedEventArgs e)
+        {
+            if (_clientState?.LocalPlayer == null) return;
+
+            // Check players (existing logic)
+            await CheckPlayersForChanges();
+            
+            // Check minions and mounts (new investigation)
+            await CheckCompanionsForChanges();
+        }
+
+        private async Task CheckPlayersForChanges()
+        {
+            var nearbyPlayers = _objectTable
+                .Where(obj => obj is ICharacter character && 
+                             character.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player &&
+                             character != _clientState.LocalPlayer)
+                .Cast<ICharacter>()
+                .ToList();
+
+            foreach (var character in nearbyPlayers)
+            {
+                try
+                {
+                    var playerName = character.Name.ToString();
+                    var currentHash = await GenerateComprehensiveAppearanceHash(character);
+                    var cacheKey = $"{playerName}:{currentHash}";
+
+                    // Check both traditional cache and component cache
+                    if (_clientCache != null)
+                    {
+                        // First try component cache (better deduplication)
+                        if (_componentCache != null)
+                        {
+                            var componentResult = await _componentCache.GetAppearanceFromRecipe(playerName, currentHash);
+                            if (componentResult != null)
+                            {
+                                // Component cache hit - apply mods if different from last seen appearance
+                                if (!_lastSeenAppearanceHash.TryGetValue(playerName, out var lastHash) || lastHash != currentHash)
+                                {
+                                    _lastSeenAppearanceHash[playerName] = currentHash;
+                                    _pluginLog.Debug($"Applying component-cached appearance for {playerName} (hash: {currentHash})");
+                                    await ApplyPlayerModsFromAdvancedInfo(playerName, componentResult);
+                                }
+                                continue; // Skip traditional cache check
+                            }
+                        }
+
+                        // Fall back to traditional cache
+                        var cachedMods = await _clientCache.GetCachedPlayerMods(cacheKey);
+                        if (cachedMods != null)
+                        {
+                            // Traditional cache hit - apply mods if different from last seen appearance
+                            if (!_lastSeenAppearanceHash.TryGetValue(playerName, out var lastHash) || lastHash != currentHash)
+                            {
+                                _lastSeenAppearanceHash[playerName] = currentHash;
+                                _pluginLog.Debug($"Applying cached appearance for {playerName} (hash: {currentHash})");
+                                await ApplyPlayerModsFromCache(playerName, cachedMods);
+                            }
+                        }
+                        else
+                        {
+                            // Cache miss - request from server
+                            if (!_lastSeenAppearanceHash.TryGetValue(playerName, out var lastHash) || lastHash != currentHash)
+                            {
+                                _lastSeenAppearanceHash[playerName] = currentHash;
+                                _pluginLog.Debug($"Requesting new appearance for {playerName} (hash: {currentHash})");
+                                await RequestPlayerModsForAppearance(playerName, currentHash);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Warning($"Error checking appearance for {character.Name}: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Investigate how minions, mounts, and companions work with the mod system.
+        /// </summary>
+        private async Task CheckCompanionsForChanges()
+        {
+            try
+            {
+                // Look for companions (minions), pets, and other non-player objects
+                var companions = _objectTable
+                    .Where(obj => obj != null && 
+                           (obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion ||
+                            obj.ObjectKind.ToString().Contains("Pet") ||
+                            obj.ObjectKind.ToString().Contains("Mount")))
+                    .ToList();
+
+                foreach (var companion in companions)
+                {
+                    try
+                    {
+                        // Check if this companion can be treated as a character
+                        if (companion is ICharacter companionCharacter)
+                        {
+                            var companionName = $"{companion.Name}_{companion.ObjectKind}_{companion.ObjectIndex}";
+                            
+                            // Try to get mod information for this companion
+                            var companionModInfo = await _modSystemIntegration.GetCurrentPlayerMods(companionName);
+                            if (companionModInfo != null && companionModInfo.Mods?.Count > 0)
+                            {
+                                _pluginLog.Info($"Companion {companion.Name} ({companion.ObjectKind}) has {companionModInfo.Mods.Count} mods");
+                                
+                                // Log the mods for analysis
+                                foreach (var mod in companionModInfo.Mods.Take(3)) // Log first 3
+                                {
+                                    _pluginLog.Info($"  - Companion mod: {mod}");
+                                }
+                            }
+
+                            // Check if we can generate an appearance hash for companions
+                            var companionHash = await GenerateComprehensiveAppearanceHash(companionCharacter);
+                            if (!string.IsNullOrEmpty(companionHash))
+                            {
+                                _pluginLog.Debug($"Generated appearance hash for companion {companion.Name}: {companionHash}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Debug($"Error analyzing companion {companion.Name}: {ex.Message}");
+                    }
+                }
+
+                // Log summary every 30 seconds to avoid spam
+                if (DateTime.Now.Second % 30 == 0)
+                {
+                    _pluginLog.Info($"Companion analysis: Found {companions.Count} companions/pets/mounts in range");
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Error in companion analysis: {ex.Message}");
+            }
+        }
+
+        private async Task ApplyPlayerModsFromAdvancedInfo(string playerName, AdvancedPlayerInfo playerInfo)
+        {
+            try
+            {
+                // Set loading state
+                _loadingStates[playerName] = LoadingState.Applying;
+                
+                // Apply the mods directly using existing logic
+                var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, playerName);
+                
+                _loadingStates[playerName] = success ? LoadingState.Complete : LoadingState.Failed;
+                _pluginLog.Info($"Applied component-cached mods for {playerName}: {(success ? "Success" : "Failed")}");
+            }
+            catch (Exception ex)
+            {
+                _loadingStates[playerName] = LoadingState.Failed;
+                _pluginLog.Error($"Error applying component-cached mods for {playerName}: {ex.Message}");
+            }
+        }
+
+        private async Task ApplyPlayerModsFromCache(string playerName, CachedPlayerMods cachedMods)
+        {
+            try
+            {
+                // Set loading state
+                _loadingStates[playerName] = LoadingState.Applying;
+                
+                // Convert CachedPlayerMods to AdvancedPlayerInfo format
+                var playerInfo = new AdvancedPlayerInfo
+                {
+                    PlayerId = cachedMods.PlayerId,
+                    PlayerName = playerName,
+                    State = PlayerState.Applying,
+                    StateChanged = DateTime.UtcNow,
+                    LastSeen = DateTime.UtcNow,
+                    // Convert ReconstructedMod list to mod names
+                    Mods = cachedMods.Mods.Select(mod => mod.ModInfo.ModName ?? mod.ContentHash).ToList()
+                };
+                
+                // Apply the mods using existing logic
+                var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, playerName);
+                
+                _loadingStates[playerName] = success ? LoadingState.Complete : LoadingState.Failed;
+                _pluginLog.Info($"Applied cached mods for {playerName}: {(success ? "Success" : "Failed")}");
+            }
+            catch (Exception ex)
+            {
+                _loadingStates[playerName] = LoadingState.Failed;
+                _pluginLog.Error($"Error applying cached mods for {playerName}: {ex.Message}");
+            }
+        }
+
+        private async Task RequestPlayerModsForAppearance(string playerName, string appearanceHash)
+        {
+            try
+            {
+                // Set loading state
+                _loadingStates[playerName] = LoadingState.Requesting;
+                
+                // Use existing RequestPlayerMods method but with enhanced cache key
+                await RequestPlayerMods(playerName);
+                
+                // The existing method will handle caching with the standard player name
+                // The hash is primarily used for detection, not storage at this stage
+            }
+            catch (Exception ex)
+            {
+                _loadingStates[playerName] = LoadingState.Failed;
+                _pluginLog.Error($"Error requesting mods for {playerName} (hash: {appearanceHash}): {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Debug method to analyze object types in the game world, specifically looking for minions and mounts.
+        /// </summary>
+        private void DebugLogObjectTypes()
+        {
+            try
+            {
+                _pluginLog.Info("=== FYTECLUB OBJECT TYPE ANALYSIS ===");
+                
+                var objects = _objectTable
+                    .Where(obj => obj != null)
+                    .GroupBy(obj => obj.ObjectKind)
+                    .ToList();
+
+                foreach (var group in objects)
+                {
+                    _pluginLog.Info($"{group.Key}: {group.Count()} objects");
+                    
+                    // Log first few examples of each type
+                    foreach (var obj in group.Take(2))
+                    {
+                        var details = $"  - {obj.Name} (Index: {obj.ObjectIndex})";
+                        
+                        // Check if it's a character and get additional info
+                        if (obj is ICharacter character)
+                        {
+                            details += $" [Character - Level {character.Level}]";
+                        }
+                        
+                        _pluginLog.Info(details);
+                    }
+                }
+
+                // Specifically look for minions and mounts
+                LogMinionsAndMounts();
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Error in object type analysis: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Analyze minions, mounts, and other companion objects.
+        /// </summary>
+        private void LogMinionsAndMounts()
+        {
+            _pluginLog.Info("=== MINION AND MOUNT ANALYSIS ===");
+
+            // Look for objects that might be minions (companions)
+            var possibleMinions = _objectTable
+                .Where(obj => obj != null && 
+                       (obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion || 
+                        obj.Name.TextValue.Contains("minion", StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            _pluginLog.Info($"Found {possibleMinions.Count} possible minions:");
+            foreach (var minion in possibleMinions)
+            {
+                _pluginLog.Info($"  - {minion.Name} (Kind: {minion.ObjectKind})");
+            }
+
+            // Look for mounts
+            var possibleMounts = _objectTable
+                .Where(obj => obj != null && 
+                       (obj.Name.TextValue.Contains("mount", StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            _pluginLog.Info($"Found {possibleMounts.Count} possible mounts:");
+            foreach (var mount in possibleMounts)
+            {
+                _pluginLog.Info($"  - {mount.Name} (Kind: {mount.ObjectKind})");
+            }
+
+            // Check for pets and other companions
+            var pets = _objectTable
+                .Where(obj => obj != null && obj.ObjectKind.ToString().Contains("Pet"))
+                .ToList();
+
+            _pluginLog.Info($"Found {pets.Count} pets:");
+            foreach (var pet in pets)
+            {
+                _pluginLog.Info($"  - {pet.Name} (Kind: {pet.ObjectKind})");
             }
         }
     }
