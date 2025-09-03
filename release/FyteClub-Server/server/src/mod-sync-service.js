@@ -142,7 +142,7 @@ class ModSyncService {
             // Check cache first
             const cacheKey = `player_mods:${playerId}`;
             const cachedMods = await this.cache.get(cacheKey);
-            if (cachedMods) {
+            if (cachedMods && cachedMods.lastModified) { // Only use cache if it has lastModified field
                 return cachedMods;
             }
 

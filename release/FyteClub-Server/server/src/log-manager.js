@@ -7,7 +7,6 @@ class LogManager {
         this.maxLogFiles = maxLogFiles;
         this.logFile = null;
         this.startTime = new Date();
-        this.sessionLogs = [];
         
         // Store original console methods FIRST
         this.originalConsoleLog = console.log;
@@ -18,7 +17,7 @@ class LogManager {
         this.rotateLogFiles();
         this.createNewLogFile();
         
-        // Override console methods AFTER setting up logging
+        // Override console methods
         console.log = (...args) => this.log('INFO', ...args);
         console.error = (...args) => this.log('ERROR', ...args);
         console.warn = (...args) => this.log('WARN', ...args);
@@ -100,16 +99,6 @@ Log File: ${logFileName}
         ).join(' ');
         
         const logEntry = `[${timestamp}] [${level.padEnd(5)}] ${message}\n`;
-        
-        // Store in session logs
-        if (this.sessionLogs) {
-            this.sessionLogs.push({
-                timestamp,
-                level,
-                message,
-                entry: logEntry
-            });
-        }
         
         // Write to console (original behavior)
         switch (level) {
@@ -211,29 +200,6 @@ Session Duration: ${Math.round((Date.now() - this.startTime.getTime()) / 1000)}s
         console.warn = this.originalConsoleWarn;
     }
 
-    startSession() {
-        // Start a new logging session
-        this.sessionLogs = [];
-        this.log('INFO', '🚀 FyteClub server session started');
-    }
-
-    endSession() {
-        // End the current logging session
-        this.log('INFO', '🛑 FyteClub server session ended');
-    }
-
-    getCurrentLogFile() {
-        return this.logFile;
-    }
-
-    getLogStats() {
-        return {
-            sessionStart: this.startTime,
-            logFile: this.logFile,
-            entriesCount: this.sessionLogs ? this.sessionLogs.length : 0
-        };
-    }
-
     getCurrentLogs() {
         return {
             currentFile: this.currentLogFile,
@@ -282,6 +248,22 @@ Session Duration: ${Math.round((Date.now() - this.startTime.getTime()) / 1000)}s
         } catch (error) {
             throw new Error(`Failed to read log file: ${error.message}`);
         }
+    }
+
+    startSession() {
+        this.sessionStartTime = new Date();
+        this.log('INFO', '🎯 Session started');
+    }
+
+    endSession() {
+        if (this.sessionStartTime) {
+            const duration = Date.now() - this.sessionStartTime.getTime();
+            this.log('INFO', `🏁 Session ended (duration: ${Math.round(duration / 1000)}s)`);
+        }
+    }
+
+    getCurrentLogFile() {
+        return this.logFile || 'No log file active';
     }
 }
 
