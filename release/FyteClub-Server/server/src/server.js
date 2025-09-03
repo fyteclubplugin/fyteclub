@@ -309,24 +309,114 @@ class FyteClubServer {
                     }
                     
                     console.log(`[FOUND-MODS] ${playerId} has ${(modData.mods || []).length} mods registered`);
+                    
+                    // Debug: Log the response structure
+                    console.log(`[DEBUG-RESPONSE] Response structure for ${playerId}:`);
+                    console.log(`[DEBUG-RESPONSE] - modData.mods exists: ${!!modData.mods}`);
+                    console.log(`[DEBUG-RESPONSE] - modData.mods.length: ${(modData.mods || []).length}`);
+                    console.log(`[DEBUG-RESPONSE] - modData.glamourerDesign exists: ${!!modData.glamourerDesign}`);
+                    console.log(`[DEBUG-RESPONSE] - modData.customizePlusProfile exists: ${!!modData.customizePlusProfile}`);
+                    
+                    // Debug: Log the actual response JSON structure
+                    const responseData = { 
+                        Mods: modData.mods || [],
+                        GlamourerDesign: modData.glamourerDesign || null,
+                        CustomizePlusProfile: modData.customizePlusProfile || null,
+                        SimpleHeelsOffset: modData.simpleHeelsOffset || null,
+                        HonorificTitle: modData.honorificTitle || null,
+                        lastModified: lastModified.toISOString(),
+                        playerId: playerId
+                    };
+                    console.log(`[DEBUG-JSON] Full response JSON for ${playerId}: ${JSON.stringify(responseData, null, 2).substring(0, 500)}...`);
+                    
                     res.set('ETag', eTag)
                        .set('Last-Modified', lastModified.toUTCString())
                        .set('Cache-Control', 'private, max-age=3600') // 1 hour browser cache
-                       .json({ 
-                           mods: modData.mods || [],
-                           glamourerDesign: modData.glamourerDesign || null,
-                           customizePlusProfile: modData.customizePlusProfile || null,
-                           simpleHeelsOffset: modData.simpleHeelsOffset || null,
-                           honorificTitle: modData.honorificTitle || null,
-                           lastModified: lastModified.toISOString(),
-                           playerId: playerId
-                       });
+                       .json(responseData);
                 } else {
                     console.log(`[NOT-FOUND] ${playerId} has no mods registered on server`);
                     res.status(404).json({ error: 'Player not found or no mods available' });
                 }
             } catch (error) {
                 console.error(`[ERROR] Failed to get mods for ${playerId}: ${error.message}`);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Chunked mods endpoint - get mods in smaller batches to avoid large JSON issues
+        this.app.get('/api/mods/:playerId/chunked', async (req, res) => {
+            try {
+                const { playerId } = req.params;
+                const limit = parseInt(req.query.limit) || 20; // Default 20 mods per chunk
+                const offset = parseInt(req.query.offset) || 0;
+                const ifModifiedSince = req.headers['if-modified-since'] || req.query['if-modified-since'];
+                const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+                
+                console.log(`[LOOKUP-CHUNKED] ${clientIP} requesting chunked mods for player: ${playerId} (limit: ${limit}, offset: ${offset})`);
+                if (ifModifiedSince) {
+                    console.log(`[CONDITIONAL] Client cache timestamp: ${ifModifiedSince}`);
+                }
+                
+                let mods = await this.modSyncService.getPlayerMods(playerId);
+                
+                console.log(`[DEBUG] ModSyncService returned:`, {
+                    type: typeof mods,
+                    keys: mods ? Object.keys(mods) : 'null',
+                    hasLastModified: mods && 'lastModified' in mods,
+                    lastModifiedValue: mods?.lastModified
+                });
+                
+                if (mods && mods.mods && mods.mods.length > 0) {
+                    // Check if client has conditional request and if content is unchanged
+                    if (ifModifiedSince && mods.lastModified) {
+                        const clientCacheTime = new Date(ifModifiedSince);
+                        const serverModTime = new Date(mods.lastModified);
+                        
+                        if (serverModTime <= clientCacheTime) {
+                            console.log(`[304-NOT-MODIFIED] Player ${playerId} unchanged since ${ifModifiedSince} - sending 304`);
+                            res.status(304).send(); // Not Modified - use cache!
+                            return;
+                        } else {
+                            console.log(`[CACHE-INVALID] Player ${playerId} changed at ${mods.lastModified}, client cache from ${ifModifiedSince} is stale`);
+                        }
+                    }
+                    
+                    // Set Last-Modified header for future conditional requests
+                    if (mods.lastModified) {
+                        res.set('Last-Modified', new Date(mods.lastModified).toUTCString());
+                    }
+                    
+                    // Calculate pagination info
+                    const totalMods = mods.mods.length;
+                    const chunkedMods = mods.mods.slice(offset, offset + limit);
+                    const hasMore = (offset + limit) < totalMods;
+                    
+                    console.log(`[CHUNKED-RESPONSE] Sending ${chunkedMods.length} mods (${offset}-${offset + chunkedMods.length - 1} of ${totalMods}) for ${playerId}`);
+                    
+                    const responseData = {
+                        Mods: chunkedMods,
+                        GlamourerDesign: offset === 0 ? (mods.glamourerDesign || null) : null, // Only send on first chunk
+                        CustomizePlusProfile: offset === 0 ? (mods.customizePlusProfile || null) : null,
+                        SimpleHeelsOffset: offset === 0 ? (mods.simpleHeelsOffset || null) : null,
+                        HonorificTitle: offset === 0 ? (mods.honorificTitle || null) : null,
+                        lastModified: mods.lastModified || mods.packagedAt || Date.now(), // Fallback chain for conditional requests
+                        pagination: {
+                            offset: offset,
+                            limit: limit,
+                            total: totalMods,
+                            hasMore: hasMore,
+                            nextOffset: hasMore ? offset + limit : null
+                        },
+                        playerId: playerId
+                    };
+                    
+                    res.json(responseData);
+                } else {
+                    console.log(`[CHUNKED-NOT-FOUND] ${playerId} has no mods registered on server`);
+                    res.status(404).json({ error: 'Player not found or no mods available' });
+                }
+            } catch (error) {
+                console.error(`[CHUNKED-ERROR] Failed to get chunked mods for ${playerId}: ${error.message}`);
                 res.status(500).json({ error: error.message });
             }
         });

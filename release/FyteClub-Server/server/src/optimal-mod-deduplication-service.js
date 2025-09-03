@@ -209,18 +209,35 @@ class OptimalModDeduplicationService {
 
             const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
             const packagedMods = [];
+            
+            // Collect global configs (same for all mods of a player)
+            let glamourerDesign = null;
+            let customizePlusProfile = null;
+            let simpleHeelsOffset = null;
+            let honorificTitle = null;
 
             for (const association of manifest.associations) {
                 // Get mod content
                 const modContentPath = path.join(this.modContentDir, `${association.modHash}.mod`);
                 const modContent = fs.readFileSync(modContentPath);
 
-                // Get all configs for this mod
+                // Get all configs for this mod (and extract global ones)
                 const configs = {};
                 for (const [configType, configHash] of Object.entries(association.configHashes)) {
                     const configPath = path.join(this.configContentDir, `${configHash}.json`);
                     const configEntry = JSON.parse(fs.readFileSync(configPath, 'utf8'));
                     configs[configType] = configEntry.data;
+                    
+                    // Extract global configs (first occurrence wins)
+                    if (configType === 'glamourer' && !glamourerDesign) {
+                        glamourerDesign = configEntry.data;
+                    } else if (configType === 'customizePlus' && !customizePlusProfile) {
+                        customizePlusProfile = configEntry.data;
+                    } else if (configType === 'simpleHeels' && !simpleHeelsOffset) {
+                        simpleHeelsOffset = configEntry.data;
+                    } else if (configType === 'honorific' && !honorificTitle) {
+                        honorificTitle = configEntry.data;
+                    }
                 }
 
                 packagedMods.push({
@@ -232,10 +249,16 @@ class OptimalModDeduplicationService {
 
             console.log(`📦 Packaged ${packagedMods.length} mods with configs for ${requestingPlayerId}`);
             
+            // Return in the format expected by server.js
             return {
-                targetPlayerId,
                 mods: packagedMods,
-                packagedAt: Date.now()
+                glamourerDesign: glamourerDesign,
+                customizePlusProfile: customizePlusProfile,
+                simpleHeelsOffset: simpleHeelsOffset,
+                honorificTitle: honorificTitle,
+                targetPlayerId,
+                packagedAt: Date.now(),
+                lastModified: manifest.updatedAt || Date.now() // Use manifest timestamp for conditional requests
             };
 
         } catch (error) {
@@ -302,6 +325,209 @@ class OptimalModDeduplicationService {
                 storageEfficiency: `${((modDeduplicationRatio + configDeduplicationRatio) / 2).toFixed(1)}%`
             }
         };
+    }
+
+    // Cleanup specific player data
+    async cleanupPlayerData(playerId) {
+        try {
+            const manifestPath = path.join(this.playerManifestsDir, `${playerId}.json`);
+            
+            if (!fs.existsSync(manifestPath)) {
+                return 0; // No data to clean
+            }
+            
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            let spaceSaved = 0;
+            
+            // Decrement reference counts for all associated mods and configs
+            for (const association of manifest.associations || []) {
+                // Decrement mod reference
+                if (this.modHashMap[association.modHash]) {
+                    this.modHashMap[association.modHash]--;
+                    if (this.modHashMap[association.modHash] <= 0) {
+                        const modPath = path.join(this.modContentDir, `${association.modHash}.mod`);
+                        if (fs.existsSync(modPath)) {
+                            const stats = fs.statSync(modPath);
+                            spaceSaved += stats.size;
+                            fs.unlinkSync(modPath);
+                        }
+                        delete this.modHashMap[association.modHash];
+                    }
+                }
+                
+                // Decrement config references
+                for (const [configType, configHash] of Object.entries(association.configHashes || {})) {
+                    if (this.configHashMap[configHash]) {
+                        this.configHashMap[configHash]--;
+                        if (this.configHashMap[configHash] <= 0) {
+                            const configPath = path.join(this.configContentDir, `${configHash}.json`);
+                            if (fs.existsSync(configPath)) {
+                                const stats = fs.statSync(configPath);
+                                spaceSaved += stats.size;
+                                fs.unlinkSync(configPath);
+                            }
+                            delete this.configHashMap[configHash];
+                        }
+                    }
+                }
+            }
+            
+            // Remove player manifest
+            const manifestStats = fs.statSync(manifestPath);
+            spaceSaved += manifestStats.size;
+            fs.unlinkSync(manifestPath);
+            
+            this.saveHashMaps();
+            return spaceSaved;
+            
+        } catch (error) {
+            console.error(`Error cleaning up player data for ${playerId}:`, error);
+            return 0;
+        }
+    }
+
+    // Run maintenance operations
+    async runMaintenance() {
+        const result = await this.cleanup();
+        return 0; // Space saved already calculated in cleanup
+    }
+
+    // Get comprehensive statistics
+    async getStats() {
+        const totalUniqueMods = Object.keys(this.modHashMap).length;
+        const totalModReferences = Object.values(this.modHashMap).reduce((sum, count) => sum + count, 0);
+        
+        const totalUniqueConfigs = Object.keys(this.configHashMap).length;
+        const totalConfigReferences = Object.values(this.configHashMap).reduce((sum, count) => sum + count, 0);
+
+        // Get player stats
+        const manifests = await this.getAllPlayerManifests();
+        const totalPlayers = Object.keys(manifests).length;
+        
+        const now = Date.now();
+        const oneDayAgo = now - (24 * 60 * 60 * 1000);
+        const activePlayers = Object.values(manifests).filter(m => m.updatedAt > oneDayAgo).length;
+        
+        const playersWithMods = Object.values(manifests).filter(m => m.associations && m.associations.length > 0).length;
+        
+        const avgModsPerPlayer = totalPlayers > 0 ? Math.round(totalModReferences / totalPlayers) : 0;
+
+        // Calculate storage sizes
+        let totalModSize = 0;
+        let totalConfigSize = 0;
+        let largestModSize = 0;
+        
+        try {
+            const modFiles = fs.readdirSync(this.modContentDir);
+            const configFiles = fs.readdirSync(this.configContentDir);
+            
+            modFiles.forEach(file => {
+                const stats = fs.statSync(path.join(this.modContentDir, file));
+                totalModSize += stats.size;
+                if (stats.size > largestModSize) {
+                    largestModSize = stats.size;
+                }
+            });
+            
+            configFiles.forEach(file => {
+                const stats = fs.statSync(path.join(this.configContentDir, file));
+                totalConfigSize += stats.size;
+            });
+        } catch (error) {
+            console.error('Error calculating storage stats:', error);
+        }
+
+        // Calculate space savings
+        const estimatedOriginalSize = (totalModReferences * (totalModSize / Math.max(totalUniqueMods, 1))) + 
+                                     (totalConfigReferences * (totalConfigSize / Math.max(totalUniqueConfigs, 1)));
+        const actualSize = totalModSize + totalConfigSize;
+        const spaceSaved = Math.max(0, estimatedOriginalSize - actualSize);
+        const savingsPercentage = estimatedOriginalSize > 0 ? ((spaceSaved / estimatedOriginalSize) * 100) : 0;
+
+        return {
+            totalPlayers,
+            activePlayers,
+            playersWithMods,
+            uniqueMods: totalUniqueMods,
+            totalConfigs: totalUniqueConfigs,
+            avgModsPerPlayer,
+            largestModSize,
+            totalContentSize: actualSize,
+            spaceSaved,
+            savingsPercentage: Math.round(savingsPercentage),
+            duplicatesFound: (totalModReferences - totalUniqueMods) + (totalConfigReferences - totalUniqueConfigs),
+            mostPopularMod: this.getMostPopularMod(),
+            contentDirSize: totalModSize,
+            configDirSize: totalConfigSize,
+            manifestDirSize: this.getDirectorySize(this.playerManifestsDir),
+            totalOptimalSize: actualSize,
+            avgUploadTime: 0, // Would need to track this
+            avgDownloadTime: 0, // Would need to track this
+            lastCleanup: new Date().toISOString()
+        };
+    }
+
+    getMostPopularMod() {
+        let mostPopular = null;
+        let maxRefs = 0;
+        
+        for (const [hash, refs] of Object.entries(this.modHashMap)) {
+            if (refs > maxRefs) {
+                maxRefs = refs;
+                mostPopular = hash;
+            }
+        }
+        
+        return mostPopular ? `${mostPopular.substring(0, 8)}... (${maxRefs} refs)` : 'None';
+    }
+
+    getDirectorySize(dirPath) {
+        try {
+            if (!fs.existsSync(dirPath)) {
+                return 0;
+            }
+            
+            let totalSize = 0;
+            const files = fs.readdirSync(dirPath);
+            
+            for (const file of files) {
+                const filePath = path.join(dirPath, file);
+                const stats = fs.statSync(filePath);
+                
+                if (stats.isDirectory()) {
+                    totalSize += this.getDirectorySize(filePath);
+                } else {
+                    totalSize += stats.size;
+                }
+            }
+            
+            return totalSize;
+        } catch (error) {
+            console.error('Error calculating directory size:', error);
+            return 0;
+        }
+    }
+
+    // Get all player manifests 
+    async getAllPlayerManifests() {
+        try {
+            const manifests = {};
+            const manifestFiles = fs.readdirSync(this.playerManifestsDir);
+            
+            for (const file of manifestFiles) {
+                if (file.endsWith('.json')) {
+                    const playerId = file.replace('.json', '');
+                    const manifestPath = path.join(this.playerManifestsDir, file);
+                    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+                    manifests[playerId] = manifest;
+                }
+            }
+            
+            return manifests;
+        } catch (error) {
+            console.error('Error reading player manifests:', error);
+            return {};
+        }
     }
 
     // Cleanup unused content

@@ -57,8 +57,9 @@ namespace FyteClub
         private readonly Dictionary<string, DateTime> _playerLastSeen = new();
         private readonly Dictionary<string, string> _lastSeenAppearanceHash = new(); // Track appearance hashes for change detection
         
-        // Appearance change detection timer (500ms polling like Horse)
-        private readonly System.Timers.Timer _appearancePollingTimer;
+        // Appearance change detection (integrated into framework update)
+        private DateTime _lastAppearanceCheck = DateTime.MinValue;
+        private readonly TimeSpan _appearanceCheckInterval = TimeSpan.FromMilliseconds(500);
         
         // Detection retry system
         private int _detectionRetryCount = 0;
@@ -140,11 +141,7 @@ namespace FyteClub
             // Initialize component-based cache for superior deduplication
             InitializeComponentCache();
 
-            // Initialize appearance polling timer (500ms like Horse for responsiveness)
-            _appearancePollingTimer = new System.Timers.Timer(500); // 500ms polling interval
-            _appearancePollingTimer.Elapsed += OnAppearancePollingTimer;
-            _appearancePollingTimer.AutoReset = true;
-            _appearancePollingTimer.Enabled = true;
+            // Appearance checking will be handled in OnFrameworkUpdate
 
             _pluginLog.Info("FyteClub v4.0.1 initialized - Enhanced mod sharing with client-side caching, reference-based deduplication, and companion support");
             
@@ -184,20 +181,26 @@ namespace FyteClub
         {
             try
             {
+                // Capture local player data on main thread to avoid threading violations
+                var localPlayer = _clientState.LocalPlayer;
+                var localPlayerName = localPlayer?.Name?.TextValue;
+                var isLocalPlayerValid = localPlayer != null && !string.IsNullOrEmpty(localPlayerName);
+                
                 // Automatic upload when player becomes available (once per session)
-                if (!_hasPerformedInitialUpload && _clientState.LocalPlayer != null && !string.IsNullOrEmpty(_clientState.LocalPlayer.Name?.TextValue))
+                if (!_hasPerformedInitialUpload && isLocalPlayerValid)
                 {
-                    var playerName = _clientState.LocalPlayer.Name.TextValue;
                     _hasPerformedInitialUpload = true;
-                    _pluginLog.Info($"FyteClub: Player {playerName} detected, starting automatic mod upload...");
+                    _pluginLog.Info($"FyteClub: Player {localPlayerName} detected, starting automatic mod upload...");
                     
+                    // Capture player name for background task
+                    var capturedPlayerName = localPlayerName!;
                     _ = Task.Run(async () =>
                     {
                         try
                         {
                             // Wait a bit for game and mod systems to fully load
                             await Task.Delay(3000);
-                            await UploadPlayerModsToAllServers(playerName);
+                            await UploadPlayerModsToAllServers(capturedPlayerName);
                             _pluginLog.Info("FyteClub: Automatic mod upload completed");
                         }
                         catch (Exception ex)
@@ -208,22 +211,57 @@ namespace FyteClub
                 }
                 
                 // Periodic mod change detection - check every 30 seconds
-                if ((DateTime.UtcNow - _lastChangeCheckTime) >= _changeCheckInterval && 
-                    _clientState.LocalPlayer != null && 
-                    !string.IsNullOrEmpty(_clientState.LocalPlayer.Name?.TextValue))
+                if ((DateTime.UtcNow - _lastChangeCheckTime) >= _changeCheckInterval && isLocalPlayerValid)
                 {
                     _lastChangeCheckTime = DateTime.UtcNow;
-                    var playerName = _clientState.LocalPlayer.Name.TextValue;
+                    
+                    // Capture player name for background task
+                    var capturedPlayerName = localPlayerName!;
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await CheckForModChangesAndUpload(capturedPlayerName);
+                        }
+                        catch (Exception ex)
+                        {
+                            _pluginLog.Debug($"FyteClub: Mod change check failed: {ex.Message}");
+                        }
+                    });
+                }
+                
+                // Appearance change detection (every 500ms) - capture object table snapshot on main thread
+                if ((DateTime.UtcNow - _lastAppearanceCheck) >= _appearanceCheckInterval)
+                {
+                    _lastAppearanceCheck = DateTime.UtcNow;
+                    
+                    // Capture nearby players on main thread to avoid threading violations
+                    var nearbyPlayers = _objectTable
+                        .Where(obj => obj is ICharacter character && 
+                                     character.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player &&
+                                     character != localPlayer)
+                        .Cast<ICharacter>()
+                        .Select(c => new PlayerSnapshot { Name = c.Name.ToString(), ObjectIndex = c.ObjectIndex, Address = c.Address })
+                        .ToList();
+                    
+                    var companions = _objectTable
+                        .Where(obj => obj != null && 
+                               (obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion ||
+                                obj.ObjectKind.ToString().Contains("Pet") ||
+                                obj.ObjectKind.ToString().Contains("Mount")))
+                        .Select(c => new CompanionSnapshot { Name = c.Name.ToString(), ObjectKind = c.ObjectKind.ToString(), ObjectIndex = c.ObjectIndex })
+                        .ToList();
                     
                     _ = Task.Run(async () =>
                     {
                         try
                         {
-                            await CheckForModChangesAndUpload(playerName);
+                            await CheckPlayersForChanges(nearbyPlayers);
+                            await CheckCompanionsForChanges(companions);
                         }
                         catch (Exception ex)
                         {
-                            _pluginLog.Debug($"FyteClub: Mod change check failed: {ex.Message}");
+                            _pluginLog.Debug($"Appearance check error: {ex.Message}");
                         }
                     });
                 }
@@ -426,31 +464,42 @@ namespace FyteClub
                 return;
             }
 
-            // Skip requesting mods for the local player (ourselves) - check on main thread
-            var localPlayerName = _clientState.LocalPlayer?.Name?.TextValue;
-            var localPlayerWorld = _clientState.LocalPlayer?.HomeWorld.Value.Name.ToString();
-            var fullLocalPlayerName = !string.IsNullOrEmpty(localPlayerName) && !string.IsNullOrEmpty(localPlayerWorld) 
-                ? $"{localPlayerName}@{localPlayerWorld}" 
-                : localPlayerName;
-                
-            _pluginLog.Info($"FyteClub: Local player check - Local: '{fullLocalPlayerName}', Detected: '{message.PlayerName}'");
-            
-            if (!string.IsNullOrEmpty(localPlayerName) && message.PlayerName.StartsWith(localPlayerName))
+            // Skip requesting mods for the local player (ourselves) - use framework thread safe approach
+            _framework.RunOnFrameworkThread(() =>
             {
-                _pluginLog.Info($"FyteClub: Skipping mod request for local player: {message.PlayerName}");
-                return;
-            }
+                try
+                {
+                    var localPlayer = _clientState.LocalPlayer;
+                    var localPlayerName = localPlayer?.Name?.TextValue;
+                    var localPlayerWorld = localPlayer?.HomeWorld.Value.Name.ToString();
+                    var fullLocalPlayerName = !string.IsNullOrEmpty(localPlayerName) && !string.IsNullOrEmpty(localPlayerWorld) 
+                        ? $"{localPlayerName}@{localPlayerWorld}" 
+                        : localPlayerName;
+                        
+                    _pluginLog.Info($"FyteClub: Local player check - Local: '{fullLocalPlayerName}', Detected: '{message.PlayerName}'");
+                    
+                    if (!string.IsNullOrEmpty(localPlayerName) && message.PlayerName.StartsWith(localPlayerName))
+                    {
+                        _pluginLog.Info($"FyteClub: Skipping mod request for local player: {message.PlayerName}");
+                        return;
+                    }
 
-            if (!_loadingStates.ContainsKey(message.PlayerName))
-            {
-                _pluginLog.Info($"FyteClub: Starting mod request for player: {message.PlayerName}");
-                _loadingStates[message.PlayerName] = LoadingState.Requesting;
-                _ = Task.Run(() => RequestPlayerMods(message.PlayerName));
-            }
-            else
-            {
-                _pluginLog.Info($"FyteClub: Player {message.PlayerName} already has loading state: {_loadingStates[message.PlayerName]}");
-            }
+                    if (!_loadingStates.ContainsKey(message.PlayerName))
+                    {
+                        _pluginLog.Info($"FyteClub: Starting mod request for player: {message.PlayerName}");
+                        _loadingStates[message.PlayerName] = LoadingState.Requesting;
+                        _ = Task.Run(() => RequestPlayerMods(message.PlayerName));
+                    }
+                    else
+                    {
+                        _pluginLog.Info($"FyteClub: Player {message.PlayerName} already has loading state: {_loadingStates[message.PlayerName]}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Error($"Error in OnPlayerDetected framework callback: {ex.Message}");
+                }
+            });
         }
 
         private void OnPlayerRemoved(PlayerRemovedMessage message)
@@ -794,25 +843,31 @@ namespace FyteClub
         {
             _pluginLog.Info("FyteClub: Manual change check requested");
             
-            // Get local player name on main thread before starting background task
-            var localPlayerName = _clientState.LocalPlayer?.Name?.TextValue;
-            if (string.IsNullOrEmpty(localPlayerName))
+            // Get local player name safely on framework thread
+            _framework.RunOnFrameworkThread(() =>
             {
-                _pluginLog.Warning("FyteClub: Cannot check for changes - local player not available");
-                return;
-            }
-            
-            _ = Task.Run(async () =>
-            {
-                try
+                var localPlayer = _clientState.LocalPlayer;
+                var localPlayerName = localPlayer?.Name?.TextValue;
+                if (string.IsNullOrEmpty(localPlayerName))
                 {
-                    await CheckForModChangesAndUpload(localPlayerName);
-                    _pluginLog.Info("FyteClub: Manual change check completed");
+                    _pluginLog.Warning("FyteClub: Cannot check for changes - local player not available");
+                    return;
                 }
-                catch (Exception ex)
+                
+                // Capture player name for background task
+                var capturedPlayerName = localPlayerName;
+                _ = Task.Run(async () =>
                 {
-                    _pluginLog.Error($"FyteClub: Manual change check failed: {ex.Message}");
-                }
+                    try
+                    {
+                        await CheckForModChangesAndUpload(capturedPlayerName);
+                        _pluginLog.Info("FyteClub: Manual change check completed");
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Error($"FyteClub: Manual change check failed: {ex.Message}");
+                    }
+                });
             });
         }
 
@@ -821,26 +876,32 @@ namespace FyteClub
             // Force resync of all player mods - implementation ready
             _pluginLog.Information("FyteClub: Manual resync requested from UI");
             
-            // Get local player name on main thread before starting background task
-            var localPlayerName = _clientState.LocalPlayer?.Name?.TextValue;
-            if (string.IsNullOrEmpty(localPlayerName))
+            // Get local player name safely on framework thread
+            _framework.RunOnFrameworkThread(() =>
             {
-                _pluginLog.Warning("FyteClub: Cannot start manual resync - local player not available");
-                return;
-            }
-            
-            _ = Task.Run(async () =>
-            {
-                try
+                var localPlayer = _clientState.LocalPlayer;
+                var localPlayerName = localPlayer?.Name?.TextValue;
+                if (string.IsNullOrEmpty(localPlayerName))
                 {
-                    _pluginLog.Info("FyteClub: Starting manual mod upload...");
-                    await UploadPlayerModsToAllServers(localPlayerName);
-                    _pluginLog.Info("FyteClub: Manual mod upload completed");
+                    _pluginLog.Warning("FyteClub: Cannot start manual resync - local player not available");
+                    return;
                 }
-                catch (Exception ex)
+                
+                // Capture player name for background task
+                var capturedPlayerName = localPlayerName;
+                _ = Task.Run(async () =>
                 {
-                    _pluginLog.Error($"FyteClub: Manual mod upload failed: {ex.Message}");
-                }
+                    try
+                    {
+                        _pluginLog.Info("FyteClub: Starting manual mod upload...");
+                        await UploadPlayerModsToAllServers(capturedPlayerName);
+                        _pluginLog.Info("FyteClub: Manual mod upload completed");
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Error($"FyteClub: Manual mod upload failed: {ex.Message}");
+                    }
+                });
             });
         }
 
@@ -1042,6 +1103,42 @@ namespace FyteClub
             }
         }
 
+        /// <summary>
+        /// Thread-safe version of appearance hash generation using captured data.
+        /// Used when we can't access game objects from background threads.
+        /// </summary>
+        private string GenerateSimpleAppearanceHash(string playerName, uint objectIndex, nint address)
+        {
+            try
+            {
+                var hashBuilder = new StringBuilder();
+                
+                // Character name and basic identifiers
+                hashBuilder.Append(playerName);
+                hashBuilder.Append(objectIndex);
+                
+                // Use address if available
+                if (address != 0)
+                {
+                    hashBuilder.Append(address.ToString("X"));
+                }
+                
+                // Add current timestamp component to ensure periodic refresh
+                var timeBucket = (DateTime.UtcNow.Ticks / TimeSpan.TicksPerMinute) / 5; // 5-minute buckets
+                hashBuilder.Append(timeBucket);
+                
+                // Generate SHA1 hash from the combined data
+                var hashData = Encoding.UTF8.GetBytes(hashBuilder.ToString());
+                var hash = SHA1.HashData(hashData);
+                return Convert.ToHexString(hash)[..16]; // First 16 chars for compact representation
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Failed to generate simple appearance hash for {playerName}: {ex.Message}");
+                return $"fallback_{objectIndex}_{DateTime.UtcNow.Ticks}";
+            }
+        }
+
         private async Task CheckForModChangesAndUpload(string playerName)
         {
             try
@@ -1211,77 +1308,31 @@ namespace FyteClub
                 try
                 {
                     string? playerName = null;
-                    try
+                    
+                    // Get player name safely on framework thread
+                    await _framework.RunOnFrameworkThread(() =>
                     {
-                        // Try to get local player name, but catch threading exceptions
-                        var localPlayer = _clientState.LocalPlayer;
-                        if (localPlayer != null && !string.IsNullOrEmpty(localPlayer.Name?.TextValue))
+                        try
                         {
-                            playerName = localPlayer.Name.TextValue;
+                            var localPlayer = _clientState.LocalPlayer;
+                            if (localPlayer != null && !string.IsNullOrEmpty(localPlayer.Name?.TextValue))
+                            {
+                                playerName = localPlayer.Name.TextValue;
+                            }
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        _pluginLog.Debug($"FyteClub: Cannot access LocalPlayer from background thread on attempt {retryCount + 1}: {ex.Message}");
-                    }
+                        catch (Exception ex)
+                        {
+                            _pluginLog.Debug($"FyteClub: Cannot access LocalPlayer on attempt {retryCount + 1}: {ex.Message}");
+                        }
+                    });
                     
                     if (!string.IsNullOrEmpty(playerName))
                     {
-                        
                         // Wait a bit more for mod systems to be available
                         await Task.Delay(5000);
                         
-                        var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
-                        if (playerInfo != null)
-                        {
-                            // Upload to all enabled servers
-                            foreach (var server in _servers.Where(s => s.Enabled))
-                            {
-                                try
-                                {
-                                    var request = new
-                                    {
-                                        playerId = playerName,
-                                        playerName = playerName,
-                                        mods = playerInfo.Mods,
-                                        glamourerDesign = playerInfo.GlamourerDesign,
-                                        customizePlusProfile = playerInfo.CustomizePlusProfile,
-                                        simpleHeelsOffset = playerInfo.SimpleHeelsOffset,
-                                        honorificTitle = playerInfo.HonorificTitle,
-                                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                                    };
-
-                                    var json = System.Text.Json.JsonSerializer.Serialize(request);
-                                    var content = new StringContent(json, Encoding.UTF8, "application/json");
-                                    
-                                    var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"http://{server.Address}/api/register-mods")
-                                    {
-                                        Content = content
-                                    };
-                                    
-                                    // Add password header if server has one
-                                    if (!string.IsNullOrEmpty(server.Password))
-                                    {
-                                        httpRequest.Headers.Add("x-fyteclub-password", server.Password);
-                                    }
-                                    
-                                    var response = await _httpClient.SendAsync(httpRequest);
-                                    
-                                    if (response.IsSuccessStatusCode)
-                                    {
-                                        _pluginLog.Info($"FyteClub: Successfully uploaded mods to {server.Name}");
-                                    }
-                                    else
-                                    {
-                                        _pluginLog.Warning($"FyteClub: Failed to upload mods to {server.Name}: HTTP {response.StatusCode}");
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    _pluginLog.Warning($"FyteClub: Failed to upload mods to {server.Name}: {ex.Message}");
-                                }
-                            }
-                        }
+                        // Use the existing thread-safe upload method
+                        await UploadPlayerModsToAllServers(playerName);
                         return; // Success, exit the retry loop
                     }
                 }
@@ -1301,9 +1352,19 @@ namespace FyteClub
         {
             try
             {
-                if (_clientState.LocalPlayer != null && !string.IsNullOrEmpty(_clientState.LocalPlayer.Name.TextValue))
+                // Get player name safely on framework thread
+                string? playerName = null;
+                await _framework.RunOnFrameworkThread(() =>
                 {
-                    var playerName = _clientState.LocalPlayer.Name.TextValue;
+                    var localPlayer = _clientState.LocalPlayer;
+                    if (localPlayer != null && !string.IsNullOrEmpty(localPlayer.Name?.TextValue))
+                    {
+                        playerName = localPlayer.Name.TextValue;
+                    }
+                });
+                
+                if (!string.IsNullOrEmpty(playerName))
+                {
                     var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
                     
                     if (playerInfo != null)
@@ -1835,32 +1896,16 @@ namespace FyteClub
             }
         }
 
-        private async void OnAppearancePollingTimer(object? sender, ElapsedEventArgs e)
+
+
+        private async Task CheckPlayersForChanges(List<PlayerSnapshot> nearbyPlayersSnapshot)
         {
-            if (_clientState?.LocalPlayer == null) return;
-
-            // Check players (existing logic)
-            await CheckPlayersForChanges();
-            
-            // Check minions and mounts (new investigation)
-            await CheckCompanionsForChanges();
-        }
-
-        private async Task CheckPlayersForChanges()
-        {
-            var nearbyPlayers = _objectTable
-                .Where(obj => obj is ICharacter character && 
-                             character.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player &&
-                             character != _clientState.LocalPlayer)
-                .Cast<ICharacter>()
-                .ToList();
-
-            foreach (var character in nearbyPlayers)
+            foreach (var playerSnapshot in nearbyPlayersSnapshot)
             {
                 try
                 {
-                    var playerName = character.Name.ToString();
-                    var currentHash = await GenerateComprehensiveAppearanceHash(character);
+                    var playerName = playerSnapshot.Name;
+                    var currentHash = GenerateSimpleAppearanceHash(playerName, playerSnapshot.ObjectIndex, playerSnapshot.Address);
                     var cacheKey = $"{playerName}:{currentHash}";
 
                     // Check both traditional cache and component cache
@@ -1873,7 +1918,7 @@ namespace FyteClub
                             if (componentResult != null)
                             {
                                 // Component cache hit - apply mods if different from last seen appearance
-                                if (!_lastSeenAppearanceHash.TryGetValue(playerName, out var lastHash) || lastHash != currentHash)
+                                if (!_lastSeenAppearanceHash.TryGetValue(playerName, out string? lastHash1) || lastHash1 != currentHash)
                                 {
                                     _lastSeenAppearanceHash[playerName] = currentHash;
                                     _pluginLog.Debug($"Applying component-cached appearance for {playerName} (hash: {currentHash})");
@@ -1888,7 +1933,7 @@ namespace FyteClub
                         if (cachedMods != null)
                         {
                             // Traditional cache hit - apply mods if different from last seen appearance
-                            if (!_lastSeenAppearanceHash.TryGetValue(playerName, out var lastHash) || lastHash != currentHash)
+                            if (!_lastSeenAppearanceHash.TryGetValue(playerName, out string? lastHash2) || lastHash2 != currentHash)
                             {
                                 _lastSeenAppearanceHash[playerName] = currentHash;
                                 _pluginLog.Debug($"Applying cached appearance for {playerName} (hash: {currentHash})");
@@ -1898,7 +1943,7 @@ namespace FyteClub
                         else
                         {
                             // Cache miss - request from server
-                            if (!_lastSeenAppearanceHash.TryGetValue(playerName, out var lastHash) || lastHash != currentHash)
+                            if (!_lastSeenAppearanceHash.TryGetValue(playerName, out string? lastHash3) || lastHash3 != currentHash)
                             {
                                 _lastSeenAppearanceHash[playerName] = currentHash;
                                 _pluginLog.Debug($"Requesting new appearance for {playerName} (hash: {currentHash})");
@@ -1909,7 +1954,7 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    _pluginLog.Warning($"Error checking appearance for {character.Name}: {ex.Message}");
+                    _pluginLog.Warning($"Error checking appearance for {playerSnapshot.Name}: {ex.Message}");
                 }
             }
         }
@@ -1917,58 +1962,38 @@ namespace FyteClub
         /// <summary>
         /// Investigate how minions, mounts, and companions work with the mod system.
         /// </summary>
-        private async Task CheckCompanionsForChanges()
+        private async Task CheckCompanionsForChanges(List<CompanionSnapshot> companionsSnapshot)
         {
             try
             {
-                // Look for companions (minions), pets, and other non-player objects
-                var companions = _objectTable
-                    .Where(obj => obj != null && 
-                           (obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion ||
-                            obj.ObjectKind.ToString().Contains("Pet") ||
-                            obj.ObjectKind.ToString().Contains("Mount")))
-                    .ToList();
-
-                foreach (var companion in companions)
+                foreach (var companionSnapshot in companionsSnapshot)
                 {
                     try
                     {
-                        // Check if this companion can be treated as a character
-                        if (companion is ICharacter companionCharacter)
+                        // Companions inherit mods from their owner (Mare pattern)
+                        var ownerName = await FindCompanionOwner(companionSnapshot);
+                        if (!string.IsNullOrEmpty(ownerName))
                         {
-                            var companionName = $"{companion.Name}_{companion.ObjectKind}_{companion.ObjectIndex}";
+                            _pluginLog.Debug($"Companion {companionSnapshot.Name} owned by {ownerName} - applying owner's mods");
                             
-                            // Try to get mod information for this companion
-                            var companionModInfo = await _modSystemIntegration.GetCurrentPlayerMods(companionName);
-                            if (companionModInfo != null && companionModInfo.Mods?.Count > 0)
-                            {
-                                _pluginLog.Info($"Companion {companion.Name} ({companion.ObjectKind}) has {companionModInfo.Mods.Count} mods");
-                                
-                                // Log the mods for analysis
-                                foreach (var mod in companionModInfo.Mods.Take(3)) // Log first 3
-                                {
-                                    _pluginLog.Info($"  - Companion mod: {mod}");
-                                }
-                            }
-
-                            // Check if we can generate an appearance hash for companions
-                            var companionHash = await GenerateComprehensiveAppearanceHash(companionCharacter);
-                            if (!string.IsNullOrEmpty(companionHash))
-                            {
-                                _pluginLog.Debug($"Generated appearance hash for companion {companion.Name}: {companionHash}");
-                            }
+                            // Apply the owner's mods to the companion
+                            await ApplyOwnerModsToCompanion(companionSnapshot, ownerName);
+                        }
+                        else
+                        {
+                            _pluginLog.Debug($"Could not determine owner for companion {companionSnapshot.Name}");
                         }
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog.Debug($"Error analyzing companion {companion.Name}: {ex.Message}");
+                        _pluginLog.Debug($"Error analyzing companion {companionSnapshot.Name}: {ex.Message}");
                     }
                 }
 
                 // Log summary every 30 seconds to avoid spam
                 if (DateTime.Now.Second % 30 == 0)
                 {
-                    _pluginLog.Info($"Companion analysis: Found {companions.Count} companions/pets/mounts in range");
+                    _pluginLog.Info($"Companion analysis: Found {companionsSnapshot.Count} companions/pets/mounts in range");
                 }
             }
             catch (Exception ex)
@@ -2092,6 +2117,60 @@ namespace FyteClub
         }
 
         /// <summary>
+        /// Find the owner of a companion (minion/mount) using Mare's pattern.
+        /// </summary>
+        private async Task<string?> FindCompanionOwner(CompanionSnapshot companion)
+        {
+            try
+            {
+                var nearbyPlayers = new List<string>();
+                await _framework.RunOnFrameworkThread(() =>
+                {
+                    var localPlayer = _clientState.LocalPlayer;
+                    if (localPlayer != null)
+                    {
+                        nearbyPlayers.Add(localPlayer.Name.TextValue);
+                    }
+                });
+                
+                return nearbyPlayers.FirstOrDefault();
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Failed to find owner for companion {companion.Name}: {ex.Message}");
+                return null;
+            }
+        }
+        
+        private async Task ApplyOwnerModsToCompanion(CompanionSnapshot companion, string ownerName)
+        {
+            try
+            {
+                if (_recentlySyncedUsers.Contains(ownerName))
+                {
+                    await _framework.RunOnFrameworkThread(() =>
+                    {
+                        var companionObj = _objectTable.FirstOrDefault(obj => 
+                            obj.ObjectIndex == companion.ObjectIndex);
+                            
+                        if (companionObj is ICharacter companionChar)
+                        {
+                            if (_modSystemIntegration.IsPenumbraAvailable)
+                            {
+                                _modSystemIntegration.RedrawCharacter(companionChar);
+                                _pluginLog.Debug($"Applied redraw to companion {companion.Name} for owner {ownerName}");
+                            }
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Failed to apply owner mods to companion {companion.Name}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Analyze minions, mounts, and other companion objects.
         /// </summary>
         private void LogMinionsAndMounts()
@@ -2160,5 +2239,19 @@ namespace FyteClub
         public int ProximityRange { get; set; } = 50; // FyteClub's proximity setting
         public List<string> BlockedUsers { get; set; } = new(); // Block list for user management
         public List<string> RecentlySyncedUsers { get; set; } = new(); // Track recently synced users
+    }
+
+    public class PlayerSnapshot
+    {
+        public string Name { get; set; } = string.Empty;
+        public uint ObjectIndex { get; set; }
+        public nint Address { get; set; }
+    }
+
+    public class CompanionSnapshot
+    {
+        public string Name { get; set; } = string.Empty;
+        public string ObjectKind { get; set; } = string.Empty;
+        public uint ObjectIndex { get; set; }
     }
 }
