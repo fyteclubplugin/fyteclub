@@ -57,7 +57,7 @@ namespace FyteClub
         private readonly Dictionary<string, DateTime> _playerLastSeen = new();
         private readonly Dictionary<string, string> _lastSeenAppearanceHash = new(); // Track appearance hashes for change detection
         
-        // Appearance change detection timer (500ms polling like Mare)
+        // Appearance change detection timer (500ms polling like Horse)
         private readonly System.Timers.Timer _appearancePollingTimer;
         
         // Detection retry system
@@ -140,7 +140,7 @@ namespace FyteClub
             // Initialize component-based cache for superior deduplication
             InitializeComponentCache();
 
-            // Initialize appearance polling timer (500ms like Mare for responsiveness)
+            // Initialize appearance polling timer (500ms like Horse for responsiveness)
             _appearancePollingTimer = new System.Timers.Timer(500); // 500ms polling interval
             _appearancePollingTimer.Elapsed += OnAppearancePollingTimer;
             _appearancePollingTimer.AutoReset = true;

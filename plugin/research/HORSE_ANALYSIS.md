@@ -1,8 +1,8 @@
-# Mare-Style FFXIV Plugin Analysis
+# Horse-Style FFXIV Plugin Analysis
 
-## Mare's Approach
+## Horse's Approach
 
-Mare used client-server architecture with real-time mod synchronization:
+Horse used client-server architecture with real-time mod synchronization:
 
 ### 1. Player Detection
 - Memory scanning of FFXIV's object table

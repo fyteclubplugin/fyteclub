@@ -1,25 +1,26 @@
 #!/usr/bin/env node
 
 /**
- * Integration Tests for Mare-Enhanced FyteClub Architecture
- * Tests the complete workflow with all Mare patterns implemented
+ * Integration Tests for Horse-Enhanced FyteClub Architecture
+ * Tests the complete workflow with all Horse patterns implemented
  */
 
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-class MarePatternIntegrationTests {
+class HorsePatternIntegrationTests {
     constructor() {
         this.testResults = {
-            passed: 0,
+                     console.log('\n🎉 All Horse patterns successfully integrated!');
+            console.log('FyteClub now has Horse-level stability and polish.'); passed: 0,
             failed: 0,
             details: []
         };
     }
 
     async runAllTests() {
-        console.log('🧪 FyteClub Mare Pattern Integration Tests\n');
+        console.log('🧪 FyteClub Horse Pattern Integration Tests\n');
         
         await this.testPluginArchitecture();
         await this.testPerformanceMonitoring();
@@ -56,7 +57,7 @@ class MarePatternIntegrationTests {
                 }
             }
             
-            this.pass('Plugin Architecture', 'All Mare pattern files exist');
+            this.pass('Plugin Architecture', 'All Horse pattern files exist');
 
             // Test 2: Plugin compiles
             const compileResult = await this.runCommand('dotnet', ['build'], 'plugin');
@@ -64,7 +65,7 @@ class MarePatternIntegrationTests {
                 throw new Error(`Plugin compilation failed: ${compileResult.stderr}`);
             }
             
-            this.pass('Plugin Compilation', 'Plugin compiles successfully with Mare patterns');
+            this.pass('Plugin Compilation', 'Plugin compiles successfully with Horse patterns');
 
         } catch (error) {
             this.fail('Plugin Architecture', error.message);
@@ -98,7 +99,7 @@ class MarePatternIntegrationTests {
                 throw new Error('Missing slow operation detection (>100ms)');
             }
 
-            this.pass('Performance Monitoring', 'Performance collector implements Mare patterns');
+            this.pass('Performance Monitoring', 'Performance collector implements Horse patterns');
 
         } catch (error) {
             this.fail('Performance Monitoring', error.message);
@@ -157,7 +158,7 @@ class MarePatternIntegrationTests {
                 }
             }
 
-            this.pass('Lock Management', 'Lock manager implements Mare conflict prevention');
+            this.pass('Lock Management', 'Lock manager implements Horse conflict prevention');
 
         } catch (error) {
             this.fail('Lock Management', error.message);
@@ -187,7 +188,7 @@ class MarePatternIntegrationTests {
                 }
             }
 
-            this.pass('Connection Resilience', 'Connection manager implements Mare resilience patterns');
+            this.pass('Connection Resilience', 'Connection manager implements Horse resilience patterns');
 
         } catch (error) {
             this.fail('Connection Resilience', error.message);
@@ -260,7 +261,7 @@ class MarePatternIntegrationTests {
                 }
             }
 
-            this.pass('UI State Persistence', 'UI configuration implements Mare persistence patterns');
+            this.pass('UI State Persistence', 'UI configuration implements Horse persistence patterns');
 
         } catch (error) {
             this.fail('UI State Persistence', error.message);
@@ -276,8 +277,8 @@ class MarePatternIntegrationTests {
                 'utf8'
             );
 
-            // Test Mare service initialization
-            const mareServices = [
+            // Test Horse service initialization
+            const horseServices = [
                 '_performanceCollector',
                 '_versionChecker',
                 '_redrawCoordinator',
@@ -285,9 +286,9 @@ class MarePatternIntegrationTests {
                 '_lockManager'
             ];
 
-            for (const service of mareServices) {
+            for (const service of horseServices) {
                 if (!pluginContent.includes(service)) {
-                    throw new Error(`Missing Mare service: ${service}`);
+                    throw new Error(`Missing Horse service: ${service}`);
                 }
             }
 
@@ -301,7 +302,7 @@ class MarePatternIntegrationTests {
                 throw new Error('Missing advanced player info integration');
             }
 
-            this.pass('End-to-End Workflow', 'Complete Mare pattern integration verified');
+            this.pass('End-to-End Workflow', 'Complete Horse pattern integration verified');
 
         } catch (error) {
             this.fail('End-to-End Workflow', error.message);
@@ -341,7 +342,7 @@ class MarePatternIntegrationTests {
     }
 
     printResults() {
-        console.log('\n📊 Mare Pattern Integration Test Results:');
+        console.log('\n📊 Horse Pattern Integration Test Results:');
         console.log(`✅ Passed: ${this.testResults.passed}`);
         console.log(`❌ Failed: ${this.testResults.failed}`);
         
@@ -353,15 +354,15 @@ class MarePatternIntegrationTests {
         }
 
         if (this.testResults.failed === 0) {
-            console.log('\n🎉 All Mare patterns successfully integrated!');
-            console.log('FyteClub now has Mare-level stability and polish.');
+            console.log('\n🎉 All Horse patterns successfully integrated!');
+            console.log('FyteClub now has Horse-level stability and polish.');
         }
     }
 }
 
 // Run tests if called directly
 if (require.main === module) {
-    const tests = new MarePatternIntegrationTests();
+    const tests = new HorsePatternIntegrationTests();
     tests.runAllTests().then(success => {
         process.exit(success ? 0 : 1);
     }).catch(error => {
@@ -370,4 +371,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = MarePatternIntegrationTests;
+module.exports = HorsePatternIntegrationTests;

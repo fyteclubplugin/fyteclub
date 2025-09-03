@@ -4,7 +4,7 @@
 - ✅ All-plugin architecture implemented
 - ✅ Block users feature complete
 - ✅ Build scripts updated
-- ✅ Documentation cleaned (Mare references removed, emojis mostly removed)
+- ✅ Documentation cleaned (Horse references removed, emojis mostly removed)
 - ✅ Deduplication service implemented
 - ✅ Redis cache service implemented (optional)
 - ⚠️  StallionSync references still need removal
