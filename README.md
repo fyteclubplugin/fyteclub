@@ -57,7 +57,7 @@ When you're near other players in FFXIV, it syncs your mods directly between pla
 
 ### Plugin (P2P Version)
 1. Install XIVLauncher and Dalamud
-2. Download FyteClub-Plugin.zip from releases
+2. Download FyteClub-P2P-Plugin.zip from releases
 3. Extract to `%APPDATA%\XIVLauncher\installedPlugins\FyteClub\latest\`
 4. Restart FFXIV
 5. Use `/fyteclub` command in-game
@@ -102,7 +102,14 @@ cd plugin-tests
 dotnet test
 ```
 
-See P2P_ROADMAP.md for development status and p2p-syncshell-architecture.md for technical details.
+See P2P_ROADMAP.md for development status.
+
+## Release
+
+To build P2P release:
+```bash
+build-p2p-release.bat
+```
 
 ## Support
 
