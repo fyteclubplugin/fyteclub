@@ -2,8 +2,8 @@
   {
     "Author": "FyteClub Team",
     "Name": "FyteClub",
-    "Punchline": "P2P mod sharing with friends",
-    "Description": "Share FFXIV mods automatically using peer-to-peer connections. No servers needed!",
+    "Punchline": "Share your mods with friends",
+    "Description": "Sync mods between players using Penumbra, Glamourer, and other plugins",
     "InternalName": "FyteClub",
     "AssemblyVersion": "4.1.0",
     "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
