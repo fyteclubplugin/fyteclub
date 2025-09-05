@@ -12,6 +12,10 @@ namespace FyteClub
         
         public string PeerId => $"ed25519:{Convert.ToBase64String(_publicKey).Replace('+', '-').Replace('/', '_').TrimEnd('=')}";
         public byte[] PublicKey => (byte[])_publicKey.Clone();
+        
+        // Methods expected by tests
+        public byte[] GetPublicKey() => (byte[])_publicKey.Clone();
+        public string GetPeerId() => PeerId;
 
         public Ed25519Identity()
         {
@@ -71,6 +75,12 @@ namespace FyteClub
         }
 
         public byte[] SignData(byte[] data) => Sign(data);
+        
+        public byte[] SignChallenge(string nonce)
+        {
+            var challengeData = System.Text.Encoding.UTF8.GetBytes(nonce);
+            return Sign(challengeData);
+        }
         
         public bool VerifySignature(byte[] data, byte[] signature, string publicKeyString)
         {

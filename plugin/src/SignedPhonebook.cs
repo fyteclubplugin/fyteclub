@@ -97,7 +97,23 @@ namespace FyteClub
         private readonly object _lock = new();
 
         public string GroupId { get; set; } = string.Empty;
+        public int SequenceNumber { get; set; } = 0;
+        
+        // Properties expected by tests
+        public Dictionary<string, PhonebookMember> Members { get; } = new();
+        public List<TombstoneRecord> Tombstones { get; } = new();
 
+        public void AddMember(string peerId, string ip, int port, DateTime lastSeen)
+        {
+            Members[peerId] = new PhonebookMember
+            {
+                PeerId = peerId,
+                LastKnownIP = ip,
+                LastKnownPort = port,
+                LastSeen = lastSeen
+            };
+        }
+        
         public void AddEntry(PhonebookEntry entry)
         {
             if (!entry.Verify()) return;

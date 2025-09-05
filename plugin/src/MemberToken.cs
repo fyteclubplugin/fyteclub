@@ -95,6 +95,8 @@ namespace FyteClub
             }
         }
 
+        public bool VerifySignature(byte[] issuerPublicKey) => Verify(issuerPublicKey);
+        
         public string ToJson() => JsonSerializer.Serialize(this);
 
         public static MemberToken? FromJson(string json)

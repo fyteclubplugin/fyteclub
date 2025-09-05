@@ -28,12 +28,17 @@ namespace FyteClub
 
         public static TombstoneRecord Create(string peerId, long entrySeq, Ed25519Identity remover)
         {
+            return Create(peerId, entrySeq, remover, DateTime.UtcNow);
+        }
+        
+        public static TombstoneRecord Create(string peerId, long entrySeq, Ed25519Identity remover, DateTime timestamp)
+        {
             var tombstone = new TombstoneRecord
             {
                 PeerId = peerId,
                 EntrySequence = entrySeq,
                 RemovedBy = remover.PeerId,
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                Timestamp = ((DateTimeOffset)timestamp).ToUnixTimeSeconds()
             };
 
             var tombstoneForSigning = new TombstoneRecord

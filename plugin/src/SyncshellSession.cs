@@ -60,7 +60,7 @@ namespace FyteClub
             if (!IsHost) throw new InvalidOperationException("Only host can generate invite codes");
             
             var localIP = GetLocalIPAddress();
-            return InviteCodeGenerator.GenerateCode(localIP, 7777, Identity.EncryptionKey, Phonebook.SequenceCounter, Identity.PrivateKey);
+            return InviteCodeGenerator.GenerateCode(localIP, 7777, Identity.EncryptionKey, Phonebook.SequenceCounter, Identity.Ed25519Identity.ExportPrivateKey());
         }
 
         public void IncrementUptime()

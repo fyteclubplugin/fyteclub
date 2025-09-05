@@ -9,8 +9,7 @@ namespace FyteClub
         public string Name { get; }
         public byte[] MasterPasswordHash { get; }
         public byte[] EncryptionKey { get; }
-        public byte[] PublicKey { get; }
-        public byte[] PrivateKey { get; }
+        public byte[] PublicKey => Ed25519Identity.GetPublicKey(); // Now returns Ed25519 public key
         public Ed25519Identity Ed25519Identity { get; }
 
         public SyncshellIdentity(string name, string masterPassword)
@@ -21,11 +20,6 @@ namespace FyteClub
             
             // Generate Ed25519 identity
             Ed25519Identity = new Ed25519Identity();
-            
-            // Legacy RSA support
-            using var rsa = RSA.Create(2048);
-            PublicKey = rsa.ExportRSAPublicKey();
-            PrivateKey = rsa.ExportRSAPrivateKey();
         }
         
         public SyncshellIdentity()
@@ -37,11 +31,6 @@ namespace FyteClub
             
             // Generate Ed25519 identity
             Ed25519Identity = new Ed25519Identity();
-            
-            // Legacy RSA support
-            using var rsa = RSA.Create(2048);
-            PublicKey = rsa.ExportRSAPublicKey();
-            PrivateKey = rsa.ExportRSAPrivateKey();
         }
 
         private static byte[] DeriveEncryptionKey(string name, string password)
@@ -57,6 +46,7 @@ namespace FyteClub
         }
         
         public string GetPublicKey() => Ed25519Identity.PeerId;
+        public string GetPeerId() => Ed25519Identity.GetPeerId();
         
         public byte[] SignData(byte[] data) => Ed25519Identity.SignData(data);
         

@@ -14,7 +14,7 @@ namespace FyteClub.Tests
             var identity2 = new SyncshellIdentity("TestGroup", "password123");
 
             Assert.NotEqual(identity1.PublicKey, identity2.PublicKey);
-            Assert.NotEqual(identity1.PrivateKey, identity2.PrivateKey);
+            Assert.NotEqual(identity1.Ed25519Identity.ExportPrivateKey(), identity2.Ed25519Identity.ExportPrivateKey());
         }
 
         [Fact]

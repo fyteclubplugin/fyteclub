@@ -14,6 +14,7 @@ namespace FyteClub
         private readonly Dictionary<string, SyncshellSession> _sessions = new();
         private readonly Dictionary<string, object> _webrtcConnections = new(); // Changed to object for mock compatibility
         private readonly Dictionary<string, DateTime> _pendingConnections = new();
+        private readonly Dictionary<string, List<MemberToken>> _issuedTokens = new();
         private readonly SignalingService _signalingService;
         private readonly Timer _uptimeTimer;
         private readonly Timer _connectionTimeoutTimer;
@@ -461,6 +462,82 @@ namespace FyteClub
 
 
         
+        public MemberToken IssueToken(string syncshellId, Ed25519Identity memberIdentity)
+        {
+            var session = _sessions.Values.FirstOrDefault(s => s.Identity.GetSyncshellHash() == syncshellId);
+            if (session == null) throw new InvalidOperationException("Syncshell not found");
+            
+            var groupId = session.Identity.GenerateGroupId(session.Identity.Name);
+            var token = MemberToken.Create(groupId, session.Identity.Ed25519Identity, memberIdentity);
+            
+            if (!_issuedTokens.ContainsKey(syncshellId))
+                _issuedTokens[syncshellId] = new List<MemberToken>();
+            
+            _issuedTokens[syncshellId].Add(token);
+            return token;
+        }
+        
+        public void SendTokenViaWebRTC(string syncshellId, Ed25519Identity memberIdentity, MockWebRTCConnection connection)
+        {
+            var token = IssueToken(syncshellId, memberIdentity);
+            var envelope = new
+            {
+                type = "member_credentials",
+                group_id = token.GroupId,
+                member_pubkey = token.MemberPeerId,
+                token = token.ToJson(),
+                issued_by = token.IssuedBy,
+                ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                sig = "placeholder_signature"
+            };
+            
+            var message = System.Text.Json.JsonSerializer.Serialize(envelope);
+            var data = System.Text.Encoding.UTF8.GetBytes(message);
+            
+            // Simulate sending via WebRTC
+            connection.SimulateDataReceived(data);
+        }
+        
+        public List<MemberToken> GetIssuedTokens(string syncshellId)
+        {
+            return _issuedTokens.TryGetValue(syncshellId, out var tokens) ? tokens : new List<MemberToken>();
+        }
+        
+        public ReconnectChallenge GenerateReconnectChallenge(string groupId, string memberPeerId)
+        {
+            return ReconnectChallenge.Create(groupId, memberPeerId);
+        }
+        
+        public bool VerifyReconnectProof(ReconnectChallenge challenge, byte[] signature, string memberPeerId)
+        {
+            if (challenge.IsExpired) return false;
+            if (challenge.MemberPeerId != memberPeerId) return false;
+            
+            try
+            {
+                var challengeData = System.Text.Encoding.UTF8.GetBytes(challenge.Nonce);
+                var publicKeyBytes = Ed25519Identity.ParsePeerId(memberPeerId);
+                return Ed25519Identity.Verify(challengeData, signature, publicKeyBytes);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        
+        public bool AttemptReconnection(MemberToken token, ReconnectChallenge challenge, byte[] signature)
+        {
+            // Verify token is valid
+            if (token.IsExpired) return false;
+            
+            // Verify challenge matches token
+            if (challenge.GroupId != token.GroupId) return false;
+            if (challenge.MemberPeerId != token.MemberPeerId) return false;
+            
+            // Verify proof-of-possession
+            return VerifyReconnectProof(challenge, signature, token.MemberPeerId);
+        }
+        
         public void Dispose()
         {
             if (_disposed) return;
@@ -476,6 +553,7 @@ namespace FyteClub
             }
             _webrtcConnections.Clear();
             _pendingConnections.Clear();
+            _issuedTokens.Clear();
             
             foreach (var session in _sessions.Values)
             {

@@ -47,6 +47,11 @@ namespace FyteClub
             // In mock, we can simulate receiving our own data for testing
             OnDataReceived?.Invoke(data);
         }
+        
+        public void SimulateDataReceived(byte[] data)
+        {
+            OnDataReceived?.Invoke(data);
+        }
 
         public void Dispose()
         {

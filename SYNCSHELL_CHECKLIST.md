@@ -11,7 +11,7 @@ This checklist tracks implementation of the complete syncshell specification for
 - [x] **Ed25519Identity.cs** - Long-term keypair generation and management
 - [x] **Public key exposure** - GetPublicKey() method for signing operations
 - [x] **Private key operations** - SignData() method for envelope signing
-- [ ] **Replace RSA usage** - Update SyncshellIdentity to use Ed25519Identity
+- [x] **Replace RSA usage** - Update SyncshellIdentity to use Ed25519Identity
 - [ ] **Secure key storage** - Windows DPAPI or keychain integration
 - [ ] **Key persistence** - Save/load keys across plugin restarts
 
@@ -22,7 +22,7 @@ This checklist tracks implementation of the complete syncshell specification for
 - [ ] **Token issuance flow** - Host creates tokens for new members
 - [ ] **Token storage** - Secure local storage of received tokens
 - [ ] **Token renewal** - Automatic renewal before expiry
-- [ ] **Proof-of-possession** - Challenge-response authentication
+- [x] **Proof-of-possession** - Challenge-response authentication
 
 ### Revocation System
 - [x] **TombstoneRecord.cs** - Signed revocation records
