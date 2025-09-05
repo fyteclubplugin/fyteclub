@@ -2,10 +2,10 @@
   {
     "Author": "FyteClub Team",
     "Name": "FyteClub",
-    "Punchline": "Share your mods with friends",
-    "Description": "Sync mods between players using Penumbra, Glamourer, and other plugins",
+    "Punchline": "P2P mod sharing with friends",
+    "Description": "Share FFXIV mods automatically using peer-to-peer connections. No servers needed!",
     "InternalName": "FyteClub",
-    "AssemblyVersion": "4.0.1",
+    "AssemblyVersion": "4.1.0",
     "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
     "ApplicableVersion": "any",
     "Tags": [
@@ -22,10 +22,10 @@
     "IconUrl": "",
     "ImageUrls": [],
     "AcceptsFeedback": true,
-    "DownloadLinkInstall": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-Plugin.zip",
-    "DownloadLinkTesting": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-Plugin.zip",
-    "DownloadLinkUpdate": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-Plugin.zip",
+    "DownloadLinkInstall": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-P2P-Plugin.zip",
+    "DownloadLinkTesting": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-P2P-Plugin.zip",
+    "DownloadLinkUpdate": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-P2P-Plugin.zip",
     "DownloadCount": 0,
-    "LastUpdated": "2025-09-01T00:00:00.000Z"
+    "LastUpdated": "2024-12-19T00:00:00.000Z"
   }
 ]
