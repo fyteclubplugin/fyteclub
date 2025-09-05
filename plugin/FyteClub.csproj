@@ -2,17 +2,28 @@
 <Project Sdk="Dalamud.NET.Sdk/13.1.0">
   <PropertyGroup>
     <AssemblyName>FyteClub</AssemblyName>
-    <Version>4.0.1</Version>
+    <Version>4.1.0</Version>
     <PackageProjectUrl>https://github.com/fyteclubplugin/fyteclub</PackageProjectUrl>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
     <!-- Suppress platform-specific warnings since this is a Windows-only FFXIV plugin -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <!-- Enable QUIC support -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- WebRTC P2P - no IP exposure -->
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Remove="src\FyteClubPluginSimple.cs" />
     <Compile Remove="src\FyteClubPluginMinimal.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Removed Microsoft.MixedReality.WebRTC - using native libwebrtc instead -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="src\WebRTCConnection.cs" />
   </ItemGroup>
 
   <ItemGroup>

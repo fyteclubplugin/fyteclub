@@ -1,71 +1,69 @@
-# FyteClub v4.0.0
+# FyteClub v4.1.0 (P2P Development)
 
-Share FFXIV mods with friends automatically. Now with change detection.
+Share FFXIV mods with friends automatically using peer-to-peer technology.
 
 ## What it does
 
-When you're near other players in FFXIV, it syncs your mods. One person hosts a server, everyone connects, mods get shared. The plugin detects when you change your mods and uploads them automatically.
+When you're near other players in FFXIV, it syncs your mods directly between players using WebRTC P2P connections. No servers needed - just create or join a syncshell with friends. The plugin detects when you change your mods and shares them automatically.
 
-## New in v4.0.0
+## New in v4.1.0 (P2P Architecture)
 
-- Automatic change detection: plugin watches for mod changes and uploads them
-- Smart uploading: only uploads when your mods actually change
-- Sync happens within 30 seconds of making changes
-- Fixed duplicate uploads on plugin restart
-- Better performance with optimized mod tracking
+- **Peer-to-peer connections**: No servers needed, direct WebRTC between friends
+- **Privacy-first**: Your home IP is never exposed to other players
+- **Syncshells**: Create private friend groups with invite codes
+- **Zero setup**: No port forwarding, no server hosting required
+- **Automatic change detection**: Mods sync when you change them
 
 ## Features
 
 - Works with Penumbra, Glamourer, CustomizePlus, SimpleHeels, Honorific
-- Automatic mod change detection and uploading
+- Automatic mod change detection and sharing
 - Detects nearby players (50m range)
-- Encrypted mod sharing
-- Self-hosted servers (no central service)
-- Save multiple friend servers
-- Direct IP connections
+- End-to-end encrypted mod sharing
+- Peer-to-peer connections (no servers)
+- Join multiple syncshells (friend groups)
+- WebRTC with NAT traversal
 - Manual sync button when you need it
 
 ## How to use
 
-1. Someone runs the server (see server setup below)
-2. Everyone else connects to that server IP
-3. Play FFXIV together - mods sync automatically
-4. Each friend group can run their own server
+1. Someone creates a syncshell and shares the invite code
+2. Everyone else joins using the invite code
+3. Play FFXIV together - mods sync automatically via P2P
+4. Each friend group has their own private syncshell
 
 ## Use cases
 
 - Share mods with friends without public uploads
-- Keep mod sharing private within your group  
-- Control your own data with self-hosting
+- Keep mod sharing private within your group
+- No server hosting or technical setup required
+- Your home IP stays private (WebRTC handles NAT)
 
 ## How it works
 
 ### Plugin (FFXIV)
 - Scans for nearby players (50m range)
-- Connects to friend servers via HTTP
+- Connects to friends via WebRTC P2P
 - Integrates with mod plugins (Penumbra, Glamourer, etc.)
 - Encrypts mod data before sending
 
-### Server (Self-hosted)
-- Node.js server with SQLite database
-- REST API for mod sharing
-- Stores encrypted mod data
+### P2P Architecture
+- WebRTC data channels for direct communication
+- Syncshells use persistent membership tokens
+- NAT traversal via free STUN servers
+- No central servers or data collection
 
 ## Installation
 
-### Plugin
+### Plugin (P2P Version)
 1. Install XIVLauncher and Dalamud
 2. Download FyteClub-Plugin.zip from releases
 3. Extract to `%APPDATA%\XIVLauncher\installedPlugins\FyteClub\latest\`
 4. Restart FFXIV
 5. Use `/fyteclub` command in-game
 
-### Server
-1. Download FyteClub-Server.zip from releases
-2. Run the appropriate setup script:
-   - PC: `build-pc.bat`
-   - Raspberry Pi: `build-pi.sh` 
-   - AWS: `build-aws.bat`
+### No Server Required!
+The P2P version eliminates the need for server setup. Just install the plugin and join syncshells with friends.
 
 ## Requirements
 
@@ -73,25 +71,23 @@ When you're near other players in FFXIV, it syncs your mods. One person hosts a 
 - Final Fantasy XIV Online
 - XIVLauncher and Dalamud
 - Windows 10/11, macOS, or Linux
+- Internet connection (for WebRTC signaling)
 
-### Server
-- Node.js 18+
-- Works on PC, Raspberry Pi, or cloud servers (AWS, etc.)
+### No Server Requirements
+P2P architecture eliminates server hosting requirements.
 
 ## Configuration
 
-### Adding Friends
+### Joining Syncshells
 Use `/fyteclub` in-game to:
-- Add friend servers (their IP:port)
-- Test connections
-- View who's online
-
-### Server Setup
-The server walks you through setup with a few different options. Easy enough that anyone can get it running.
+- Create new syncshells
+- Join syncshells with invite codes
+- View syncshell members
+- Manage P2P connections
 
 ## Privacy & Security
 
-Your mod data is encrypted with AES-256 before being sent anywhere. Friend servers only see encrypted data - they can't read your actual mods.
+Your mod data is encrypted with AES-256 before being sent anywhere. P2P connections are direct between friends - no servers can see your data. Your home IP is protected by WebRTC NAT traversal.
 
 ## Development
 
@@ -101,13 +97,12 @@ To build from source:
 cd plugin
 dotnet build
 
-# Server  
-cd server
-npm install
-npm start
+# Tests
+cd plugin-tests
+dotnet test
 ```
 
-See DEVELOPMENT_SETUP.md for detailed instructions.
+See P2P_ROADMAP.md for development status and p2p-syncshell-architecture.md for technical details.
 
 ## Support
 

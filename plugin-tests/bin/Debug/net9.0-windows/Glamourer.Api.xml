@@ -1,0 +1,1218 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>Glamourer.Api</name>
+    </assembly>
+    <members>
+        <member name="T:Glamourer.Api.Api.IGlamourerApi">
+            <summary> The full API available. </summary>
+        </member>
+        <member name="P:Glamourer.Api.Api.IGlamourerApi.Designs">
+            <inheritdoc cref="T:Glamourer.Api.Api.IGlamourerApiDesigns"/>
+        </member>
+        <member name="P:Glamourer.Api.Api.IGlamourerApi.Items">
+            <inheritdoc cref="T:Glamourer.Api.Api.IGlamourerApiItems"/>
+        </member>
+        <member name="P:Glamourer.Api.Api.IGlamourerApi.State">
+            <inheritdoc cref="T:Glamourer.Api.Api.IGlamourerApiState"/>
+        </member>
+        <member name="T:Glamourer.Api.Api.IGlamourerApiBase">
+            <summary> Basic API functions. </summary>
+        </member>
+        <member name="P:Glamourer.Api.Api.IGlamourerApiBase.ApiVersion">
+            <summary>
+            Get the current API version of the Glamourer available in this installation.
+            Major version changes indicate incompatibilities, minor version changes are backward-compatible additions.
+            </summary>
+        </member>
+        <member name="T:Glamourer.Api.Api.IGlamourerApiDesigns">
+            <summary> All functions related to Glamourer designs. </summary>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignList">
+            <summary> Obtain a list of all available designs. </summary>
+            <returns> A dictionary of all designs from their GUID to their current display name. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignListExtended">
+            <summary> Obtain a list of all available designs with some display information for the designs. </summary>
+            <returns> A dictionary of all designs from their GUID to their current display name. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetExtendedDesignData(System.Guid)">
+            <summary> Obtain the additional data returned by <seealso cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignListExtended"/> for a specific design. </summary>
+            <param name="designId"> The GUID of the design to query. </param>
+            <returns> The additional data of the design if it exists, empty data otherwise. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiDesigns.ApplyDesign(System.Guid,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Apply an existing design to an actor.  </summary>
+            <param name="designId"> The GUID of the design to apply. </param>
+            <param name="objectIndex"> The game object index of the actor to be manipulated. </param>
+            <param name="key"> A key to unlock or lock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Once, Equipment, Customization, Lock (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.)</param>
+            <returns> DesignNotFound, ActorNotFound, InvalidKey, Success. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiDesigns.ApplyDesignName(System.Guid,System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Apply an existing design to an actor.  </summary>
+            <param name="designId"> The GUID of the design to apply. </param>
+            <param name="playerName"> The name of the players to be manipulated. </param>
+            <param name="key"> A key to unlock or lock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Once, Equipment, Customization, Lock (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.)</param>
+            <returns> DesignNotFound, ActorNotFound, InvalidKey, Success. </returns>
+            /// <remarks>
+            The player does not have to be currently available as long as he has a persisted Glamourer state.<br/>
+            Only players are checked for name equality, no NPCs.<br/>
+            If multiple players of the same name are found, all of them are reverted.<br/>
+            Prefer to use the index-based function unless you need to get the state of someone currently unavailable.
+            </remarks>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiDesigns.AddDesign(System.String,System.String)">
+            <summary> Add a new design and write it to disk. </summary>
+            <param name="designInput"> The content of the design in Base64 or JSON object format. </param>
+            <param name="name"> The name of the design to be created. </param>
+            <returns> CouldNotParse on failure to parse, Success; along with the GUID of the newly created design upon success or a 0-GUID otherwise. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiDesigns.DeleteDesign(System.Guid)">
+            <summary> Delete an existing design. </summary>
+            <param name="designId"> The GUID of the design to be deleted. </param>
+            <returns> Success or NothingDone. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignBase64(System.Guid)">
+            <summary> Obtain the Base64 string of a design. </summary>
+            <param name="designId"> The GUID of the design to query. </param>
+            <returns> A Base64 string of the design data on success or null. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignJObject(System.Guid)">
+            <summary> Obtain a NewtonsoftJson JObject of a design. </summary>
+            <param name="designId"> The GUID of the design to query. </param>
+            <returns> A JObject containing the designs data on success or null. </returns>
+        </member>
+        <member name="T:Glamourer.Api.Api.IGlamourerApiItems">
+            <summary> All functions related to items. </summary>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiItems.SetItem(System.Int32,Glamourer.Api.Enums.ApiEquipSlot,System.UInt64,System.Collections.Generic.IReadOnlyList{System.Byte},System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Set a single item on an actor. </summary>
+            <param name="objectIndex"> The game object index of the actor to be manipulated. </param>
+            <param name="slot"> The slot to apply the item to. </param>
+            <param name="itemId"> The (Custom) ID of the item to apply. </param>
+            <param name="stains"> The IDs of the stains to apply to the item. </param>
+            <param name="key"> A key to unlock or lock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Once (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.)</param>
+            <returns> ItemInvalid, ActorNotFound, ActorNotHuman, InvalidKey, Success. </returns>
+            <remarks> The item ID can be a custom item ID in Glamourer's format for models without an associated item, or a normal game item ID. </remarks>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiItems.SetItemName(System.String,Glamourer.Api.Enums.ApiEquipSlot,System.UInt64,System.Collections.Generic.IReadOnlyList{System.Byte},System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Set a single item on players. </summary>
+            <param name="playerName"> The name of the players to be manipulated. </param>
+            <param name="slot"> The slot to apply the item to. </param>
+            <param name="itemId"> The (Custom) ID of the item to apply. </param>
+            <param name="stains"> The IDs of the stains to apply to the item. </param>
+            <param name="key"> A key to unlock or lock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Once (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.)</param>
+            <returns> ItemInvalid, ActorNotFound, ActorNotHuman, InvalidKey, Success. </returns>
+            <remarks>
+            The item ID can be a custom item ID in Glamourer's format for models without an associated item, or a normal game item ID.<br/>
+            The player does not have to be currently available as long as he has a persisted Glamourer state.<br/>
+            Only players are checked for name equality, no NPCs.<br/>
+            If multiple players of the same name are found, all of them are modified.<br/>
+            Prefer to use the index-based function unless you need to get the state of someone currently unavailable.
+            </remarks>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiItems.SetBonusItem(System.Int32,Glamourer.Api.Enums.ApiBonusSlot,System.UInt64,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Set a single bonus item on an actor. </summary>
+            <param name="objectIndex"> The game object index of the actor to be manipulated. </param>
+            <param name="slot"> The bonus slot to apply the item to. </param>
+            <param name="bonusItemId"> The bonus item sheet ID of the item to apply (including stain). </param>
+            <param name="key"> A key to unlock or lock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Once (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.)</param>
+            <returns> ItemInvalid, ActorNotFound, ActorNotHuman, InvalidKey, Success. </returns>
+            <remarks> The bonus item ID can currently not be a custom item ID in Glamourer's format for models without an associated item. Use 0 to remove the bonus item. </remarks>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiItems.SetBonusItemName(System.String,Glamourer.Api.Enums.ApiBonusSlot,System.UInt64,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Set a single bonus item on an actor. </summary>
+            <param name="playerName"> The game object index of the actor to be manipulated. </param>
+            <param name="slot"> The bonus slot to apply the item to. </param>
+            <param name="bonusItemId"> The bonus item sheet ID of the item to apply (including stain). </param>
+            <param name="key"> A key to unlock or lock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Once (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.)</param>
+            <returns> ItemInvalid, ActorNotFound, ActorNotHuman, InvalidKey, Success. </returns>
+            <remarks>
+            The bonus item ID can currently not be a custom item ID in Glamourer's format for models without an associated item. Use 0 to remove the bonus item. <br/>
+            The player does not have to be currently available as long as he has a persisted Glamourer state.<br/>
+            Only players are checked for name equality, no NPCs.<br/>
+            If multiple players of the same name are found, all of them are modified.<br/>
+            Prefer to use the index-based function unless you need to get the state of someone currently unavailable.
+            </remarks>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiItems.SetMetaState(System.Int32,Glamourer.Api.Enums.MetaFlag,System.Boolean,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Set the defined Meta State flags to the active or inactive state on actor. </summary>
+            <param name="objectIndex"> The game object index of the actor to be manipulated. </param>
+            <param name="types"> The flags defining which meta states to update to the new value. This can be multiple at once. </param>
+            <param name="newValue"> The new value to update to. </param>
+            <param name="key"> A key to unlock or lock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Once (see <see cref="F:Glamourer.Api.Enums.ApplyFlag.Once"/>.)</param>
+            <returns> ItemInvalid, ActorNotFound, ActorNotHuman, InvalidKey, Success. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiItems.SetMetaStateName(System.String,Glamourer.Api.Enums.MetaFlag,System.Boolean,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Set the defined Meta State flags to the active or inactive state on actor (by name) </summary>
+            <param name="playerName"> The name of the players to be manipulated. </param>
+            <param name="types"> The flags defining which meta states to update to the new value. This can be multiple at once. </param>
+            <param name="newValue"> The new value to update to. </param>
+            <param name="key"> A key to unlock or lock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Once (see <see cref="F:Glamourer.Api.Enums.ApplyFlag.Once"/>.)</param>
+            <returns> ItemInvalid, ActorNotFound, ActorNotHuman, InvalidKey, Success. </returns>
+        </member>
+        <member name="T:Glamourer.Api.Api.IGlamourerApiState">
+            <summary> Any functions related to Glamourer's state tracking. </summary>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.GetState(System.Int32,System.UInt32)">
+            <summary> Get the current Glamourer state of an actor. </summary>
+            <param name="objectIndex"> The game object index of the desired actor. </param>
+            <param name="key"> A key to unlock the state if necessary. </param>
+            <returns> ActorNotFound, InvalidKey or Success, and the state on success. </returns>
+            <remarks> The actor does not need to have a prior Glamourer state as long as it can be found. </remarks>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.GetStateName(System.String,System.UInt32)">
+            <summary> Get the current Glamourer state of a player character. </summary>
+            <param name="playerName"> The name of the desired player. </param>
+            <param name="key"> A key to unlock the state if necessary. </param>
+            <returns> ActorNotFound, InvalidKey or Success, and the state on success. </returns>
+            <remarks>
+            The player does not have to be currently available as long as he has a persisted Glamourer state.
+            Only players are checked for name equality, no NPCs.
+            If multiple players of the same name are found, the first is returned.
+            Prefer to use the index-based function unless you need to get the state of someone currently unavailable.
+            </remarks>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.GetStateBase64(System.Int32,System.UInt32)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetState(System.Int32,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.GetStateBase64Name(System.String,System.UInt32)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetStateName(System.String,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.ApplyState(System.Object,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Apply a supplied state to an actor. </summary>
+            <param name="applyState"> The state, which can be either a Glamourer-supplied JObject or a Base64 string. </param>
+            <param name="objectIndex"> The game object index of the actor to be manipulated. </param>
+            <param name="key"> A key to unlock or lock the state if necessary. </param>
+            <param name="flags"> The flags used for the application. Respects Once, Equipment, Customization and Lock (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.) </param>
+            <returns> ActorNotFound, InvalidKey, ActorNotHuman, Success. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.ApplyStateName(System.Object,System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Apply a supplied state to players. </summary>
+            <param name="applyState"> The state, which can be either a Glamourer-supplied JObject or a Base64 string. </param>
+            <param name="playerName"> The name of the player to be manipulated. </param>
+            <param name="key"> A key to unlock or lock the state if necessary. </param>
+            <param name="flags"> The flags used for the application. Respects Once, Equipment, Customization and Lock (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.) </param>
+            <returns> ActorNotFound, InvalidKey, ActorNotHuman, Success. </returns>
+            <remarks>
+            The player does not have to be currently available as long as he has a persisted Glamourer state.<br/>
+            Only players are checked for name equality, no NPCs.<br/>
+            If multiple players of the same name are found, all of them are manipulated.<br/>
+            Prefer to use the index-based function unless you need to get the state of someone currently unavailable.
+            </remarks>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.RevertState(System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Revert the Glamourer state of an actor to Game state. </summary>
+            <param name="objectIndex"> The game object index of the actor to be manipulated. </param>
+            <param name="key"> A key to unlock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Equipment and Customization (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.) </param>
+            <returns> ActorNotFound, InvalidKey, Success, NothingDone. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.RevertStateName(System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Revert the Glamourer state of players to game state. </summary>
+            <param name="playerName"> The name of the players to be reverted. </param>
+            <param name="key"> A key to unlock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Equipment and Customization (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.) </param>
+            <returns> ActorNotFound, InvalidKey, Success, NothingDone. </returns>
+            /// <remarks>
+            The player does not have to be currently available as long as he has a persisted Glamourer state.<br/>
+            Only players are checked for name equality, no NPCs.<br/>
+            If multiple players of the same name are found, all of them are reverted.<br/>
+            Prefer to use the index-based function unless you need to get the state of someone currently unavailable.
+            </remarks>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.UnlockState(System.Int32,System.UInt32)">
+            <summary> Unlock the Glamourer state of an actor with a key. </summary>
+            <param name="objectIndex"> The game object index of the actor to be manipulated. </param>
+            <param name="key"> A key to unlock the state. </param>
+            <returns> ActorNotFound, InvalidKey, Success, NothingDone. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.UnlockStateName(System.String,System.UInt32)">
+            <summary> Unlock the Glamourer state of players with a key. </summary>
+            <param name="playerName"> The name of the players to be unlocked. </param>
+            <param name="key"> A key to unlock the state. </param>
+            <returns> InvalidKey, Success, NothingDone. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.UnlockAll(System.UInt32)">
+            <summary> Unlock all active glamourer states with a key. </summary>
+            <param name="key"> The key to unlock states with. </param>
+            <returns> The number of unlocked states. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.RevertToAutomation(System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Revert the Glamourer state of an actor to automation state. </summary>
+            <param name="objectIndex"> The game object index of the actor to be manipulated. </param>
+            <param name="key"> A key to unlock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Once and Lock (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.) </param>
+            <returns> ActorNotFound, InvalidKey, Success, NothingDone. </returns>
+        </member>
+        <member name="M:Glamourer.Api.Api.IGlamourerApiState.RevertToAutomationName(System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <summary> Revert the Glamourer state of players to automation state. </summary>
+            <param name="playerName"> The name of the players to be reverted. </param>
+            <param name="key"> A key to unlock the state if necessary. </param>
+            <param name="flags"> The flags used for the reversion. Respects Once and Lock (see <see cref="T:Glamourer.Api.Enums.ApplyFlag"/>.) </param>
+            <returns> ActorNotFound, InvalidKey, Success, NothingDone. </returns>
+            /// <remarks>
+            The player does not have to be currently available as long as he has a persisted Glamourer state.<br/>
+            Only players are checked for name equality, no NPCs.<br/>
+            If multiple players of the same name are found, all of them are reverted.<br/>
+            Prefer to use the index-based function unless you need to get the state of someone currently unavailable.
+            </remarks>
+        </member>
+        <member name="E:Glamourer.Api.Api.IGlamourerApiState.StateChanged">
+            <summary> Invoked with the game object pointer (if available) whenever an actors tracked state changes. </summary>
+        </member>
+        <member name="E:Glamourer.Api.Api.IGlamourerApiState.StateChangedWithType">
+            <summary> Invoked with the game object pointer (if available) whenever an actors tracked state changes, with the type of change. </summary>
+        </member>
+        <member name="E:Glamourer.Api.Api.IGlamourerApiState.StateFinalized">
+            <summary> Invoked with the game object pointer (if available) whenever an actors tracked state finalizes a grouped change consisting of multiple smaller changes. </summary>
+        </member>
+        <member name="E:Glamourer.Api.Api.IGlamourerApiState.GPoseChanged">
+            <summary> Invoked when the player enters or leaves GPose (true => entered GPose, false => left GPose). </summary>
+        </member>
+        <member name="T:Glamourer.Api.Enums.ApiBonusSlot">
+            <summary> Bonus item slots restricted to API-relevant slots. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiBonusSlot.Unknown">
+            <summary> No slot. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiBonusSlot.Glasses">
+            <summary> The Glasses slot. </summary>
+        </member>
+        <member name="T:Glamourer.Api.Enums.ApiEquipSlot">
+            <summary> Equip slots restricted to API-relevant slots, but compatible with GameData.EquipSlots. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.Unknown">
+            <summary> No slot. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.MainHand">
+            <summary> Mainhand, also used for both-handed weapons. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.OffHand">
+            <summary> Offhand, used for shields or if you want to apply the offhand component of certain weapons. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.Head">
+            <summary> Head. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.Body">
+            <summary> Body. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.Hands">
+            <summary> Hands. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.Legs">
+            <summary> Legs. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.Feet">
+            <summary> Feet. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.Ears">
+            <summary> Ears. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.Neck">
+            <summary> Neck. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.Wrists">
+            <summary> Wrists. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.RFinger">
+            <summary> Right Finger. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApiEquipSlot.LFinger">
+            <summary> Left Finger. </summary>
+            <remarks> Not officially existing, means "weapon could be equipped in either hand" for the game. </remarks>
+        </member>
+        <member name="T:Glamourer.Api.Enums.ApplyFlag">
+            <summary> Application flags that can be used in different situations. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApplyFlag.Once">
+            <summary> Apply the selected manipulation only once, without forcing the state into automation. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApplyFlag.Equipment">
+            <summary> Apply the selected manipulation on the equipment (might be more or less supported). </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApplyFlag.Customization">
+            <summary> Apply the selected manipulation on the customizations (might be more or less supported). </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApplyFlag.Lock">
+            <summary> Lock the state with the given key after applying the selected manipulation </summary>
+        </member>
+        <member name="T:Glamourer.Api.Enums.ApplyFlagEx">
+            <summary> Extensions for apply flags. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApplyFlagEx.DesignDefault">
+            <summary> The default application flags for design-based manipulations. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApplyFlagEx.StateDefault">
+            <summary> The default application flags for state-based manipulations. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.ApplyFlagEx.RevertDefault">
+            <summary> The default application flags for reverse manipulations. </summary>
+        </member>
+        <member name="T:Glamourer.Api.Enums.GlamourerApiEc">
+            <summary> Return codes for API functions. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.GlamourerApiEc.Success">
+            <summary> The function succeeded. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.GlamourerApiEc.NothingDone">
+            <summary> The function did not encounter a problem, but also did not do anything. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.GlamourerApiEc.ActorNotFound">
+            <summary> The requested actor was not found. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.GlamourerApiEc.ActorNotHuman">
+            <summary> The requested actor was not human, but should have been. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.GlamourerApiEc.DesignNotFound">
+            <summary> The requested design was not found. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.GlamourerApiEc.ItemInvalid">
+            <summary> The requested item was not found or could not be applied to the requested slot. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.GlamourerApiEc.InvalidKey">
+            <summary> The state of an actor could not be manipulated because it was locked and the provided key could not unlock it. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.GlamourerApiEc.InvalidState">
+            <summary> The provided object could not be converted into a valid Glamourer state to apply. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.GlamourerApiEc.CouldNotParse">
+            <summary> The provided design input could not be parsed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.GlamourerApiEc.UnknownError">
+            <summary> An unknown error occured. </summary>
+        </member>
+        <member name="T:Glamourer.Api.Enums.MetaFlag">
+            <summary> Application flags for setting the meta state of an actor. </summary>
+        </member>
+        <member name="T:Glamourer.Api.Enums.StateChangeType">
+            <summary> What type of information changed in a state. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.Model">
+            <summary> A characters saved state had the model id changed. This means everything may have changed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.EntireCustomize">
+            <summary> A characters saved state had multiple customization values changed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.Customize">
+            <summary> A characters saved state had a customization value changed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.Equip">
+            <summary> A characters saved state had an equipment piece changed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.Weapon">
+            <summary> A characters saved state had its weapons changed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.Stains">
+            <summary> A characters saved state had a stain changed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.Crest">
+            <summary> A characters saved state had a crest visibility changed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.Parameter">
+            <summary> A characters saved state had its customize parameter changed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.MaterialValue">
+            <summary> A characters saved state had a material color table value changed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.Design">
+            <summary> A characters saved state had a design applied. This means everything may have changed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.Reset">
+            <summary> A characters saved state had its state reset to its game values. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.Other">
+            <summary> A characters saved state had a meta toggle changed. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.Reapply">
+            <summary> A characters state was reapplied. Data is null. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateChangeType.BonusItem">
+            <summary> A characters saved state had a bonus item changed. </summary>
+        </member>
+        <member name="T:Glamourer.Api.Enums.StateFinalizationType">
+            <summary> What type of Glamourer process was performed on the actors state to update it. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateFinalizationType.ModelChange">
+            <summary> A characters saved state had the model id altered. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateFinalizationType.DesignApplied">
+            <summary> A singular Design was applied to an actors state. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateFinalizationType.Revert">
+            <summary> A characters saved state had been reset to game values. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateFinalizationType.RevertCustomize">
+            <summary> A characters saved state had only its customization data reset to game state. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateFinalizationType.RevertEquipment">
+            <summary> A characters saved state had only its equipment data reset to game state. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateFinalizationType.RevertAdvanced">
+            <summary> A characters saved state had its advanced values reverted to game state. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateFinalizationType.RevertAutomation">
+            <summary> A characters saved state was reverted to automation state on top of their game state </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateFinalizationType.Reapply">
+            <summary> A characters saved state had a generic reapply as a single operation. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateFinalizationType.ReapplyAutomation">
+            <summary> A characters saved state had their automation state reapplied over their existing state. </summary>
+        </member>
+        <member name="F:Glamourer.Api.Enums.StateFinalizationType.Gearset">
+            <summary> A characters save state finished applying all updated slots for game state on gearset change or initial load. </summary>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.ActionSubscriber">
+            <summary>
+            Specialized subscriber only allowing to invoke actions.
+            </summary>
+        </member>
+        <member name="P:Glamourer.Api.Helpers.ActionSubscriber.Valid">
+            <summary> Whether the subscriber could successfully be created. </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.ActionSubscriber.Invoke">
+            <summary> Invoke the action. See the source of the subscriber for details.</summary>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.ActionSubscriber`1">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.ActionSubscriber"/> 
+        </member>
+        <member name="P:Glamourer.Api.Helpers.ActionSubscriber`1.Valid">
+            <summary> Whether the subscriber could successfully be created. </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.ActionSubscriber`1.Invoke(`0)">
+            <summary> Invoke the action. See the source of the subscriber for details.</summary>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.ActionSubscriber`2">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.ActionSubscriber"/> 
+        </member>
+        <member name="P:Glamourer.Api.Helpers.ActionSubscriber`2.Valid">
+            <inheritdoc cref="P:Glamourer.Api.Helpers.ActionSubscriber`1.Valid"/> 
+        </member>
+        <member name="M:Glamourer.Api.Helpers.ActionSubscriber`2.Invoke(`0,`1)">
+            <inheritdoc cref="M:Glamourer.Api.Helpers.ActionSubscriber.Invoke"/> 
+        </member>
+        <member name="T:Glamourer.Api.Helpers.ActionSubscriber`3">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.ActionSubscriber"/> 
+        </member>
+        <member name="P:Glamourer.Api.Helpers.ActionSubscriber`3.Valid">
+            <inheritdoc cref="P:Glamourer.Api.Helpers.ActionSubscriber`1.Valid"/> 
+        </member>
+        <member name="M:Glamourer.Api.Helpers.ActionSubscriber`3.Invoke(`0,`1,`2)">
+            <inheritdoc cref="M:Glamourer.Api.Helpers.ActionSubscriber.Invoke"/> 
+        </member>
+        <member name="T:Glamourer.Api.Helpers.EventProvider">
+            <summary>
+            Specialized disposable Provider for Events.<para />
+            Will execute the unsubscriber action on dispose if any is provided.<para />
+            Can only be invoked and disposed.
+            </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.EventProvider.Invoke">
+            <summary> Invoke the event.</summary>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.EventProvider`1">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.EventProvider"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.EventProvider`1.Invoke(`0)">
+            <inheritdoc cref="M:Glamourer.Api.Helpers.EventProvider.Invoke"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.EventProvider`2">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.EventProvider"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.EventProvider`2.Invoke(`0,`1)">
+            <inheritdoc cref="M:Glamourer.Api.Helpers.EventProvider.Invoke"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.EventSubscriber">
+            <summary>
+            Specialized disposable Subscriber for Events.<para />
+            Subscriptions are wrapped to be individually exception-safe.<para/>
+            Can be enabled and disabled.<para/>
+            </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.EventSubscriber.Enable">
+            <summary>
+            Enable all currently subscribed actions registered with this EventSubscriber.
+            Does nothing if it is already enabled.
+            </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.EventSubscriber.Disable">
+            <summary>
+            Disable all subscribed actions registered with this EventSubscriber.
+            Does nothing if it is already disabled.
+            Does not forget the actions, only disables them.
+            </summary>
+        </member>
+        <member name="E:Glamourer.Api.Helpers.EventSubscriber.Event">
+            <summary>
+            Add or remove an action to the IPC event, if it is valid.
+            </summary>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.EventSubscriber`1">
+            <summary><inheritdoc cref="T:Glamourer.Api.Helpers.EventSubscriber"/> </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.EventSubscriber`1.Enable">
+            <summary><inheritdoc cref="M:Glamourer.Api.Helpers.EventSubscriber.Enable"/> </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.EventSubscriber`1.Disable">
+            <summary><inheritdoc cref="M:Glamourer.Api.Helpers.EventSubscriber.Disable"/> </summary>
+        </member>
+        <member name="E:Glamourer.Api.Helpers.EventSubscriber`1.Event">
+            <summary><inheritdoc cref="E:Glamourer.Api.Helpers.EventSubscriber.Event"/> </summary>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.EventSubscriber`2">
+            <summary><inheritdoc cref="T:Glamourer.Api.Helpers.EventSubscriber"/> </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.EventSubscriber`2.Enable">
+            <summary><inheritdoc cref="M:Glamourer.Api.Helpers.EventSubscriber.Enable"/> </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.EventSubscriber`2.Disable">
+            <summary><inheritdoc cref="M:Glamourer.Api.Helpers.EventSubscriber.Disable"/> </summary>
+        </member>
+        <member name="E:Glamourer.Api.Helpers.EventSubscriber`2.Event">
+            <summary><inheritdoc cref="E:Glamourer.Api.Helpers.EventSubscriber.Event"/> </summary>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.EventSubscriber`3">
+            <summary><inheritdoc cref="T:Glamourer.Api.Helpers.EventSubscriber"/> </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.EventSubscriber`3.Enable">
+            <summary><inheritdoc cref="M:Glamourer.Api.Helpers.EventSubscriber.Enable"/> </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.EventSubscriber`3.Disable">
+            <summary><inheritdoc cref="M:Glamourer.Api.Helpers.EventSubscriber.Disable"/> </summary>
+        </member>
+        <member name="E:Glamourer.Api.Helpers.EventSubscriber`3.Event">
+            <summary><inheritdoc cref="E:Glamourer.Api.Helpers.EventSubscriber.Event"/> </summary>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncProvider`1">
+            <summary>
+            Specialized disposable Provider for Funcs.
+            </summary>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncProvider`2">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncProvider`1"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncProvider`3">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncProvider`1"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncProvider`4">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncProvider`1"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncProvider`5">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncProvider`1"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncProvider`6">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncProvider`1"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncProvider`7">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncProvider`1"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncSubscriber`1">
+            <summary>
+            Specialized subscriber only allowing to invoke functions with a return.
+            </summary>
+        </member>
+        <member name="P:Glamourer.Api.Helpers.FuncSubscriber`1.Valid">
+            <summary> Whether the subscriber could successfully be created. </summary>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`1.#ctor(Dalamud.Plugin.IDalamudPluginInterface,System.String)">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`1.Invoke">
+            <summary> Invoke the function. See the source of the subscriber for details.</summary>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncSubscriber`2">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="P:Glamourer.Api.Helpers.FuncSubscriber`2.Valid">
+            <inheritdoc cref="P:Glamourer.Api.Helpers.FuncSubscriber`1.Valid"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`2.#ctor(Dalamud.Plugin.IDalamudPluginInterface,System.String)">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`2.Invoke(`0)">
+            <inheritdoc cref="M:Glamourer.Api.Helpers.FuncSubscriber`1.Invoke"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncSubscriber`3">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="P:Glamourer.Api.Helpers.FuncSubscriber`3.Valid">
+            <inheritdoc cref="P:Glamourer.Api.Helpers.FuncSubscriber`1.Valid"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`3.#ctor(Dalamud.Plugin.IDalamudPluginInterface,System.String)">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`3.Invoke(`0,`1)">
+            <inheritdoc cref="M:Glamourer.Api.Helpers.FuncSubscriber`1.Invoke"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncSubscriber`4">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="P:Glamourer.Api.Helpers.FuncSubscriber`4.Valid">
+            <inheritdoc cref="P:Glamourer.Api.Helpers.FuncSubscriber`1.Valid"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`4.#ctor(Dalamud.Plugin.IDalamudPluginInterface,System.String)">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`4.Invoke(`0,`1,`2)">
+            <inheritdoc cref="M:Glamourer.Api.Helpers.FuncSubscriber`1.Invoke"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncSubscriber`5">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="P:Glamourer.Api.Helpers.FuncSubscriber`5.Valid">
+            <inheritdoc cref="P:Glamourer.Api.Helpers.FuncSubscriber`1.Valid"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`5.#ctor(Dalamud.Plugin.IDalamudPluginInterface,System.String)">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`5.Invoke(`0,`1,`2,`3)">
+            <inheritdoc cref="M:Glamourer.Api.Helpers.FuncSubscriber`1.Invoke"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncSubscriber`6">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="P:Glamourer.Api.Helpers.FuncSubscriber`6.Valid">
+            <inheritdoc cref="P:Glamourer.Api.Helpers.FuncSubscriber`1.Valid"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`6.#ctor(Dalamud.Plugin.IDalamudPluginInterface,System.String)">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`6.Invoke(`0,`1,`2,`3,`4)">
+            <inheritdoc cref="M:Glamourer.Api.Helpers.FuncSubscriber`1.Invoke"/>
+        </member>
+        <member name="T:Glamourer.Api.Helpers.FuncSubscriber`7">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="P:Glamourer.Api.Helpers.FuncSubscriber`7.Valid">
+            <inheritdoc cref="P:Glamourer.Api.Helpers.FuncSubscriber`1.Valid"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`7.#ctor(Dalamud.Plugin.IDalamudPluginInterface,System.String)">
+            <inheritdoc cref="T:Glamourer.Api.Helpers.FuncSubscriber`1"/>
+        </member>
+        <member name="M:Glamourer.Api.Helpers.FuncSubscriber`7.Invoke(`0,`1,`2,`3,`4,`5)">
+            <inheritdoc cref="M:Glamourer.Api.Helpers.FuncSubscriber`1.Invoke"/>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.GetDesignList">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignList"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignList.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignList"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.GetDesignList.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignList.Invoke">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignList"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignList.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiDesigns)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.GetDesignListExtended">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignListExtended"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignListExtended.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignListExtended"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.GetDesignListExtended.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignListExtended.Invoke">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignList"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignListExtended.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiDesigns)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.GetExtendedDesignData">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetExtendedDesignData(System.Guid)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetExtendedDesignData.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetExtendedDesignData(System.Guid)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.GetExtendedDesignData.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetExtendedDesignData.Invoke(System.Guid)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetExtendedDesignData(System.Guid)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetExtendedDesignData.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiDesigns)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.ApplyDesign">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.ApplyDesign(System.Guid,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyDesign.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.ApplyDesign(System.Guid,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.ApplyDesign.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyDesign.Invoke(System.Guid,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.ApplyDesign(System.Guid,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyDesign.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiDesigns)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.ApplyDesignName">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.ApplyDesignName(System.Guid,System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyDesignName.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.ApplyDesignName(System.Guid,System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.ApplyDesignName.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyDesignName.Invoke(System.Guid,System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.ApplyDesignName(System.Guid,System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyDesignName.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiDesigns)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.AddDesign">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.AddDesign(System.String,System.String)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.AddDesign.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.AddDesign(System.String,System.String)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.AddDesign.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.AddDesign.Invoke(System.String,System.String,System.Guid@)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.AddDesign(System.String,System.String)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.AddDesign.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiDesigns)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.DeleteDesign">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.DeleteDesign(System.Guid)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.DeleteDesign.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.DeleteDesign(System.Guid)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.DeleteDesign.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.DeleteDesign.Invoke(System.Guid)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.DeleteDesign(System.Guid)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.DeleteDesign.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiDesigns)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.GetDesignBase64">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignBase64(System.Guid)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignBase64.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignBase64(System.Guid)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.GetDesignBase64.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignBase64.Invoke(System.Guid)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignBase64(System.Guid)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignBase64.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiDesigns)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.GetDesignJObject">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignJObject(System.Guid)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignJObject.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignJObject(System.Guid)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.GetDesignJObject.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignJObject.Invoke(System.Guid)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiDesigns.GetDesignJObject(System.Guid)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetDesignJObject.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiDesigns)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.SetItem">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetItem(System.Int32,Glamourer.Api.Enums.ApiEquipSlot,System.UInt64,System.Collections.Generic.IReadOnlyList{System.Byte},System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetItem.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetItem(System.Int32,Glamourer.Api.Enums.ApiEquipSlot,System.UInt64,System.Collections.Generic.IReadOnlyList{System.Byte},System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.SetItem.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetItem.Invoke(System.Int32,Glamourer.Api.Enums.ApiEquipSlot,System.UInt64,System.Collections.Generic.IReadOnlyList{System.Byte},System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetItem(System.Int32,Glamourer.Api.Enums.ApiEquipSlot,System.UInt64,System.Collections.Generic.IReadOnlyList{System.Byte},System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetItem.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiItems)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.SetItemName">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetItemName(System.String,Glamourer.Api.Enums.ApiEquipSlot,System.UInt64,System.Collections.Generic.IReadOnlyList{System.Byte},System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetItemName.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetItemName(System.String,Glamourer.Api.Enums.ApiEquipSlot,System.UInt64,System.Collections.Generic.IReadOnlyList{System.Byte},System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.SetItemName.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetItemName.Invoke(System.String,Glamourer.Api.Enums.ApiEquipSlot,System.UInt64,System.Collections.Generic.IReadOnlyList{System.Byte},System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetItem(System.Int32,Glamourer.Api.Enums.ApiEquipSlot,System.UInt64,System.Collections.Generic.IReadOnlyList{System.Byte},System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetItemName.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiItems)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.SetBonusItem">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetBonusItem(System.Int32,Glamourer.Api.Enums.ApiBonusSlot,System.UInt64,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetBonusItem.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetBonusItem(System.Int32,Glamourer.Api.Enums.ApiBonusSlot,System.UInt64,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.SetBonusItem.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetBonusItem.Invoke(System.Int32,Glamourer.Api.Enums.ApiBonusSlot,System.UInt64,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetBonusItem(System.Int32,Glamourer.Api.Enums.ApiBonusSlot,System.UInt64,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetBonusItem.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiItems)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.SetBonusItemName">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetBonusItemName(System.String,Glamourer.Api.Enums.ApiBonusSlot,System.UInt64,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetBonusItemName.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetBonusItemName(System.String,Glamourer.Api.Enums.ApiBonusSlot,System.UInt64,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.SetBonusItemName.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetBonusItemName.Invoke(System.String,Glamourer.Api.Enums.ApiBonusSlot,System.UInt64,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetBonusItemName(System.String,Glamourer.Api.Enums.ApiBonusSlot,System.UInt64,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetBonusItemName.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiItems)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.SetMetaState">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetMetaState(System.Int32,Glamourer.Api.Enums.MetaFlag,System.Boolean,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetMetaState.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetMetaState(System.Int32,Glamourer.Api.Enums.MetaFlag,System.Boolean,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.SetMetaState.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetMetaState.Invoke(System.Int32,Glamourer.Api.Enums.MetaFlag,System.Boolean,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetMetaState(System.Int32,Glamourer.Api.Enums.MetaFlag,System.Boolean,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetMetaState.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiItems)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.SetMetaStateName">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetMetaStateName(System.String,Glamourer.Api.Enums.MetaFlag,System.Boolean,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetMetaStateName.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetMetaStateName(System.String,Glamourer.Api.Enums.MetaFlag,System.Boolean,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.SetMetaStateName.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetMetaStateName.Invoke(System.String,Glamourer.Api.Enums.MetaFlag,System.Boolean,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiItems.SetMetaStateName(System.String,Glamourer.Api.Enums.MetaFlag,System.Boolean,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.SetMetaStateName.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiItems)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.ApiVersion">
+            <inheritdoc cref="P:Glamourer.Api.Api.IGlamourerApiBase.ApiVersion"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApiVersion.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="P:Glamourer.Api.Api.IGlamourerApiBase.ApiVersion"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.ApiVersion.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApiVersion.Invoke">
+            <inheritdoc cref="P:Glamourer.Api.Api.IGlamourerApiBase.ApiVersion"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApiVersion.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiBase)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.Initialized">
+            <summary> Triggered when the Glamourer API is initialized and ready. </summary>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.Initialized.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.Initialized.Subscriber(Dalamud.Plugin.IDalamudPluginInterface,System.Action[])">
+            <summary> Create a new event subscriber. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.Initialized.Provider(Dalamud.Plugin.IDalamudPluginInterface)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.Disposed">
+            <summary> Triggered when the Glamourer API is fully disposed and unavailable. </summary>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.Disposed.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.Disposed.Subscriber(Dalamud.Plugin.IDalamudPluginInterface,System.Action[])">
+            <summary> Create a new event subscriber. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.Disposed.Provider(Dalamud.Plugin.IDalamudPluginInterface)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.GetState">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetState(System.Int32,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetState.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetState(System.Int32,System.UInt32)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.GetState.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetState.Invoke(System.Int32,System.UInt32)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetState(System.Int32,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetState.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.GetStateName">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetStateName(System.String,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetStateName.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetStateName(System.String,System.UInt32)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.GetStateName.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetStateName.Invoke(System.String,System.UInt32)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetStateName(System.String,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetStateName.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.GetStateBase64">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetStateBase64(System.Int32,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetStateBase64.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetStateBase64(System.Int32,System.UInt32)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.GetStateBase64.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetStateBase64.Invoke(System.Int32,System.UInt32)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetStateBase64(System.Int32,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetStateBase64.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.GetStateBase64Name">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetStateBase64Name(System.String,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetStateBase64Name.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetStateBase64Name(System.String,System.UInt32)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.GetStateBase64Name.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetStateBase64Name.Invoke(System.String,System.UInt32)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.GetStateBase64Name(System.String,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GetStateBase64Name.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.ApplyState">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.ApplyState(System.Object,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyState.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.ApplyState(System.Object,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.ApplyState.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyState.Invoke(Newtonsoft.Json.Linq.JObject,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.ApplyState(System.Object,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyState.Invoke(System.String,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.ApplyState(System.Object,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyState.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.ApplyStateName">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.ApplyStateName(System.Object,System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyStateName.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.ApplyStateName(System.Object,System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.ApplyStateName.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyStateName.Invoke(Newtonsoft.Json.Linq.JObject,System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.ApplyState(System.Object,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyStateName.Invoke(System.String,System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.ApplyState(System.Object,System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.ApplyStateName.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.RevertState">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertState(System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertState.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertState(System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.RevertState.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertState.Invoke(System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertState(System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertState.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.RevertStateName">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertStateName(System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertStateName.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertStateName(System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.RevertStateName.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertStateName.Invoke(System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertStateName(System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertStateName.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.UnlockState">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.UnlockState(System.Int32,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.UnlockState.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.UnlockState(System.Int32,System.UInt32)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.UnlockState.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.UnlockState.Invoke(System.Int32,System.UInt32)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.UnlockState(System.Int32,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.UnlockState.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.UnlockStateName">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.UnlockStateName(System.String,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.UnlockStateName.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.UnlockStateName(System.String,System.UInt32)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.UnlockStateName.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.UnlockStateName.Invoke(System.String,System.UInt32)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.UnlockStateName(System.String,System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.UnlockStateName.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.UnlockAll">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.UnlockAll(System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.UnlockAll.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.UnlockAll(System.UInt32)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.UnlockAll.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.UnlockAll.Invoke(System.UInt32)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.UnlockAll(System.UInt32)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.UnlockAll.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.RevertToAutomation">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertToAutomation(System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertToAutomation.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertToAutomation(System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.RevertToAutomation.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertToAutomation.Invoke(System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertToAutomation(System.Int32,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertToAutomation.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.RevertToAutomationName">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertToAutomationName(System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertToAutomationName.#ctor(Dalamud.Plugin.IDalamudPluginInterface)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertToAutomationName(System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.RevertToAutomationName.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertToAutomationName.Invoke(System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)">
+            <inheritdoc cref="M:Glamourer.Api.Api.IGlamourerApiState.RevertToAutomationName(System.String,System.UInt32,Glamourer.Api.Enums.ApplyFlag)"/>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.RevertToAutomationName.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.StateChanged">
+            <inheritdoc cref="E:Glamourer.Api.Api.IGlamourerApiState.StateChanged" />
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.StateChanged.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.StateChanged.Subscriber(Dalamud.Plugin.IDalamudPluginInterface,System.Action{System.IntPtr}[])">
+            <summary> Create a new event subscriber. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.StateChanged.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.StateChangedWithType">
+            <inheritdoc cref="E:Glamourer.Api.Api.IGlamourerApiState.StateChangedWithType" />
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.StateChangedWithType.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.StateChangedWithType.Subscriber(Dalamud.Plugin.IDalamudPluginInterface,System.Action{System.IntPtr,Glamourer.Api.Enums.StateChangeType}[])">
+            <summary> Create a new event subscriber. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.StateChangedWithType.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.StateFinalized">
+            <inheritdoc cref="E:Glamourer.Api.Api.IGlamourerApiState.StateFinalized" />
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.StateFinalized.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.StateFinalized.Subscriber(Dalamud.Plugin.IDalamudPluginInterface,System.Action{System.IntPtr,Glamourer.Api.Enums.StateFinalizationType}[])">
+            <summary> Create a new event subscriber. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.StateFinalized.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+        <member name="T:Glamourer.Api.IpcSubscribers.GPoseChanged">
+            <inheritdoc cref="E:Glamourer.Api.Api.IGlamourerApiState.GPoseChanged" />
+        </member>
+        <member name="F:Glamourer.Api.IpcSubscribers.GPoseChanged.Label">
+            <summary> The label. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GPoseChanged.Subscriber(Dalamud.Plugin.IDalamudPluginInterface,System.Action{System.Boolean}[])">
+            <summary> Create a new event subscriber. </summary>
+        </member>
+        <member name="M:Glamourer.Api.IpcSubscribers.GPoseChanged.Provider(Dalamud.Plugin.IDalamudPluginInterface,Glamourer.Api.Api.IGlamourerApiState)">
+            <summary> Create a provider. </summary>
+        </member>
+    </members>
+</doc>

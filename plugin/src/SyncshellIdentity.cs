@@ -1,0 +1,79 @@
+using System;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace FyteClub
+{
+    public class SyncshellIdentity
+    {
+        public string Name { get; }
+        public byte[] MasterPasswordHash { get; }
+        public byte[] EncryptionKey { get; }
+        public byte[] PublicKey { get; }
+        public byte[] PrivateKey { get; }
+        public Ed25519Identity Ed25519Identity { get; }
+
+        public SyncshellIdentity(string name, string masterPassword)
+        {
+            Name = name;
+            MasterPasswordHash = SHA256.HashData(Encoding.UTF8.GetBytes(masterPassword));
+            EncryptionKey = DeriveEncryptionKey(name, masterPassword);
+            
+            // Generate Ed25519 identity
+            Ed25519Identity = new Ed25519Identity();
+            
+            // Legacy RSA support
+            using var rsa = RSA.Create(2048);
+            PublicKey = rsa.ExportRSAPublicKey();
+            PrivateKey = rsa.ExportRSAPrivateKey();
+        }
+        
+        public SyncshellIdentity()
+        {
+            Name = "DefaultSyncshell";
+            var defaultPassword = "default";
+            MasterPasswordHash = SHA256.HashData(Encoding.UTF8.GetBytes(defaultPassword));
+            EncryptionKey = DeriveEncryptionKey(Name, defaultPassword);
+            
+            // Generate Ed25519 identity
+            Ed25519Identity = new Ed25519Identity();
+            
+            // Legacy RSA support
+            using var rsa = RSA.Create(2048);
+            PublicKey = rsa.ExportRSAPublicKey();
+            PrivateKey = rsa.ExportRSAPrivateKey();
+        }
+
+        private static byte[] DeriveEncryptionKey(string name, string password)
+        {
+            var salt = Encoding.UTF8.GetBytes($"fyteclub_syncshell_{name}");
+            return Rfc2898DeriveBytes.Pbkdf2(password, salt, 100000, HashAlgorithmName.SHA256, 32);
+        }
+
+        public string GetSyncshellHash()
+        {
+            var combined = Encoding.UTF8.GetBytes($"{Name}_{Convert.ToBase64String(MasterPasswordHash)}");
+            return Convert.ToHexString(SHA256.HashData(combined)).ToLower();
+        }
+        
+        public string GetPublicKey() => Ed25519Identity.PeerId;
+        
+        public byte[] SignData(byte[] data) => Ed25519Identity.SignData(data);
+        
+        public bool VerifySignature(byte[] data, byte[] signature, string publicKeyString) =>
+            Ed25519Identity.VerifySignature(data, signature, publicKeyString);
+        
+        public string GenerateGroupId(string groupName)
+        {
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"{groupName}:{Ed25519Identity.PeerId}"));
+            var base32 = Convert.ToBase64String(hash).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+            return $"b32:{base32}";
+        }
+        
+        public byte[] DeriveEncryptionKey(string groupId)
+        {
+            var salt = Encoding.UTF8.GetBytes($"fyteclub_syncshell_{groupId}_{Ed25519Identity.PeerId}");
+            return Rfc2898DeriveBytes.Pbkdf2(groupId, salt, 100000, HashAlgorithmName.SHA256, 32);
+        }
+    }
+}
