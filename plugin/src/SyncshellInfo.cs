@@ -16,6 +16,7 @@ namespace FyteClub
         public bool IsActive { get; set; } = true;
         public int MemberCount { get; set; }
         public List<string> Members { get; set; } = new();
+        public string Status { get; set; } = "";
         
         public SyncshellInfo() { }
         

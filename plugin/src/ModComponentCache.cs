@@ -75,7 +75,7 @@ namespace FyteClub
                 {
                     foreach (var modPath in playerInfo.Mods)
                     {
-                        var componentHash = await StoreModComponent("penumbra", modPath, null);
+                        var componentHash = await StoreModComponentInternal("penumbra", modPath, null);
                         if (!string.IsNullOrEmpty(componentHash))
                         {
                             recipe.ComponentReferences.Add($"P:{componentHash}");
@@ -86,7 +86,7 @@ namespace FyteClub
                 // Store Glamourer design as a component
                 if (!string.IsNullOrEmpty(playerInfo.GlamourerDesign))
                 {
-                    var componentHash = await StoreModComponent("glamourer", "design", playerInfo.GlamourerDesign);
+                    var componentHash = await StoreModComponentInternal("glamourer", "design", playerInfo.GlamourerDesign);
                     if (!string.IsNullOrEmpty(componentHash))
                     {
                         recipe.ComponentReferences.Add($"G:{componentHash}");
@@ -96,7 +96,7 @@ namespace FyteClub
                 // Store Customize+ profile as a component
                 if (!string.IsNullOrEmpty(playerInfo.CustomizePlusProfile))
                 {
-                    var componentHash = await StoreModComponent("customize+", "profile", playerInfo.CustomizePlusProfile);
+                    var componentHash = await StoreModComponentInternal("customize+", "profile", playerInfo.CustomizePlusProfile);
                     if (!string.IsNullOrEmpty(componentHash))
                     {
                         recipe.ComponentReferences.Add($"C:{componentHash}");
@@ -106,7 +106,7 @@ namespace FyteClub
                 // Store Simple Heels settings as a component
                 if (playerInfo.SimpleHeelsOffset.HasValue && playerInfo.SimpleHeelsOffset.Value != 0)
                 {
-                    var componentHash = await StoreModComponent("heels", "offset", playerInfo.SimpleHeelsOffset.Value.ToString("F2"));
+                    var componentHash = await StoreModComponentInternal("heels", "offset", playerInfo.SimpleHeelsOffset.Value.ToString("F2"));
                     if (!string.IsNullOrEmpty(componentHash))
                     {
                         recipe.ComponentReferences.Add($"H:{componentHash}");
@@ -116,7 +116,7 @@ namespace FyteClub
                 // Store Honorific title as a component
                 if (!string.IsNullOrEmpty(playerInfo.HonorificTitle))
                 {
-                    var componentHash = await StoreModComponent("honorific", "title", playerInfo.HonorificTitle);
+                    var componentHash = await StoreModComponentInternal("honorific", "title", playerInfo.HonorificTitle);
                     if (!string.IsNullOrEmpty(componentHash))
                     {
                         recipe.ComponentReferences.Add($"O:{componentHash}");
@@ -142,9 +142,54 @@ namespace FyteClub
         }
 
         /// <summary>
+        /// Check if a component exists in the cache.
+        /// </summary>
+        public async Task<bool> HasComponent(string componentHash)
+        {
+            try
+            {
+                // Check in-memory first
+                if (_components.ContainsKey(componentHash))
+                {
+                    _pluginLog.Verbose($"[ComponentCache] Component {componentHash} found in memory");
+                    return true;
+                }
+
+                // Check on disk
+                var componentPath = Path.Combine(_componentsDir, $"{componentHash}.json");
+                var exists = File.Exists(componentPath);
+                
+                if (exists)
+                {
+                    _pluginLog.Verbose($"[ComponentCache] Component {componentHash} found on disk");
+                }
+                else
+                {
+                    _pluginLog.Verbose($"[ComponentCache] Component {componentHash} not found");
+                }
+                
+                return exists;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"[ComponentCache] Error checking component {componentHash}: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Store an individual mod component for reuse across multiple appearances.
+        /// Public method for phonebook integration.
+        /// </summary>
+        public async Task<string> StoreModComponent(string componentType, string identifier, string? data)
+        {
+            return await StoreModComponentInternal(componentType, identifier, data);
+        }
+
+        /// <summary>
         /// Store an individual mod component for reuse across multiple appearances.
         /// </summary>
-        private async Task<string> StoreModComponent(string componentType, string identifier, string? data)
+        private async Task<string> StoreModComponentInternal(string componentType, string identifier, string? data)
         {
             try
             {
@@ -181,7 +226,7 @@ namespace FyteClub
                 var componentJson = JsonSerializer.Serialize(component, new JsonSerializerOptions { WriteIndented = true });
                 await File.WriteAllTextAsync(componentPath, componentJson);
 
-                _pluginLog.Debug($"Stored new {componentType} component: {identifier} (hash: {componentHash})");
+                _pluginLog.Info($"[ComponentCache] Stored new {componentType} component: {identifier} (hash: {componentHash}, size: {component.Size} bytes)");
                 return componentHash;
             }
             catch (Exception ex)
