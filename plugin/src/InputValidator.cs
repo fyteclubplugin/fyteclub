@@ -51,5 +51,14 @@ namespace FyteClub
                 
             return uri.ToString();
         }
+        
+        public static bool IsValidSyncshellId(string syncshellId)
+        {
+            if (string.IsNullOrWhiteSpace(syncshellId)) return false;
+            if (syncshellId.Length > 64) return false; // Reasonable limit
+            
+            // Only allow alphanumeric characters and hyphens (no path separators)
+            return Regex.IsMatch(syncshellId, @"^[a-zA-Z0-9\-]+$");
+        }
     }
 }

@@ -47,7 +47,7 @@ namespace FyteClub
             _activeSessions[sessionId] = session;
             
             var metadataStr = metadata != null ? JsonSerializer.Serialize(metadata) : "{}";
-            _pluginLog.Info($"[P2PNetwork:{sessionType}] SESSION_START {sessionId} -> {peerId} | {metadataStr}");
+            SecureLogger.LogInfo("[P2PNetwork:{0}] SESSION_START {1} -> {2} | {3}", sessionType, sessionId, peerId, metadataStr);
             
             LogEvent(new NetworkEvent
             {
@@ -68,7 +68,7 @@ namespace FyteClub
         {
             if (!_activeSessions.TryRemove(sessionId, out var session))
             {
-                _pluginLog.Warning($"[P2PNetwork] Attempted to end unknown session: {sessionId}");
+                SecureLogger.LogWarning("[P2PNetwork] Attempted to end unknown session: {0}", sessionId);
                 return;
             }
 
@@ -77,7 +77,7 @@ namespace FyteClub
             var reasonStr = reason != null ? $" | Reason: {reason}" : "";
             var metricsStr = metrics != null ? $" | Metrics: {JsonSerializer.Serialize(metrics)}" : "";
 
-            _pluginLog.Info($"[P2PNetwork:{session.SessionType}] SESSION_END {sessionId} -> {session.PeerId} | {result} in {duration.TotalMilliseconds:F0}ms{reasonStr}{metricsStr}");
+            SecureLogger.LogInfo("[P2PNetwork:{0}] SESSION_END {1} -> {2} | {3} in {4:F0}ms{5}{6}", session.SessionType, sessionId, session.PeerId, result, duration.TotalMilliseconds, reasonStr, metricsStr);
 
             LogEvent(new NetworkEvent
             {
@@ -125,7 +125,7 @@ namespace FyteClub
         public void LogWebRTCState(string sessionId, string peerId, string oldState, string newState, string? reason = null)
         {
             var reasonStr = reason != null ? $" | Reason: {reason}" : "";
-            _pluginLog.Info($"[P2PNetwork:WebRTC] STATE_CHANGE {sessionId} -> {peerId} | {oldState} -> {newState}{reasonStr}");
+            SecureLogger.LogInfo("[P2PNetwork:WebRTC] STATE_CHANGE {0} -> {1} | {2} -> {3}{4}", sessionId, peerId, oldState, newState, reasonStr);
 
             LogEvent(new NetworkEvent
             {
@@ -289,7 +289,7 @@ namespace FyteClub
         public void LogError(string sessionId, string peerId, string errorType, string message, Exception? exception = null)
         {
             var exceptionStr = exception != null ? $" | Exception: {exception.GetType().Name}: {exception.Message}" : "";
-            _pluginLog.Error($"[P2PNetwork:Error] {errorType} {sessionId} -> {peerId} | {message}{exceptionStr}");
+            SecureLogger.LogError("[P2PNetwork:Error] {0} {1} -> {2} | {3}{4}", errorType, sessionId, peerId, message, exceptionStr);
 
             LogEvent(new NetworkEvent
             {

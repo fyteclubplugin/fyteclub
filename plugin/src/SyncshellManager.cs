@@ -50,7 +50,7 @@ namespace FyteClub
             if (!InputValidator.IsValidSyncshellName(name))
                 throw new ArgumentException("Invalid syncshell name");
                 
-            var masterPassword = "default_password"; // Simplified for now
+            var masterPassword = SyncshellIdentity.GenerateSecurePassword(); // Use secure random password
             var session = await CreateSyncshellInternal(name, masterPassword);
             return new SyncshellInfo
             {

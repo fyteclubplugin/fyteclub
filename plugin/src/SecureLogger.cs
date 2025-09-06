@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace FyteClub
@@ -9,20 +10,53 @@ namespace FyteClub
         
         public static void LogInfo(string message, params object[] args)
         {
-            var sanitized = SanitizeLogInput(string.Format(message, args));
-            Console.WriteLine($"[INFO] {sanitized}");
+            var sanitizedMessage = SanitizeLogInput(message);
+            var sanitizedArgs = args?.Select(arg => SanitizeLogInput(arg?.ToString() ?? "")).ToArray() ?? new string[0];
+            
+            try
+            {
+                var formatted = string.Format(sanitizedMessage, sanitizedArgs);
+                Console.WriteLine($"[INFO] {formatted}");
+            }
+            catch (FormatException)
+            {
+                // Fallback if format string is invalid
+                Console.WriteLine($"[INFO] {sanitizedMessage}");
+            }
         }
         
         public static void LogWarning(string message, params object[] args)
         {
-            var sanitized = SanitizeLogInput(string.Format(message, args));
-            Console.WriteLine($"[WARN] {sanitized}");
+            var sanitizedMessage = SanitizeLogInput(message);
+            var sanitizedArgs = args?.Select(arg => SanitizeLogInput(arg?.ToString() ?? "")).ToArray() ?? new string[0];
+            
+            try
+            {
+                var formatted = string.Format(sanitizedMessage, sanitizedArgs);
+                Console.WriteLine($"[WARN] {formatted}");
+            }
+            catch (FormatException)
+            {
+                // Fallback if format string is invalid
+                Console.WriteLine($"[WARN] {sanitizedMessage}");
+            }
         }
         
         public static void LogError(string message, params object[] args)
         {
-            var sanitized = SanitizeLogInput(string.Format(message, args));
-            Console.WriteLine($"[ERROR] {sanitized}");
+            var sanitizedMessage = SanitizeLogInput(message);
+            var sanitizedArgs = args?.Select(arg => SanitizeLogInput(arg?.ToString() ?? "")).ToArray() ?? new string[0];
+            
+            try
+            {
+                var formatted = string.Format(sanitizedMessage, sanitizedArgs);
+                Console.WriteLine($"[ERROR] {formatted}");
+            }
+            catch (FormatException)
+            {
+                // Fallback if format string is invalid
+                Console.WriteLine($"[ERROR] {sanitizedMessage}");
+            }
         }
         
         private static string SanitizeLogInput(string input)

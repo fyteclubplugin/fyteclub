@@ -23,15 +23,26 @@ namespace FyteClub
         {
             try
             {
-                var filePath = Path.Combine(_storageDir, $"{syncshellId}.phonebook");
+                if (!InputValidator.IsValidSyncshellId(syncshellId))
+                    throw new ArgumentException("Invalid syncshell ID");
+                    
+                var sanitizedId = Path.GetFileName(syncshellId); // Prevent path traversal
+                var filePath = Path.Combine(_storageDir, $"{sanitizedId}.phonebook");
+                
+                // Validate the final path is within storage directory
+                var fullPath = Path.GetFullPath(filePath);
+                var fullStorageDir = Path.GetFullPath(_storageDir);
+                if (!fullPath.StartsWith(fullStorageDir))
+                    throw new UnauthorizedAccessException("Path traversal attempt detected");
+                    
                 var json = JsonSerializer.Serialize(phonebook, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(filePath, json);
                 
-                _pluginLog.Debug($"Phonebook saved for syncshell {syncshellId} with {phonebook.Members.Count} members");
+                SecureLogger.LogInfo("Phonebook saved for syncshell with {0} members", phonebook.Members.Count);
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Failed to save phonebook: {ex.Message}");
+                SecureLogger.LogError("Failed to save phonebook: {0}", ex.Message);
             }
         }
 
@@ -39,7 +50,18 @@ namespace FyteClub
         {
             try
             {
-                var filePath = Path.Combine(_storageDir, $"{syncshellId}.phonebook");
+                if (!InputValidator.IsValidSyncshellId(syncshellId))
+                    throw new ArgumentException("Invalid syncshell ID");
+                    
+                var sanitizedId = Path.GetFileName(syncshellId); // Prevent path traversal
+                var filePath = Path.Combine(_storageDir, $"{sanitizedId}.phonebook");
+                
+                // Validate the final path is within storage directory
+                var fullPath = Path.GetFullPath(filePath);
+                var fullStorageDir = Path.GetFullPath(_storageDir);
+                if (!fullPath.StartsWith(fullStorageDir))
+                    throw new UnauthorizedAccessException("Path traversal attempt detected");
+                    
                 if (!File.Exists(filePath)) return null;
 
                 var json = File.ReadAllText(filePath);
@@ -58,7 +80,7 @@ namespace FyteClub
                     
                     if (expiredMembers.Count > 0)
                     {
-                        _pluginLog.Debug($"Cleaned up {expiredMembers.Count} expired phonebook entries");
+                        SecureLogger.LogInfo("Cleaned up {0} expired phonebook entries", expiredMembers.Count);
                         SavePhonebook(syncshellId, phonebook); // Save cleaned phonebook
                     }
                 }
@@ -67,7 +89,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Failed to load phonebook: {ex.Message}");
+                SecureLogger.LogError("Failed to load phonebook: {0}", ex.Message);
                 return null;
             }
         }
@@ -76,16 +98,27 @@ namespace FyteClub
         {
             try
             {
-                var filePath = Path.Combine(_storageDir, $"{syncshellId}.phonebook");
+                if (!InputValidator.IsValidSyncshellId(syncshellId))
+                    throw new ArgumentException("Invalid syncshell ID");
+                    
+                var sanitizedId = Path.GetFileName(syncshellId); // Prevent path traversal
+                var filePath = Path.Combine(_storageDir, $"{sanitizedId}.phonebook");
+                
+                // Validate the final path is within storage directory
+                var fullPath = Path.GetFullPath(filePath);
+                var fullStorageDir = Path.GetFullPath(_storageDir);
+                if (!fullPath.StartsWith(fullStorageDir))
+                    throw new UnauthorizedAccessException("Path traversal attempt detected");
+                    
                 if (File.Exists(filePath))
                 {
                     File.Delete(filePath);
-                    _pluginLog.Debug($"Phonebook deleted for syncshell {syncshellId}");
+                    SecureLogger.LogInfo("Phonebook deleted for syncshell");
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Failed to delete phonebook: {ex.Message}");
+                SecureLogger.LogError("Failed to delete phonebook: {0}", ex.Message);
             }
         }
 
@@ -102,13 +135,13 @@ namespace FyteClub
                     if (fileInfo.LastWriteTime < cutoff)
                     {
                         File.Delete(file);
-                        _pluginLog.Debug($"Deleted expired phonebook: {Path.GetFileName(file)}");
+                        SecureLogger.LogInfo("Deleted expired phonebook: {0}", Path.GetFileName(file));
                     }
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Failed to cleanup expired phonebooks: {ex.Message}");
+                SecureLogger.LogError("Failed to cleanup expired phonebooks: {0}", ex.Message);
             }
         }
     }

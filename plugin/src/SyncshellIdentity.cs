@@ -33,7 +33,7 @@ namespace FyteClub
             Ed25519Identity = new Ed25519Identity();
         }
         
-        private static string GenerateSecurePassword()
+        public static string GenerateSecurePassword()
         {
             using var rng = RandomNumberGenerator.Create();
             var bytes = new byte[32];
