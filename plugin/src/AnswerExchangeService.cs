@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Web;
 
 namespace FyteClub
 {
@@ -20,7 +21,7 @@ namespace FyteClub
         {
             var payload = new
             {
-                description = $"FyteClub WebRTC Answer - {syncshellId}",
+                description = $"FyteClub WebRTC Answer - {InputValidator.SanitizeForHtml(syncshellId)}",
                 @public = false,
                 files = new
                 {
@@ -39,12 +40,12 @@ namespace FyteClub
                 var gistResponse = JsonSerializer.Deserialize<JsonElement>(responseText);
                 var gistId = gistResponse.GetProperty("id").GetString() ?? string.Empty;
                 
-                Console.WriteLine($"Published answer to gist: {gistId}");
+                SecureLogger.LogInfo("Published answer to gist");
                 return gistId;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to publish answer: {ex.Message}");
+                SecureLogger.LogError("Failed to publish answer: {0}", ex.Message);
                 return string.Empty;
             }
         }
@@ -53,7 +54,8 @@ namespace FyteClub
         {
             try
             {
-                var response = await _httpClient.GetAsync($"https://api.github.com/gists/{gistId}");
+                var validatedUrl = InputValidator.ValidateUrl($"https://api.github.com/gists/{InputValidator.SanitizeForLog(gistId)}");
+                var response = await _httpClient.GetAsync(validatedUrl);
                 var responseText = await response.Content.ReadAsStringAsync();
                 
                 var gistResponse = JsonSerializer.Deserialize<JsonElement>(responseText);
@@ -65,7 +67,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to get answer: {ex.Message}");
+                SecureLogger.LogError("Failed to get answer: {0}", ex.Message);
                 return string.Empty;
             }
         }

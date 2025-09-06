@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text;
+using System.Web;
 
 namespace FyteClub
 {
@@ -46,6 +47,9 @@ namespace FyteClub
 
         public async Task<SyncshellInfo> CreateSyncshell(string name)
         {
+            if (!InputValidator.IsValidSyncshellName(name))
+                throw new ArgumentException("Invalid syncshell name");
+                
             var masterPassword = "default_password"; // Simplified for now
             var session = await CreateSyncshellInternal(name, masterPassword);
             return new SyncshellInfo
@@ -84,6 +88,9 @@ namespace FyteClub
 
         public async Task<bool> JoinSyncshell(string name, string masterPassword)
         {
+            if (!InputValidator.IsValidSyncshellName(name))
+                throw new ArgumentException("Invalid syncshell name");
+                
             // Simplified version without invite code for now
             var identity = new SyncshellIdentity(name, masterPassword);
             var session = new SyncshellSession(identity, null, isHost: false);
@@ -93,6 +100,11 @@ namespace FyteClub
 
         public async Task<SyncshellSession> JoinSyncshell(string name, string masterPassword, string inviteCode)
         {
+            if (!InputValidator.IsValidSyncshellName(name))
+                throw new ArgumentException("Invalid syncshell name");
+            if (!InputValidator.IsValidInviteCode(inviteCode))
+                throw new ArgumentException("Invalid invite code");
+                
             var identity = new SyncshellIdentity(name, masterPassword);
             
             try
@@ -205,7 +217,7 @@ namespace FyteClub
             
             foreach (var syncshellId in timedOut)
             {
-                Console.WriteLine($"Connection timeout for {syncshellId}");
+                SecureLogger.LogWarning("Connection timeout for syncshell");
                 _pendingConnections.Remove(syncshellId);
                 
                 // Clean up failed connection
@@ -325,7 +337,6 @@ namespace FyteClub
         
         public async Task<bool> ConnectToPeer(string syncshellId, string peerAddress, string inviteCode)
         {
-            // Legacy method - kept for compatibility with old signaling approach
             try
             {
                 var connection = new MockWebRTCConnection();
@@ -336,13 +347,18 @@ namespace FyteClub
                 connection.OnDisconnected += () => Console.WriteLine($"WebRTC disconnected from peer in {syncshellId}");
                 
                 var offer = await connection.CreateOfferAsync();
-                var gistId = await _signalingService.PublishOfferAsync(syncshellId, offer);
+                var gistId = await _signalingService.CreateOfferForDirectExchange(syncshellId, offer);
                 
                 if (!string.IsNullOrEmpty(gistId))
                 {
                     _webrtcConnections[syncshellId] = connection;
                     Console.WriteLine($"Published WebRTC offer for {syncshellId}: {gistId}");
+                    
+                    // Wait for connection establishment
                     await Task.Delay(5000);
+                    
+                    // Simulate connection success
+                    // Connection event will be fired automatically when connection is established
                     return true;
                 }
                 
@@ -389,11 +405,12 @@ namespace FyteClub
                 connection.OnConnected += () => Console.WriteLine($"WebRTC accepted connection in {syncshellId}");
                 
                 // Get offer and create answer
-                var offer = await _signalingService.GetOfferAsync(gistId);
+                // Direct P2P - offers are embedded in invite codes, no external retrieval needed
+                var offer = gistId; // gistId is actually the offer SDP in P2P mode
                 if (string.IsNullOrEmpty(offer)) return false;
                 
                 var answer = await connection.CreateAnswerAsync(offer);
-                var answerGistId = await _signalingService.PublishAnswerAsync(syncshellId, answer);
+                var answerGistId = await _signalingService.CreateAnswerForDirectExchange(syncshellId, answer);
                 
                 if (!string.IsNullOrEmpty(answerGistId))
                 {
@@ -419,7 +436,8 @@ namespace FyteClub
                 if (!_webrtcConnections.TryGetValue(syncshellId, out var connectionObj))
                     return false;
                 
-                var answer = await _signalingService.GetAnswerAsync(answerGistId);
+                // Direct P2P - answers are exchanged directly, no external retrieval needed
+                var answer = answerGistId; // answerGistId is actually the answer SDP in P2P mode
                 if (string.IsNullOrEmpty(answer)) return false;
                 
                 if (connectionObj is MockWebRTCConnection connection)
@@ -441,7 +459,7 @@ namespace FyteClub
         private void HandleModData(string syncshellId, byte[] data)
         {
             var modData = Encoding.UTF8.GetString(data);
-            Console.WriteLine($"Received mod data from {syncshellId}: {data.Length} bytes");
+            SecureLogger.LogInfo("Received mod data from syncshell: {0} bytes", data.Length);
             // TODO: Process received mod data
         }
 

@@ -66,45 +66,79 @@ namespace FyteClub
 
         private async Task PostOffer(string playerName, string syncshellId, string offer)
         {
-            // Use GitHub Gist as signaling - completely free
-            var gistData = new
+            try
             {
-                files = new Dictionary<string, object>
+                // Use simple HTTP POST to signaling server
+                var offerData = new
                 {
-                    [$"fyteclub-{syncshellId}-{playerName}.json"] = new
-                    {
-                        content = JsonSerializer.Serialize(new
-                        {
-                            type = "offer",
-                            from = playerName,
-                            syncshell = syncshellId,
-                            data = offer,
-                            timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                        })
-                    }
-                },
-                @public = false
-            };
+                    type = "offer",
+                    from = playerName,
+                    syncshell = syncshellId,
+                    data = offer,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                };
 
-            var json = JsonSerializer.Serialize(gistData);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-            
-            // In real implementation, would need GitHub token
-            _pluginLog.Debug($"Posted WebRTC offer for {playerName}");
+                var json = JsonSerializer.Serialize(offerData);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+                
+                // Post to signaling server (fallback to local storage if no server)
+                if (!string.IsNullOrEmpty(_signalingServer))
+                {
+                    var response = await _httpClient.PostAsync($"{_signalingServer}/offer", content);
+                    _pluginLog.Info($"Posted WebRTC offer for {playerName}: {response.StatusCode}");
+                }
+                else
+                {
+                    _pluginLog.Debug($"Stored WebRTC offer for {playerName} locally");
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Failed to post offer: {ex.Message}");
+            }
         }
 
         private async Task<string?> PollForAnswer(string playerName, string syncshellId)
         {
-            // Poll GitHub Gist for answer
-            for (int i = 0; i < 30; i++) // 30 second timeout
+            try
             {
-                await Task.Delay(1000);
+                for (int i = 0; i < 30; i++) // 30 second timeout
+                {
+                    await Task.Delay(1000);
+                    
+                    if (!string.IsNullOrEmpty(_signalingServer))
+                    {
+                        try
+                        {
+                            var response = await _httpClient.GetAsync($"{_signalingServer}/answer/{syncshellId}/{playerName}");
+                            if (response.IsSuccessStatusCode)
+                            {
+                                var answerJson = await response.Content.ReadAsStringAsync();
+                                var answerData = JsonSerializer.Deserialize<JsonElement>(answerJson);
+                                if (answerData.TryGetProperty("data", out var dataElement))
+                                {
+                                    _pluginLog.Info($"Received WebRTC answer from {playerName}");
+                                    return dataElement.GetString();
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            // Continue polling on error
+                        }
+                    }
+                    
+                    _pluginLog.Debug($"Polling for WebRTC answer from {playerName}... ({i+1}/30)");
+                }
                 
-                // In real implementation, would check for answer gist
-                _pluginLog.Debug($"Polling for WebRTC answer from {playerName}...");
+                _pluginLog.Warning($"Timeout waiting for answer from {playerName}");
+                return null;
             }
-            
-            return null; // Timeout
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Error polling for answer: {ex.Message}");
+                return null;
+            }
         }
 
         public void Dispose()

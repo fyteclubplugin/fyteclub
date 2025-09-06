@@ -36,7 +36,16 @@ namespace FyteClub
         {
             await Task.Delay(100); // Simulate connection establishment
             _isConnected = true;
+            
+            // Fire connection event
             OnConnected?.Invoke();
+            
+            // Simulate initial handshake data
+            _ = Task.Run(async () => {
+                await Task.Delay(200);
+                var handshake = System.Text.Encoding.UTF8.GetBytes("{\"type\":\"handshake\",\"status\":\"connected\"}");
+                OnDataReceived?.Invoke(handshake);
+            });
         }
 
         public async Task SendDataAsync(byte[] data)

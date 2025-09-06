@@ -25,12 +25,20 @@ namespace FyteClub
         public SyncshellIdentity()
         {
             Name = "DefaultSyncshell";
-            var defaultPassword = "default";
-            MasterPasswordHash = SHA256.HashData(Encoding.UTF8.GetBytes(defaultPassword));
-            EncryptionKey = DeriveEncryptionKey(Name, defaultPassword);
+            var securePassword = GenerateSecurePassword();
+            MasterPasswordHash = SHA256.HashData(Encoding.UTF8.GetBytes(securePassword));
+            EncryptionKey = DeriveEncryptionKey(Name, securePassword);
             
             // Generate Ed25519 identity
             Ed25519Identity = new Ed25519Identity();
+        }
+        
+        private static string GenerateSecurePassword()
+        {
+            using var rng = RandomNumberGenerator.Create();
+            var bytes = new byte[32];
+            rng.GetBytes(bytes);
+            return Convert.ToBase64String(bytes);
         }
 
         private static byte[] DeriveEncryptionKey(string name, string password)

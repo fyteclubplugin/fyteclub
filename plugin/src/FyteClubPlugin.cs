@@ -196,7 +196,7 @@ namespace FyteClub
                 if (!_hasPerformedInitialUpload && isLocalPlayerValid)
                 {
                     _hasPerformedInitialUpload = true;
-                    _pluginLog.Info($"FyteClub: Player {localPlayerName} detected, starting automatic mod upload...");
+                    SecureLogger.LogInfo("FyteClub: Player detected, starting automatic mod upload");
                     
                     // Capture player name for background task
                     var capturedPlayerName = localPlayerName!;
@@ -469,23 +469,23 @@ namespace FyteClub
                         ? $"{localPlayerName}@{localPlayerWorld}" 
                         : localPlayerName;
                         
-                    _pluginLog.Info($"FyteClub: Local player check - Local: '{fullLocalPlayerName}', Detected: '{message.PlayerName}'");
+                    SecureLogger.LogInfo("FyteClub: Local player check completed");
                     
                     if (!string.IsNullOrEmpty(localPlayerName) && message.PlayerName.StartsWith(localPlayerName))
                     {
-                        _pluginLog.Info($"FyteClub: Skipping mod request for local player: {message.PlayerName}");
+                        SecureLogger.LogInfo("FyteClub: Skipping mod request for local player");
                         return;
                     }
 
                     if (!_loadingStates.ContainsKey(message.PlayerName))
                     {
-                        _pluginLog.Info($"FyteClub: Starting mod request for player: {message.PlayerName}");
+                        SecureLogger.LogInfo("FyteClub: Starting mod request for player");
                         _loadingStates[message.PlayerName] = LoadingState.Requesting;
                         _ = Task.Run(() => RequestPlayerMods(message.PlayerName));
                     }
                     else
                     {
-                        _pluginLog.Info($"FyteClub: Player {message.PlayerName} already has loading state: {_loadingStates[message.PlayerName]}");
+                        SecureLogger.LogInfo("FyteClub: Player already has loading state");
                     }
                 }
                 catch (Exception ex)
@@ -1840,7 +1840,7 @@ namespace FyteClub
             {
                 if (_recentlySyncedUsers.Contains(ownerName))
                 {
-                    await _framework.RunOnFrameworkThread(() =>
+                    await Task.Run(() => _framework.RunOnFrameworkThread(() =>
                     {
                         var companionObj = _objectTable.FirstOrDefault(obj => 
                             obj.ObjectIndex == companion.ObjectIndex);
@@ -1853,7 +1853,7 @@ namespace FyteClub
                                 _pluginLog.Debug($"Applied redraw to companion {companion.Name} for owner {ownerName}");
                             }
                         }
-                    });
+                    }));
                 }
             }
             catch (Exception ex)

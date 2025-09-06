@@ -42,9 +42,13 @@ echo [4/5] Creating P2P plugin package...
 mkdir "release\FyteClub-Plugin"
 
 :: copy main files
-copy "plugin\bin\Release\FyteClub.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\FyteClub.dll" "release\FyteClub-Plugin\" >nul
 copy "plugin\FyteClub.json" "release\FyteClub-Plugin\" >nul
-copy "plugin\bin\Release\FyteClub.deps.json" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\FyteClub.deps.json" "release\FyteClub-Plugin\" >nul
+
+:: copy API dependencies
+if exist "plugin\bin\Release\win-x64\Penumbra.Api.dll" copy "plugin\bin\Release\win-x64\Penumbra.Api.dll" "release\FyteClub-Plugin\" >nul
+if exist "plugin\bin\Release\win-x64\Glamourer.Api.dll" copy "plugin\bin\Release\win-x64\Glamourer.Api.dll" "release\FyteClub-Plugin\" >nul
 
 :: copy documentation
 copy "README.md" "release\FyteClub-Plugin\" >nul
