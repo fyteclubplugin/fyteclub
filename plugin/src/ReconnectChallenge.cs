@@ -5,10 +5,12 @@ namespace FyteClub
 {
     public class ReconnectChallenge
     {
-        public string GroupId { get; set; } = string.Empty;
-        public string MemberPeerId { get; set; } = string.Empty;
-        public string Nonce { get; set; } = string.Empty;
-        public DateTimeOffset ExpiresAt { get; set; }
+    public string GroupId { get; set; } = string.Empty;
+    public string MemberPeerId { get; set; } = string.Empty;
+    public string Nonce { get; set; } = string.Empty;
+    public DateTimeOffset ExpiresAt { get; set; }
+    public long Timestamp { get; set; }
+    public string SyncshellId { get; set; } = string.Empty;
 
         public static ReconnectChallenge Create(string groupId, string memberPeerId)
         {

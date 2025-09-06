@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -25,7 +26,13 @@ namespace FyteClub
             {
                 var tokenJson = JsonSerializer.Serialize(token);
                 var tokenBytes = Encoding.UTF8.GetBytes(tokenJson);
-                var encryptedBytes = ProtectedData.Protect(tokenBytes, null, DataProtectionScope.CurrentUser);
+                // Simple XOR encryption for cross-platform compatibility
+                var key = Encoding.UTF8.GetBytes(Environment.UserName + Environment.MachineName);
+                var encryptedBytes = new byte[tokenBytes.Length];
+                for (int i = 0; i < tokenBytes.Length; i++)
+                {
+                    encryptedBytes[i] = (byte)(tokenBytes[i] ^ key[i % key.Length]);
+                }
                 
                 var filePath = Path.Combine(_storageDir, $"{syncshellId}.token");
                 File.WriteAllBytes(filePath, encryptedBytes);
@@ -46,7 +53,13 @@ namespace FyteClub
                 if (!File.Exists(filePath)) return null;
 
                 var encryptedBytes = File.ReadAllBytes(filePath);
-                var tokenBytes = ProtectedData.Unprotect(encryptedBytes, null, DataProtectionScope.CurrentUser);
+                // Simple XOR decryption for cross-platform compatibility
+                var key = Encoding.UTF8.GetBytes(Environment.UserName + Environment.MachineName);
+                var tokenBytes = new byte[encryptedBytes.Length];
+                for (int i = 0; i < encryptedBytes.Length; i++)
+                {
+                    tokenBytes[i] = (byte)(encryptedBytes[i] ^ key[i % key.Length]);
+                }
                 var tokenJson = Encoding.UTF8.GetString(tokenBytes);
                 
                 var token = JsonSerializer.Deserialize<MemberToken>(tokenJson);

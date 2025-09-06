@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using Dalamud.Plugin.Services;
 
@@ -46,7 +48,7 @@ namespace FyteClub
                 if (phonebook != null)
                 {
                     // Clean up expired entries (24 hour TTL)
-                    var cutoff = DateTimeOffset.UtcNow.AddHours(-24).ToUnixTimeSeconds();
+                    var cutoff = DateTime.UtcNow.AddHours(-24);
                     var expiredMembers = phonebook.Members.Where(kvp => kvp.Value.LastSeen < cutoff).ToList();
                     
                     foreach (var expired in expiredMembers)

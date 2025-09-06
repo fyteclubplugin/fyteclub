@@ -1,3 +1,5 @@
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
 #include <memory>
 #include <string>
 #include "api/peer_connection_interface.h"

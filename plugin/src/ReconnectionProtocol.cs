@@ -4,12 +4,7 @@ using Dalamud.Plugin.Services;
 
 namespace FyteClub
 {
-    public class ReconnectChallenge
-    {
-        public string Nonce { get; set; } = string.Empty;
-        public long Timestamp { get; set; }
-        public string SyncshellId { get; set; } = string.Empty;
-    }
+    // ...existing code...
 
     public class ReconnectResponse
     {
@@ -109,8 +104,8 @@ namespace FyteClub
             return new ReconnectResponse
             {
                 Nonce = challenge.Nonce,
-                Signature = signature,
-                PublicKey = _identity.PublicKey,
+                Signature = Convert.ToBase64String(signature),
+                PublicKey = Convert.ToBase64String(_identity.PublicKey),
                 Token = token
             };
         }

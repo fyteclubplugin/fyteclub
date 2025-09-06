@@ -11,7 +11,6 @@ namespace FyteClub
         private bool _disposed;
         private bool _isConnected;
 
-        public event Action<byte[]>? OnDataReceived;
         public event Action? OnConnected;
         public event Action? OnDisconnected;
 

@@ -1,0 +1,10 @@
+{
+  "testEnvironment": "node",
+  "testMatch": [
+    "**/*-isolated.test.js"
+  ],
+  "collectCoverage": false,
+  "verbose": true,
+  "forceExit": true,
+  "detectOpenHandles": true
+}

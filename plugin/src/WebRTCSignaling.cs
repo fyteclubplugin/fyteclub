@@ -61,8 +61,7 @@ namespace FyteClub
 
         public async Task SendModData(string peerId, string modData)
         {
-            _webrtc.SendData(peerId, modData);
-            await Task.CompletedTask;
+            await Task.Run(() => _webrtc.SendData(peerId, modData));
         }
 
         private async Task PostOffer(string playerName, string syncshellId, string offer)

@@ -2,6 +2,9 @@
 :: FyteClub P2P Release Builder v4.1.0
 :: P2P-only build (no server components)
 
+:: Use local Visual Studio instead of Google's toolchain
+set DEPOT_TOOLS_WIN_TOOLCHAIN=0
+
 set /p CURRENT_VERSION=<VERSION
 echo Building FyteClub P2P v%CURRENT_VERSION%
 echo.

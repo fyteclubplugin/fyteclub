@@ -8,7 +8,10 @@ add_library(webrtc_native SHARED webrtc_wrapper.cpp)
 
 # Link Google WebRTC
 set(WEBRTC_ROOT "${CMAKE_SOURCE_DIR}/../webrtc-checkout/src")
-target_include_directories(webrtc_native PRIVATE "${WEBRTC_ROOT}")
+target_include_directories(webrtc_native PRIVATE 
+    "${WEBRTC_ROOT}"
+    "${WEBRTC_ROOT}/third_party/abseil-cpp"
+)
 target_link_directories(webrtc_native PRIVATE "${WEBRTC_ROOT}/out/Default/obj")
 target_link_libraries(webrtc_native webrtc)
 
