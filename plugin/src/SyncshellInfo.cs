@@ -13,10 +13,14 @@ namespace FyteClub
         public string InviteCode { get; set; } = string.Empty;
         public bool IsHost { get; set; }
         public bool IsOwner { get; set; }
+        public bool CanInvite { get; set; } = true; // Default to can invite
         public bool IsActive { get; set; } = true;
         public int MemberCount { get; set; }
         public List<string> Members { get; set; } = new();
         public string Status { get; set; } = "";
+        
+        // Helper property for invite permissions
+        public bool CanShare => IsOwner || CanInvite || Members.Count < 10;
         
         public SyncshellInfo() { }
         
@@ -27,6 +31,7 @@ namespace FyteClub
             InviteCode = inviteCode;
             IsHost = isHost;
             IsOwner = isHost;
+            CanInvite = true;
         }
     }
 }

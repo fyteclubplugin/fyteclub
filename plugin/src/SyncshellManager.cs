@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Text;
 using System.Web;
+using Dalamud.Plugin.Services;
 
 namespace FyteClub
 {
@@ -27,7 +28,7 @@ namespace FyteClub
         private const int CONNECTION_TIMEOUT_SECONDS = 60;
         private const int MAX_RETRIES = 3;
 
-        public SyncshellManager()
+        public SyncshellManager(IPluginLog? pluginLog = null)
         {
             _signalingService = new SignalingService();
             _uptimeTimer = new Timer(UpdateUptimeCounters, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
@@ -47,25 +48,58 @@ namespace FyteClub
 
         public async Task<SyncshellInfo> CreateSyncshell(string name)
         {
+            SecureLogger.LogInfo("SyncshellManager.CreateSyncshell called with name: '{0}' (length: {1})", name, name?.Length ?? 0);
+            
+            if (string.IsNullOrEmpty(name))
+            {
+                SecureLogger.LogError("Syncshell name is null or empty");
+                throw new ArgumentException("Syncshell name cannot be null or empty");
+            }
+            
+            SecureLogger.LogInfo("Validating syncshell name...");
             if (!InputValidator.IsValidSyncshellName(name))
-                throw new ArgumentException("Invalid syncshell name");
+            {
+                SecureLogger.LogError("Syncshell name validation failed for: '{0}'", name);
+                SecureLogger.LogError("Name must contain only letters, numbers, spaces, hyphens, underscores, and dots");
                 
+                // Log character analysis
+                var invalidChars = name.Where(c => !char.IsLetterOrDigit(c) && c != ' ' && c != '-' && c != '_' && c != '.').ToList();
+                if (invalidChars.Any())
+                {
+                    var invalidCharStr = string.Join(", ", invalidChars.Select(c => $"'{c}' (code: {(int)c})"));
+                    SecureLogger.LogError("Invalid characters found: {0}", invalidCharStr);
+                }
+                
+                throw new ArgumentException($"Invalid syncshell name: '{name}'. Name must contain only letters, numbers, spaces, hyphens, underscores, and dots.");
+            }
+            
+            SecureLogger.LogInfo("Syncshell name validation passed, generating secure password...");
             var masterPassword = SyncshellIdentity.GenerateSecurePassword(); // Use secure random password
+            
+            SecureLogger.LogInfo("Creating syncshell session...");
             var session = await CreateSyncshellInternal(name, masterPassword);
-            return new SyncshellInfo
+            
+            SecureLogger.LogInfo("Syncshell session created successfully, building SyncshellInfo...");
+            var result = new SyncshellInfo
             {
                 Id = session.Identity.GetSyncshellHash(),
                 Name = session.Identity.Name,
                 EncryptionKey = Convert.ToBase64String(session.Identity.EncryptionKey),
                 IsOwner = session.IsHost,
                 IsActive = true,
-                Members = new List<string>()
+                Members = new List<string> { "You" } // Add yourself as first member
             };
+            
+            SecureLogger.LogInfo("SyncshellInfo created successfully with ID: {0}", result.Id);
+            return result;
         }
 
         public async Task<SyncshellSession> CreateSyncshellInternal(string name, string masterPassword)
         {
+            SecureLogger.LogInfo("Creating SyncshellIdentity...");
             var identity = new SyncshellIdentity(name, masterPassword);
+            
+            SecureLogger.LogInfo("Creating SyncshellPhonebook...");
             var phonebook = new SyncshellPhonebook
             {
                 SyncshellName = name,
@@ -73,29 +107,94 @@ namespace FyteClub
                 EncryptionKey = identity.EncryptionKey
             };
 
+            SecureLogger.LogInfo("Getting local IP address...");
             // Add self to phonebook
             var localIP = GetLocalIPAddress();
             phonebook.AddMember(identity.PublicKey, localIP, 7777);
 
+            SecureLogger.LogInfo("Creating SyncshellSession...");
             var session = new SyncshellSession(identity, phonebook, isHost: true);
+            
+            SecureLogger.LogInfo("Adding session to sessions dictionary...");
             _sessions[identity.GetSyncshellHash()] = session;
 
+            SecureLogger.LogInfo("Starting session listening...");
             await session.StartListening();
-            Console.WriteLine($"Created syncshell '{name}' as host");
+            
+            SecureLogger.LogInfo("Syncshell '{0}' created successfully as host", name);
             
             return session;
         }
 
         public async Task<bool> JoinSyncshell(string name, string masterPassword)
         {
+            SecureLogger.LogInfo("SyncshellManager.JoinSyncshell called with name: '{0}'", name);
+            
             if (!InputValidator.IsValidSyncshellName(name))
+            {
+                SecureLogger.LogError("Invalid syncshell name for join: '{0}'", name);
                 throw new ArgumentException("Invalid syncshell name");
+            }
                 
-            // Simplified version without invite code for now
-            var identity = new SyncshellIdentity(name, masterPassword);
-            var session = new SyncshellSession(identity, null, isHost: false);
-            _sessions[identity.GetSyncshellHash()] = session;
-            return true;
+            try
+            {
+                // Check if we already have this syncshell
+                var identity = new SyncshellIdentity(name, masterPassword);
+                var syncshellHash = identity.GetSyncshellHash();
+                
+                if (_sessions.ContainsKey(syncshellHash))
+                {
+                    SecureLogger.LogInfo("Already have session for syncshell: '{0}'", name);
+                    return true;
+                }
+                
+                // Create new session as member (not host)
+                var session = new SyncshellSession(identity, null, isHost: false);
+                _sessions[syncshellHash] = session;
+                
+                SecureLogger.LogInfo("Successfully joined syncshell: '{0}'", name);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SecureLogger.LogError("Failed to join syncshell '{0}': {1}", name, ex.Message);
+                return false;
+            }
+        }
+
+        public async Task<bool> JoinSyncshellById(string syncshellId, string encryptionKey)
+        {
+            SecureLogger.LogInfo("SyncshellManager.JoinSyncshellById called with ID: '{0}'", syncshellId);
+            
+            try
+            {
+                // Check if we already have this syncshell
+                if (_sessions.ContainsKey(syncshellId))
+                {
+                    SecureLogger.LogInfo("Already have session for syncshell ID: '{0}'", syncshellId);
+                    return true;
+                }
+                
+                // Decode the encryption key
+                var keyBytes = Convert.FromBase64String(encryptionKey);
+                
+                // Create a temporary identity for this syncshell
+                // We'll use the syncshell ID as a placeholder name since we don't know the real name
+                var tempName = $"Syncshell_{syncshellId[..8]}";
+                var identity = new SyncshellIdentity(tempName, "placeholder");
+                
+                // Override the encryption key with the provided one
+                var session = new SyncshellSession(identity, null, isHost: false);
+                _sessions[syncshellId] = session;
+                
+                SecureLogger.LogInfo("Successfully joined syncshell by ID: '{0}'", syncshellId);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SecureLogger.LogError("Failed to join syncshell by ID '{0}': {1}", syncshellId, ex.Message);
+                return false;
+            }
         }
 
         public async Task<SyncshellSession> JoinSyncshell(string name, string masterPassword, string inviteCode)
@@ -252,7 +351,7 @@ namespace FyteClub
                     EncryptionKey = Convert.ToBase64String(session.Identity.EncryptionKey),
                     IsOwner = session.IsHost,
                     IsActive = true,
-                    Members = new List<string>()
+                    Members = new List<string> { "You" } // Always include yourself
                 });
             }
             return result;

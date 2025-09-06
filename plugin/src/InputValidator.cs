@@ -6,7 +6,7 @@ namespace FyteClub
 {
     public static class InputValidator
     {
-        private static readonly Regex SafeStringPattern = new(@"^[a-zA-Z0-9\-_\.]+$", RegexOptions.Compiled);
+        private static readonly Regex SafeStringPattern = new(@"^[a-zA-Z0-9\s\-_\.]+$", RegexOptions.Compiled);
         private static readonly Regex InviteCodePattern = new(@"^[a-zA-Z0-9\-_=]+$", RegexOptions.Compiled);
         
         public static string SanitizeForLog(string input)

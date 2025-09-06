@@ -96,14 +96,14 @@ namespace FyteClub
         }
     }
 
-    // Wrapper for .NET's Ed25519 implementation
+    // Cross-platform ECDSA implementation using P-256
     internal class Ed25519 : IDisposable
     {
         private ECDsa? _ecdsa;
 
         public Ed25519()
         {
-            _ecdsa = ECDsa.Create(ECCurve.CreateFromFriendlyName("Ed25519"));
+            _ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         }
 
         public byte[] ExportPrivateKey() => _ecdsa?.ExportECPrivateKey() ?? throw new InvalidOperationException();

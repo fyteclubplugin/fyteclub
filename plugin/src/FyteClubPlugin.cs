@@ -599,14 +599,32 @@ namespace FyteClub
         // Syncshell management - privacy-focused friend groups
         public async Task<SyncshellInfo> CreateSyncshell(string name)
         {
-            var syncshell = await _syncshellManager.CreateSyncshell(name);
-            SaveConfiguration();
-            return syncshell;
+            _pluginLog.Info($"FyteClubPlugin.CreateSyncshell called with name: '{name}'");
+            
+            try
+            {
+                var syncshell = await _syncshellManager.CreateSyncshell(name);
+                _pluginLog.Info($"SyncshellManager.CreateSyncshell completed successfully");
+                
+                // Auto-join the syncshell you just created
+                syncshell.IsActive = true;
+                _pluginLog.Info($"Auto-activated created syncshell: {syncshell.Name}");
+                
+                SaveConfiguration();
+                _pluginLog.Info($"Configuration saved");
+                return syncshell;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Error in FyteClubPlugin.CreateSyncshell: {ex.Message}");
+                _pluginLog.Error($"Stack trace: {ex.StackTrace}");
+                throw;
+            }
         }
 
         public async Task<bool> JoinSyncshell(string syncshellId, string encryptionKey)
         {
-            var success = await _syncshellManager.JoinSyncshell(syncshellId, encryptionKey);
+            var success = await _syncshellManager.JoinSyncshellById(syncshellId, encryptionKey);
             if (success) SaveConfiguration();
             return success;
         }
@@ -777,10 +795,31 @@ namespace FyteClub
         {
             var config = _pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
             
-            // Load syncshells
+            // Auto-join all saved syncshells
             foreach (var syncshell in config.Syncshells ?? new List<SyncshellInfo>())
             {
-                _ = Task.Run(() => _syncshellManager.JoinSyncshell(syncshell.Id, syncshell.EncryptionKey));
+                _pluginLog.Info($"Auto-joining saved syncshell: {syncshell.Name} (Owner: {syncshell.IsOwner}, Active: {syncshell.IsActive})");
+                _ = Task.Run(async () => 
+                {
+                    try
+                    {
+                        if (syncshell.IsOwner)
+                        {
+                            // Re-create as owner
+                            await _syncshellManager.CreateSyncshellInternal(syncshell.Name, syncshell.EncryptionKey);
+                        }
+                        else
+                        {
+                            // Join as member
+                            await _syncshellManager.JoinSyncshell(syncshell.Name, syncshell.EncryptionKey);
+                        }
+                        _pluginLog.Info($"Successfully auto-joined syncshell: {syncshell.Name}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Warning($"Failed to auto-join syncshell {syncshell.Name}: {ex.Message}");
+                    }
+                });
             }
             
             // Load blocked users and recently synced users
@@ -1302,15 +1341,53 @@ namespace FyteClub
                 {
                     if (!string.IsNullOrEmpty(_newSyncshellName))
                     {
-                        _ = Task.Run(async () => await _plugin.CreateSyncshell(_newSyncshellName));
-                        _newSyncshellName = "";
+                        // Capture the name before clearing it and starting async task
+                        var capturedName = _newSyncshellName;
+                        _newSyncshellName = ""; // Clear immediately to prevent double-clicks
+                        
+                        _ = Task.Run(async () => 
+                        {
+                            try
+                            {
+                                _plugin._pluginLog.Info($"Attempting to create syncshell with name: '{capturedName}' (length: {capturedName.Length})");
+                                
+                                // Pre-validate the name and log details
+                                if (!InputValidator.IsValidSyncshellName(capturedName))
+                                {
+                                    _plugin._pluginLog.Error($"Syncshell name validation failed for: '{capturedName}'");
+                                    _plugin._pluginLog.Error($"Name contains invalid characters. Valid pattern: letters, numbers, spaces, hyphens, underscores, dots");
+                                    
+                                    // Log each character for debugging
+                                    var chars = string.Join(", ", capturedName.Select(c => $"'{c}' ({(int)c})"));
+                                    _plugin._pluginLog.Error($"Characters in name: {chars}");
+                                    return;
+                                }
+                                
+                                _plugin._pluginLog.Info($"Syncshell name validation passed, creating syncshell...");
+                                await _plugin.CreateSyncshell(capturedName);
+                                _plugin._pluginLog.Info($"Successfully created syncshell: '{capturedName}'");
+                            }
+                            catch (Exception ex)
+                            {
+                                _plugin._pluginLog.Error($"Failed to create syncshell '{capturedName}': {ex.Message}");
+                                _plugin._pluginLog.Error($"Exception type: {ex.GetType().Name}");
+                                if (ex.InnerException != null)
+                                {
+                                    _plugin._pluginLog.Error($"Inner exception: {ex.InnerException.Message}");
+                                }
+                            }
+                        });
+                    }
+                    else
+                    {
+                        _plugin._pluginLog.Warning("Cannot create syncshell: name is empty");
                     }
                 }
                 
                 // Join Syncshell Section
                 ImGui.Separator();
                 ImGui.Text("Join Existing Syncshell:");
-                ImGui.InputText("Syncshell ID", ref _joinSyncshellId, 100);
+                ImGui.InputText("Syncshell Name", ref _joinSyncshellId, 100);
                 ImGui.InputText("Encryption Key", ref _joinEncryptionKey, 100, ImGuiInputTextFlags.Password);
                 
                 if (ImGui.Button("Join Syncshell"))
@@ -1345,31 +1422,98 @@ namespace FyteClub
                     ImGui.TextColored(roleColor, syncshell.IsOwner ? "👑" : "👤");
                     ImGui.SameLine();
                     
-                    // Syncshell name and ID
+                    // Syncshell name with status
+                    var statusColor = syncshell.IsActive ? new Vector4(0, 1, 0, 1) : new Vector4(0.7f, 0.7f, 0.7f, 1);
+                    var statusText = syncshell.IsActive ? "🟢" : "⚫";
+                    ImGui.TextColored(statusColor, statusText);
+                    ImGui.SameLine();
                     ImGui.Text($"{syncshell.Name}");
                     
-                    // Show ID and key for sharing (if owner)
-                    if (syncshell.IsOwner)
+                    // Member count and status info
+                    ImGui.SameLine();
+                    var memberCount = syncshell.Members?.Count ?? 0;
+                    var onlineCount = memberCount; // For now, assume all members are online
+                    ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), $"({onlineCount}/{memberCount} online)");
+                    
+                    // Expandable member list
+                    if (memberCount > 0)
+                    {
+                        ImGui.SameLine();
+                        if (ImGui.SmallButton($"Members##members_{i}"))
+                        {
+                            // Toggle member list visibility (you'd need to track this state)
+                            ImGui.OpenPopup($"MemberList_{i}");
+                        }
+                        
+                        if (ImGui.BeginPopup($"MemberList_{i}"))
+                        {
+                            ImGui.Text($"Members in {syncshell.Name}:");
+                            ImGui.Separator();
+                            
+                            foreach (var member in syncshell.Members ?? new List<string>())
+                            {
+                                ImGui.TextColored(new Vector4(0, 1, 0, 1), "🟢");
+                                ImGui.SameLine();
+                                ImGui.Text(member);
+                            }
+                            
+                            if (memberCount == 0)
+                            {
+                                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No other members online");
+                            }
+                            
+                            ImGui.EndPopup();
+                        }
+                    }
+                    
+                    // Show share button based on permissions
+                    if (syncshell.CanShare)
                     {
                         ImGui.SameLine();
                         if (ImGui.SmallButton($"Share##syncshell_{i}"))
                         {
-                            ImGui.SetClipboardText($"ID: {syncshell.Id}\nKey: {syncshell.EncryptionKey}");
+                            ImGui.SetClipboardText($"Name: {syncshell.Name}\nKey: {syncshell.EncryptionKey}");
                         }
                     }
                     
                     // Remove button
                     ImGui.SameLine();
-                    if (ImGui.Button($"Leave##syncshell_{i}"))
+                    if (ImGui.SmallButton($"Leave##syncshell_{i}"))
                     {
                         _plugin.RemoveSyncshell(syncshell.Id);
                         break;
                     }
+                    
+                    // Show additional status info on next line
+                    ImGui.Indent();
+                    if (syncshell.IsActive)
+                    {
+                        var role = syncshell.IsOwner ? "Owner" : (syncshell.CanInvite ? "Inviter" : "Member");
+                        ImGui.TextColored(new Vector4(0.6f, 0.8f, 1.0f, 1), $"Status: Connected • Role: {role}");
+                        if (syncshell.CanShare)
+                        {
+                            var shareText = memberCount < 10 ? "Anyone can share" : "Inviter permissions";
+                            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), $"ID: {syncshell.Id[..8]}... • {shareText}");
+                        }
+                    }
+                    else
+                    {
+                        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Status: Inactive • Enable to start syncing");
+                    }
+                    ImGui.Unindent();
+                    
+                    ImGui.Spacing();
                 }
                 
                 if (syncshells.Count == 0)
                 {
                     ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No syncshells yet. Create one to share mods with friends!");
+                }
+                else
+                {
+                    ImGui.Separator();
+                    var activeSyncshellCount = syncshells.Count(s => s.IsActive);
+                    ImGui.TextColored(new Vector4(0.6f, 0.8f, 1.0f, 1), $"Total: {syncshells.Count} syncshells • Active: {activeSyncshellCount}");
                 }
             }
             
