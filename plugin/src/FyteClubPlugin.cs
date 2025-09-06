@@ -1396,7 +1396,7 @@ namespace FyteClub
                 // Create Syncshell Section
                 ImGui.Separator();
                 ImGui.Text("Create New Syncshell:");
-                ImGui.InputText("Syncshell Name", ref _newSyncshellName, 50);
+                ImGui.InputText("Syncshell Name##create", ref _newSyncshellName, 50);
                 
                 if (ImGui.Button("Create Syncshell"))
                 {
@@ -1448,7 +1448,7 @@ namespace FyteClub
                 // Join Syncshell Section
                 ImGui.Separator();
                 ImGui.Text("Join Existing Syncshell:");
-                ImGui.InputText("Syncshell Name", ref _joinSyncshellName, 100);
+                ImGui.InputText("Syncshell Name##join", ref _joinSyncshellName, 100);
                 ImGui.InputText("Encryption Key", ref _joinEncryptionKey, 100, ImGuiInputTextFlags.Password);
                 
                 if (ImGui.Button("Join Syncshell"))
