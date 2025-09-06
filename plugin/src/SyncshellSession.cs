@@ -87,21 +87,28 @@ namespace FyteClub
 
         private async Task AcceptConnections()
         {
-            while (!_cancellation.Token.IsCancellationRequested && _listener != null)
+            try
             {
-                try
+                while (!_cancellation.Token.IsCancellationRequested && _listener != null)
                 {
-                    var client = await _listener.AcceptTcpClientAsync();
-                    _ = Task.Run(() => HandleNewMember(client), _cancellation.Token);
+                    try
+                    {
+                        var client = await _listener.AcceptTcpClientAsync();
+                        _ = Task.Run(() => HandleNewMember(client), _cancellation.Token);
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error accepting connection: {ex.Message}");
+                    }
                 }
-                catch (ObjectDisposedException)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error accepting connection: {ex.Message}");
-                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when cancellation token is triggered
             }
         }
 
@@ -162,10 +169,20 @@ namespace FyteClub
         {
             if (_disposed) return;
             
-            _cancellation.Cancel();
-            _listener?.Stop();
-            _cancellation.Dispose();
-            _disposed = true;
+            try
+            {
+                _cancellation.Cancel();
+                _listener?.Stop();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Already disposed
+            }
+            finally
+            {
+                _cancellation.Dispose();
+                _disposed = true;
+            }
         }
     }
 }

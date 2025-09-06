@@ -49,8 +49,11 @@ namespace FyteClub
 
         public string GetSyncshellHash()
         {
-            var combined = Encoding.UTF8.GetBytes($"{Name}_{Convert.ToBase64String(MasterPasswordHash)}");
-            return Convert.ToHexString(SHA256.HashData(combined)).ToLower();
+            // Create deterministic hash based on name and master password only
+            // This ensures all users joining the same syncshell get the same ID
+            var combined = Encoding.UTF8.GetBytes($"fyteclub_syncshell_{Name}_{Convert.ToBase64String(MasterPasswordHash)}");
+            var hash = SHA256.HashData(combined);
+            return Convert.ToHexString(hash)[..16].ToLower(); // Use first 16 chars for shorter IDs
         }
         
         public string GetPublicKey() => Ed25519Identity.PeerId;

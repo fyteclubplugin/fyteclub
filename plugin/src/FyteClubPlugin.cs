@@ -361,27 +361,54 @@ namespace FyteClub
             
             if (activeSyncshells.Count == 0) return;
             
-            _pluginLog.Debug($"FyteClub: Attempting to discover peers for {activeSyncshells.Count} active syncshells...");
+            _pluginLog.Info($"FyteClub: Attempting to discover peers for {activeSyncshells.Count} active syncshells...");
             
-            // Announce our syncshells via mDNS
-            await _mdnsDiscovery.AnnounceSyncshells(activeSyncshells);
+            // Get local player name safely from framework thread
+            string? localPlayerName = null;
+            await Task.Run(() => _framework.RunOnFrameworkThread(() =>
+            {
+                var localPlayer = _clientState.LocalPlayer;
+                localPlayerName = localPlayer?.Name?.TextValue;
+            }));
+            
+            localPlayerName ??= "Unknown";
+            
+            // Announce our syncshells via mDNS with proper player name
+            await _mdnsDiscovery.AnnounceSyncshells(activeSyncshells, localPlayerName);
             
             // Try to connect to discovered peers
             var discoveredPeers = _mdnsDiscovery.GetDiscoveredPeers();
-            foreach (var peer in discoveredPeers)
+            _pluginLog.Info($"FyteClub: Found {discoveredPeers.Count} discovered peers");
+            
+            // Filter out ourselves from discovered peers
+            var filteredPeers = discoveredPeers.Where(peer => peer.PlayerName != localPlayerName).ToList();
+            _pluginLog.Info($"FyteClub: After filtering self, found {filteredPeers.Count} external peers");
+            
+            foreach (var peer in filteredPeers)
             {
                 try
                 {
                     var matchingSyncshell = activeSyncshells.FirstOrDefault(s => s.Id == peer.SyncshellId);
                     if (matchingSyncshell != null)
                     {
-                        _pluginLog.Debug($"FyteClub: Attempting QUIC connection to {peer.PlayerName} at {peer.IPAddress}:{peer.Port}");
+                        _pluginLog.Info($"FyteClub: Found matching peer {peer.PlayerName} for syncshell {matchingSyncshell.Name}");
+                        
+                        // Add peer to syncshell member list if not already there
+                        if (!matchingSyncshell.Members.Contains(peer.PlayerName))
+                        {
+                            matchingSyncshell.Members.Add(peer.PlayerName);
+                            _pluginLog.Info($"FyteClub: Added {peer.PlayerName} to syncshell {matchingSyncshell.Name} member list");
+                        }
                         
                         var success = await _syncshellManager.ConnectToPeer(peer.SyncshellId, peer.IPAddress, peer.SyncshellId);
                         if (success)
                         {
                             _pluginLog.Info($"FyteClub: Successfully connected to peer {peer.PlayerName} in syncshell {matchingSyncshell.Name}");
                         }
+                    }
+                    else
+                    {
+                        _pluginLog.Debug($"FyteClub: No matching syncshell for peer {peer.PlayerName} (syncshell: {peer.SyncshellId})");
                     }
                 }
                 catch (Exception ex)
@@ -408,16 +435,27 @@ namespace FyteClub
             
             if (activeSyncshells.Count == 0) return;
             
-            _pluginLog.Debug($"FyteClub: Performing peer discovery for {activeSyncshells.Count} active syncshells...");
+            _pluginLog.Info($"FyteClub: Performing peer discovery for {activeSyncshells.Count} active syncshells...");
             
             try
             {
+                // Get local player name safely from framework thread
+                string? localPlayerName = null;
+                await Task.Run(() => _framework.RunOnFrameworkThread(() =>
+                {
+                    var localPlayer = _clientState.LocalPlayer;
+                    localPlayerName = localPlayer?.Name?.TextValue;
+                }));
+                
+                localPlayerName ??= "Unknown";
+                
                 // Announce our presence in active syncshells
-                await _mdnsDiscovery.AnnounceSyncshells(activeSyncshells);
+                await _mdnsDiscovery.AnnounceSyncshells(activeSyncshells, localPlayerName);
+                _pluginLog.Info($"FyteClub: Announced {activeSyncshells.Count} syncshells as player '{localPlayerName}'");
             }
             catch (Exception ex)
             {
-                _pluginLog.Debug($"FyteClub: Peer discovery failed: {ex.Message}");
+                _pluginLog.Error($"FyteClub: Peer discovery failed: {ex.Message}");
             }
         }
 
@@ -622,11 +660,34 @@ namespace FyteClub
             }
         }
 
-        public async Task<bool> JoinSyncshell(string syncshellId, string encryptionKey)
+        public async Task<bool> JoinSyncshell(string syncshellName, string encryptionKey)
         {
-            var success = await _syncshellManager.JoinSyncshellById(syncshellId, encryptionKey);
-            if (success) SaveConfiguration();
-            return success;
+            _pluginLog.Info($"JoinSyncshell called with name: '{syncshellName}', key length: {encryptionKey?.Length ?? 0}");
+            
+            try
+            {
+                // Try joining by name first (for name+key combinations)
+                var success = await _syncshellManager.JoinSyncshell(syncshellName, encryptionKey);
+                _pluginLog.Info($"JoinSyncshell by name result: {success}");
+                
+                if (success) 
+                {
+                    SaveConfiguration();
+                    _pluginLog.Info($"Successfully joined syncshell '{syncshellName}' and saved configuration");
+                }
+                else
+                {
+                    _pluginLog.Warning($"Failed to join syncshell '{syncshellName}'");
+                }
+                
+                return success;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Exception in JoinSyncshell: {ex.Message}");
+                _pluginLog.Error($"Stack trace: {ex.StackTrace}");
+                return false;
+            }
         }
         
 
@@ -810,8 +871,8 @@ namespace FyteClub
                         }
                         else
                         {
-                            // Join as member
-                            await _syncshellManager.JoinSyncshell(syncshell.Name, syncshell.EncryptionKey);
+                            // Join as member using JoinSyncshellById for saved syncshells
+                            await _syncshellManager.JoinSyncshellById(syncshell.Id, syncshell.EncryptionKey);
                         }
                         _pluginLog.Info($"Successfully auto-joined syncshell: {syncshell.Name}");
                     }
@@ -1255,7 +1316,7 @@ namespace FyteClub
         {
             private readonly FyteClubPlugin _plugin;
             private string _newSyncshellName = "";
-            private string _joinSyncshellId = "";
+            private string _joinSyncshellName = "";
             private string _joinEncryptionKey = "";
             private bool _showBlockList = false;
             
@@ -1387,16 +1448,31 @@ namespace FyteClub
                 // Join Syncshell Section
                 ImGui.Separator();
                 ImGui.Text("Join Existing Syncshell:");
-                ImGui.InputText("Syncshell Name", ref _joinSyncshellId, 100);
+                ImGui.InputText("Syncshell Name", ref _joinSyncshellName, 100);
                 ImGui.InputText("Encryption Key", ref _joinEncryptionKey, 100, ImGuiInputTextFlags.Password);
                 
                 if (ImGui.Button("Join Syncshell"))
                 {
-                    if (!string.IsNullOrEmpty(_joinSyncshellId) && !string.IsNullOrEmpty(_joinEncryptionKey))
+                    if (!string.IsNullOrEmpty(_joinSyncshellName) && !string.IsNullOrEmpty(_joinEncryptionKey))
                     {
-                        _ = Task.Run(async () => await _plugin.JoinSyncshell(_joinSyncshellId, _joinEncryptionKey));
-                        _joinSyncshellId = "";
+                        var capturedName = _joinSyncshellName;
+                        var capturedKey = _joinEncryptionKey;
+                        _joinSyncshellName = "";
                         _joinEncryptionKey = "";
+                        
+                        _ = Task.Run(async () => 
+                        {
+                            try
+                            {
+                                _plugin._pluginLog.Info($"Attempting to join syncshell: '{capturedName}'");
+                                var success = await _plugin.JoinSyncshell(capturedName, capturedKey);
+                                _plugin._pluginLog.Info($"Join syncshell result: {success}");
+                            }
+                            catch (Exception ex)
+                            {
+                                _plugin._pluginLog.Error($"Failed to join syncshell '{capturedName}': {ex.Message}");
+                            }
+                        });
                     }
                 }
                 

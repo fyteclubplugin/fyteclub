@@ -56,17 +56,20 @@ namespace FyteClub
             return Task.CompletedTask;
         }
 
-        public async Task AnnounceSyncshells(List<SyncshellInfo> syncshells)
+        public async Task AnnounceSyncshells(List<SyncshellInfo> syncshells, string? playerName = null)
         {
             try
             {
+                var effectivePlayerName = playerName ?? Environment.UserName;
+                _pluginLog.Info($"Announcing {syncshells.Count} syncshells as player '{effectivePlayerName}'");
+                
                 foreach (var syncshell in syncshells.Where(s => s.IsActive))
                 {
                     var announcement = new SyncshellAnnouncement
                     {
                         SyncshellId = syncshell.Id,
-                        PlayerName = Environment.UserName, // Fallback, should use FFXIV player name
-                        Port = 0, // Will be set by QUIC listener
+                        PlayerName = effectivePlayerName,
+                        Port = 7777, // Default P2P port
                         Timestamp = DateTime.UtcNow
                     };
 
@@ -75,6 +78,8 @@ namespace FyteClub
                     
                     var multicastEndpoint = new IPEndPoint(IPAddress.Parse("224.0.0.251"), MDNS_PORT);
                     await _udpClient.SendAsync(data, multicastEndpoint);
+                    
+                    _pluginLog.Info($"Announced syncshell '{syncshell.Name}' with ID '{syncshell.Id}' as player '{effectivePlayerName}'");
                 }
             }
             catch (Exception ex)
@@ -106,10 +111,21 @@ namespace FyteClub
                                 LastSeen = DateTime.UtcNow
                             };
 
-                            _discoveredPeers[peer.PlayerName] = peer;
-                            PeerDiscovered?.Invoke(peer);
+                            // Don't discover ourselves - check if this is our own announcement
+                            var isLocalAddress = result.RemoteEndPoint.Address.Equals(IPAddress.Loopback) || 
+                                               result.RemoteEndPoint.Address.Equals(IPAddress.IPv6Loopback) ||
+                                               IsLocalIPAddress(result.RemoteEndPoint.Address);
                             
-                            _pluginLog.Debug($"Discovered peer: {peer.PlayerName} in syncshell {peer.SyncshellId}");
+                            if (!isLocalAddress)
+                            {
+                                _discoveredPeers[peer.PlayerName] = peer;
+                                PeerDiscovered?.Invoke(peer);
+                                _pluginLog.Debug($"Discovered peer: {peer.PlayerName} in syncshell {peer.SyncshellId} from {peer.IPAddress}");
+                            }
+                            else
+                            {
+                                _pluginLog.Debug($"Ignoring self-announcement from {peer.PlayerName}");
+                            }
                         }
                     }
                     catch (JsonException)
@@ -151,6 +167,20 @@ namespace FyteClub
         }
 
         public List<DiscoveredPeer> GetDiscoveredPeers() => _discoveredPeers.Values.ToList();
+
+        private bool IsLocalIPAddress(IPAddress address)
+        {
+            try
+            {
+                // Get all local network interfaces
+                var host = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName());
+                return host.AddressList.Any(ip => ip.Equals(address));
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         public void Dispose()
         {

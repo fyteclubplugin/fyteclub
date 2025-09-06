@@ -90,7 +90,7 @@ namespace FyteClub
                 Members = new List<string> { "You" } // Add yourself as first member
             };
             
-            SecureLogger.LogInfo("SyncshellInfo created successfully with ID: {0}", result.Id);
+            SecureLogger.LogInfo("SyncshellInfo created successfully with ID: {0}, Name: {1}", result.Id, result.Name);
             return result;
         }
 
@@ -141,6 +141,7 @@ namespace FyteClub
                 // Check if we already have this syncshell
                 var identity = new SyncshellIdentity(name, masterPassword);
                 var syncshellHash = identity.GetSyncshellHash();
+                SecureLogger.LogInfo("Generated syncshell hash for join: {0} (name: {1})", syncshellHash, name);
                 
                 if (_sessions.ContainsKey(syncshellHash))
                 {
@@ -342,11 +343,14 @@ namespace FyteClub
         public List<SyncshellInfo> GetSyncshells()
         {
             var result = new List<SyncshellInfo>();
-            foreach (var session in _sessions.Values)
+            foreach (var kvp in _sessions)
             {
+                var sessionId = kvp.Key;
+                var session = kvp.Value;
+                
                 result.Add(new SyncshellInfo
                 {
-                    Id = session.Identity.GetSyncshellHash(),
+                    Id = sessionId, // Use the actual session key as ID
                     Name = session.Identity.Name,
                     EncryptionKey = Convert.ToBase64String(session.Identity.EncryptionKey),
                     IsOwner = session.IsHost,
@@ -473,10 +477,31 @@ namespace FyteClub
 
         public void RemoveSyncshell(string syncshellId)
         {
+            SecureLogger.LogInfo("Attempting to remove syncshell: {0}", syncshellId);
+            
+            // Try direct removal first
             if (_sessions.TryGetValue(syncshellId, out var session))
             {
                 session.Dispose();
                 _sessions.Remove(syncshellId);
+                SecureLogger.LogInfo("Successfully removed syncshell: {0}", syncshellId);
+                return;
+            }
+            
+            // If direct removal fails, try to find by name or partial ID match
+            var sessionToRemove = _sessions.FirstOrDefault(kvp => 
+                kvp.Key.Contains(syncshellId) || 
+                kvp.Value.Identity.Name.Equals(syncshellId, StringComparison.OrdinalIgnoreCase));
+                
+            if (sessionToRemove.Value != null)
+            {
+                sessionToRemove.Value.Dispose();
+                _sessions.Remove(sessionToRemove.Key);
+                SecureLogger.LogInfo("Successfully removed syncshell by fallback match: {0}", sessionToRemove.Key);
+            }
+            else
+            {
+                SecureLogger.LogWarning("Could not find syncshell to remove: {0}", syncshellId);
             }
         }
 

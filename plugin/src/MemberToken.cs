@@ -36,7 +36,7 @@ namespace FyteClub
         public static MemberToken Create(string groupId, Ed25519Identity issuer, Ed25519Identity member, TimeSpan? validity = null)
         {
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var expiry = now + (validity?.TotalSeconds ?? TimeSpan.FromDays(180).TotalSeconds); // 6 months default
+            var expiry = now + (validity?.TotalSeconds ?? TimeSpan.FromDays(36500).TotalSeconds); // 100 years default (effectively permanent)
 
             var token = new MemberToken
             {
