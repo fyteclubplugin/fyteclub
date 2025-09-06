@@ -3,17 +3,14 @@ project(webrtc_native)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# Find libwebrtc
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(WEBRTC REQUIRED libwebrtc)
-
 # Create shared library
 add_library(webrtc_native SHARED webrtc_wrapper.cpp)
 
-# Link libwebrtc
-target_link_libraries(webrtc_native ${WEBRTC_LIBRARIES})
-target_include_directories(webrtc_native PRIVATE ${WEBRTC_INCLUDE_DIRS})
-target_compile_options(webrtc_native PRIVATE ${WEBRTC_CFLAGS_OTHER})
+# Link Google WebRTC
+set(WEBRTC_ROOT "${CMAKE_SOURCE_DIR}/../webrtc-checkout/src")
+target_include_directories(webrtc_native PRIVATE "${WEBRTC_ROOT}")
+target_link_directories(webrtc_native PRIVATE "${WEBRTC_ROOT}/out/Default/obj")
+target_link_libraries(webrtc_native webrtc)
 
 # Windows-specific settings
 if(WIN32)

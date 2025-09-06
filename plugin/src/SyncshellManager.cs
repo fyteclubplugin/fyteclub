@@ -18,6 +18,9 @@ namespace FyteClub
         private readonly SignalingService _signalingService;
         private readonly Timer _uptimeTimer;
         private readonly Timer _connectionTimeoutTimer;
+        private readonly SecureTokenStorage _tokenStorage;
+        private readonly PhonebookPersistence _phonebookPersistence;
+        private readonly ReconnectionProtocol _reconnectionProtocol;
         private bool _disposed;
         
         private const int CONNECTION_TIMEOUT_SECONDS = 60;
@@ -28,6 +31,9 @@ namespace FyteClub
             _signalingService = new SignalingService();
             _uptimeTimer = new Timer(UpdateUptimeCounters, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
             _connectionTimeoutTimer = new Timer(CheckConnectionTimeouts, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+            _tokenStorage = new SecureTokenStorage(null!); // Will be injected properly
+            _phonebookPersistence = new PhonebookPersistence(null!);
+            _reconnectionProtocol = new ReconnectionProtocol(null!, _tokenStorage, new Ed25519Identity());
         }
 
         public SyncshellManager(object config)

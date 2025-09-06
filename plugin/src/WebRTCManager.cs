@@ -105,34 +105,56 @@ namespace FyteClub
 
         public async Task<RTCSessionDescription> CreateOffer()
         {
-            // Simulate WebRTC offer creation
+            // Simulate WebRTC offer creation like JS sample
             await Task.Delay(100);
             
-            return new RTCSessionDescription
+            var offer = new RTCSessionDescription
             {
                 Type = "offer",
                 Sdp = GenerateMockSDP("offer")
             };
+            
+            // Auto set local description like JS sample
+            await SetLocalDescription(offer);
+            return offer;
         }
 
         public async Task<RTCSessionDescription> CreateAnswer(RTCSessionDescription offer)
         {
+            // Set remote description first like JS sample
+            await SetRemoteDescription(offer);
+            
             // Simulate WebRTC answer creation
             await Task.Delay(100);
             
-            return new RTCSessionDescription
+            var answer = new RTCSessionDescription
             {
                 Type = "answer", 
                 Sdp = GenerateMockSDP("answer")
             };
+            
+            // Auto set local description like JS sample
+            await SetLocalDescription(answer);
+            return answer;
         }
 
         public async Task SetRemoteDescription(RTCSessionDescription description)
         {
             await Task.Delay(50);
-            _isConnected = true;
-            OnConnected?.Invoke();
-            _pluginLog.Info("WebRTC peer connected");
+            _pluginLog.Debug($"Set remote description: {description.Type}");
+        }
+        
+        public async Task SetLocalDescription(RTCSessionDescription description)
+        {
+            await Task.Delay(50);
+            _pluginLog.Debug($"Set local description: {description.Type}");
+            
+            if (description.Type == "answer")
+            {
+                _isConnected = true;
+                OnConnected?.Invoke();
+                _pluginLog.Info("WebRTC peer connected");
+            }
         }
 
         public void SendData(string data)

@@ -13,8 +13,17 @@ mkdir "release"
 echo Build directory cleaned
 echo.
 
+:: build native WebRTC library
+echo [2/5] Building WebRTC native library...
+call build-webrtc-native.bat
+if %errorlevel% neq 0 (
+    echo WebRTC native build failed - using mock implementation
+    echo See WEBRTC_SETUP.md for build requirements
+)
+echo.
+
 :: build plugin
-echo [2/4] Building P2P plugin...
+echo [3/5] Building P2P plugin...
 cd plugin
 dotnet build -c Release --verbosity minimal
 if %errorlevel% neq 0 (
@@ -26,19 +35,19 @@ cd ..
 echo.
 
 :: create plugin package
-echo [3/4] Creating P2P plugin package...
-mkdir "release\FyteClub-P2P-Plugin"
+echo [4/5] Creating P2P plugin package...
+mkdir "release\FyteClub-Plugin"
 
 :: copy main files
-copy "plugin\bin\Release\FyteClub.dll" "release\FyteClub-P2P-Plugin\" >nul
-copy "plugin\FyteClub.json" "release\FyteClub-P2P-Plugin\" >nul
-copy "plugin\bin\Release\FyteClub.deps.json" "release\FyteClub-P2P-Plugin\" >nul
+copy "plugin\bin\Release\FyteClub.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\FyteClub.json" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\FyteClub.deps.json" "release\FyteClub-Plugin\" >nul
 
 :: copy documentation
-copy "README.md" "release\FyteClub-P2P-Plugin\" >nul
+copy "README.md" "release\FyteClub-Plugin\" >nul
 
 :: check it worked
-if not exist "release\FyteClub-P2P-Plugin\FyteClub.dll" (
+if not exist "release\FyteClub-Plugin\FyteClub.dll" (
     echo Plugin package failed - missing DLL
     exit /b 1
 )
@@ -47,10 +56,10 @@ echo P2P plugin package created
 echo.
 
 :: create zip file
-echo [4/4] Creating ZIP file...
+echo [5/5] Creating ZIP file...
 
 cd release
-powershell -command "Compress-Archive -Path 'FyteClub-P2P-Plugin\*' -DestinationPath 'FyteClub-P2P-Plugin.zip' -Force"
+powershell -command "Compress-Archive -Path 'FyteClub-Plugin\*' -DestinationPath 'FyteClub-Plugin.zip' -Force"
 if %errorlevel% neq 0 (
     echo Plugin ZIP creation failed
     cd ..
@@ -64,7 +73,7 @@ echo.
 :: check results
 echo.
 echo Build verification:
-if exist "release\FyteClub-P2P-Plugin.zip" (
+if exist "release\FyteClub-Plugin.zip" (
     echo   P2P Plugin ZIP: OK
 ) else (
     echo   P2P Plugin ZIP: Failed
@@ -74,5 +83,5 @@ echo.
 echo FyteClub P2P v%CURRENT_VERSION% build complete
 echo.
 echo Release package:
-echo   release\FyteClub-P2P-Plugin.zip
+echo   release\FyteClub-Plugin.zip
 echo.

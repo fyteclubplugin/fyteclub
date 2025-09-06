@@ -3,6 +3,8 @@
 #include "api/peer_connection_interface.h"
 #include "api/create_peerconnection_factory.h"
 #include "api/data_channel_interface.h"
+#include "rtc_base/ref_counted_object.h"
+#include "rtc_base/copy_on_write_buffer.h"
 
 using namespace webrtc;
 
@@ -29,8 +31,13 @@ __declspec(dllexport) int InitializePeerConnection(WebRTCPeer* peer, const char*
     server.uri = stun_server;
     config.servers.push_back(server);
     
-    peer->peer_connection = peer->factory->CreatePeerConnection(config, nullptr, nullptr, nullptr);
-    return peer->peer_connection ? 0 : -1;
+    PeerConnectionDependencies dependencies(nullptr);
+    auto result = peer->factory->CreatePeerConnectionOrError(config, std::move(dependencies));
+    if (result.ok()) {
+        peer->peer_connection = result.value();
+        return 0;
+    }
+    return -1;
 }
 
 __declspec(dllexport) void* CreateDataChannel(WebRTCPeer* peer, const char* label) {
@@ -38,10 +45,13 @@ __declspec(dllexport) void* CreateDataChannel(WebRTCPeer* peer, const char* labe
     
     DataChannelInit config;
     config.ordered = true;
-    config.reliable = true;
     
-    peer->data_channel = peer->peer_connection->CreateDataChannel(label, &config);
-    return peer->data_channel.get();
+    auto result = peer->peer_connection->CreateDataChannelOrError(label, &config);
+    if (result.ok()) {
+        peer->data_channel = result.value();
+        return peer->data_channel.get();
+    }
+    return nullptr;
 }
 
 __declspec(dllexport) int CreateOffer(WebRTCPeer* peer) {
@@ -51,36 +61,12 @@ __declspec(dllexport) int CreateOffer(WebRTCPeer* peer) {
     return 0;
 }
 
-__declspec(dllexport) int CreateAnswer(WebRTCPeer* peer, const char* offer_sdp) {
-    if (!peer || !peer->peer_connection) return -1;
-    
-    // Set remote description and create answer
-    SessionDescriptionInterface* session_description = 
-        CreateSessionDescription(SdpType::kOffer, offer_sdp);
-    
-    peer->peer_connection->SetRemoteDescription(nullptr, session_description);
-    peer->peer_connection->CreateAnswer(nullptr, PeerConnectionInterface::RTCOfferAnswerOptions());
-    return 0;
-}
-
-__declspec(dllexport) int SetRemoteDescription(WebRTCPeer* peer, const char* sdp) {
-    if (!peer || !peer->peer_connection) return -1;
-    
-    SessionDescriptionInterface* session_description = 
-        CreateSessionDescription(SdpType::kAnswer, sdp);
-    
-    peer->peer_connection->SetRemoteDescription(nullptr, session_description);
-    return 0;
-}
-
 __declspec(dllexport) int SendData(void* data_channel, const uint8_t* data, int length) {
     auto* channel = static_cast<DataChannelInterface*>(data_channel);
     if (!channel || channel->state() != DataChannelInterface::kOpen) return -1;
     
-    rtc::CopyOnWriteBuffer buffer(data, length);
-    DataBuffer data_buffer(buffer, true);
-    
-    return channel->Send(data_buffer) ? 0 : -1;
+    webrtc::DataBuffer buffer(rtc::CopyOnWriteBuffer(data, length), true);
+    return channel->Send(buffer) ? 0 : -1;
 }
 
 __declspec(dllexport) void DestroyPeerConnection(WebRTCPeer* peer) {

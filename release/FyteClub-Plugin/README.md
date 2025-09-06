@@ -102,7 +102,14 @@ cd plugin-tests
 dotnet test
 ```
 
-See P2P_ROADMAP.md for development status and p2p-syncshell-architecture.md for technical details.
+See P2P_ROADMAP.md for development status.
+
+## Release
+
+To build P2P release:
+```bash
+build-p2p-release.bat
+```
 
 ## Support
 

@@ -22,9 +22,9 @@
     "IconUrl": "",
     "ImageUrls": [],
     "AcceptsFeedback": true,
-    "DownloadLinkInstall": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-P2P-Plugin.zip",
-    "DownloadLinkTesting": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-P2P-Plugin.zip",
-    "DownloadLinkUpdate": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-P2P-Plugin.zip",
+    "DownloadLinkInstall": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-Plugin.zip",
+    "DownloadLinkTesting": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-Plugin.zip",
+    "DownloadLinkUpdate": "https://github.com/fyteclubplugin/fyteclub/releases/latest/download/FyteClub-Plugin.zip",
     "DownloadCount": 0,
     "LastUpdated": "2024-12-19T00:00:00.000Z"
   }
