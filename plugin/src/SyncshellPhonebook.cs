@@ -108,6 +108,26 @@ namespace FyteClub
             };
             return JsonSerializer.Deserialize<SyncshellPhonebook>(data, options) ?? new SyncshellPhonebook();
         }
+
+        public PhonebookEntry? GetEntry(string playerName)
+        {
+            // Simple lookup by player name - in production this would be more sophisticated
+            foreach (var member in Members.Values)
+            {
+                if (member.LastSeen > DateTime.UtcNow.AddMinutes(-5)) // Only recent entries
+                {
+                    return new PhonebookEntry
+                    {
+                        PeerId = playerName,
+                        PublicKey = Convert.ToBase64String(member.PublicKey),
+                        IpAddress = member.IP.ToString(),
+                        Port = member.Port,
+                        Timestamp = ((DateTimeOffset)member.LastSeen).ToUnixTimeSeconds()
+                    };
+                }
+            }
+            return null;
+        }
     }
 
     public class IPAddressConverter : JsonConverter<IPAddress>

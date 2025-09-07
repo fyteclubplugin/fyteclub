@@ -18,23 +18,24 @@ echo.
 
 :: build native WebRTC library
 echo [2/5] Building WebRTC native library...
-call build-webrtc-native.bat
+call build-native.bat
 if %errorlevel% neq 0 (
     echo WebRTC native build failed - using mock implementation
-    echo See WEBRTC_SETUP.md for build requirements
+    echo See integration-test.md for build requirements
 )
 echo.
 
 :: build plugin
 echo [3/5] Building P2P plugin...
-cd plugin
+cd /d "%~dp0plugin"
 dotnet build -c Release --verbosity minimal
 if %errorlevel% neq 0 (
     echo Plugin build failed
+    cd /d "%~dp0"
     exit /b 1
 )
+cd /d "%~dp0"
 echo P2P plugin built
-cd ..
 echo.
 
 :: create plugin package
@@ -45,6 +46,12 @@ mkdir "release\FyteClub-Plugin"
 copy "plugin\bin\Release\win-x64\FyteClub.dll" "release\FyteClub-Plugin\" >nul
 copy "plugin\FyteClub.json" "release\FyteClub-Plugin\" >nul
 copy "plugin\bin\Release\win-x64\FyteClub.deps.json" "release\FyteClub-Plugin\" >nul
+
+:: copy native WebRTC library (critical for P2P functionality)
+copy "plugin\bin\Release\webrtc_native.dll" "release\FyteClub-Plugin\" >nul
+if %errorlevel% neq 0 (
+    echo WARNING: webrtc_native.dll not found - P2P features will be disabled
+)
 
 :: copy API dependencies
 if exist "plugin\bin\Release\win-x64\Penumbra.Api.dll" copy "plugin\bin\Release\win-x64\Penumbra.Api.dll" "release\FyteClub-Plugin\" >nul

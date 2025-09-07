@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "2WfCrCrDVVk=",
+  "dgSpecHash": "AxIJdq4lfMM=",
   "success": true,
-  "projectFilePath": "C:\\Users\\Me\\git\\fyteclub\\plugin-tests\\FyteClubPlugin.Tests.csproj",
+  "projectFilePath": "c:\\Users\\Me\\git\\fyteclub\\plugin-tests\\FyteClubPlugin.Tests.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\Me\\.nuget\\packages\\castle.core\\5.1.1\\castle.core.5.1.1.nupkg.sha512",
     "C:\\Users\\Me\\.nuget\\packages\\dalamudpackager\\13.1.0\\dalamudpackager.13.1.0.nupkg.sha512",

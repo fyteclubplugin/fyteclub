@@ -290,10 +290,10 @@ namespace FyteClub
         /// <summary>
         /// Get a component from the cache (wrapper for private method).
         /// </summary>
-        private async Task<ModComponent?> GetComponentFromCache(string componentHash)
+        private Task<ModComponent?> GetComponentFromCache(string componentHash)
         {
             // TODO: Access component cache through public interface
-            return null; // Placeholder
+            return Task.FromResult<ModComponent?>(null); // Placeholder
         }
 
         /// <summary>

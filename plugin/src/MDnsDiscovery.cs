@@ -111,20 +111,28 @@ namespace FyteClub
                                 LastSeen = DateTime.UtcNow
                             };
 
-                            // Don't discover ourselves - check if this is our own announcement
-                            var isLocalAddress = result.RemoteEndPoint.Address.Equals(IPAddress.Loopback) || 
-                                               result.RemoteEndPoint.Address.Equals(IPAddress.IPv6Loopback) ||
-                                               IsLocalIPAddress(result.RemoteEndPoint.Address);
+                            // Log all received announcements for debugging
+                            _pluginLog.Info($"Received announcement from {peer.PlayerName} at {result.RemoteEndPoint.Address} for syncshell {peer.SyncshellId}");
                             
-                            if (!isLocalAddress)
+                            // Don't discover ourselves - check if this is our own announcement
+                            var isLoopback = result.RemoteEndPoint.Address.Equals(IPAddress.Loopback) || 
+                                           result.RemoteEndPoint.Address.Equals(IPAddress.IPv6Loopback);
+                            var isLocalIP = IsLocalIPAddress(result.RemoteEndPoint.Address);
+                            
+                            _pluginLog.Info($"IP filtering: {result.RemoteEndPoint.Address} - Loopback: {isLoopback}, LocalIP: {isLocalIP}");
+                            
+                            // Only filter out our own IP, allow other computers on the network
+                            var isOwnAddress = isLoopback || isLocalIP;
+                            
+                            if (!isOwnAddress)
                             {
                                 _discoveredPeers[peer.PlayerName] = peer;
                                 PeerDiscovered?.Invoke(peer);
-                                _pluginLog.Debug($"Discovered peer: {peer.PlayerName} in syncshell {peer.SyncshellId} from {peer.IPAddress}");
+                                _pluginLog.Info($"✅ Discovered peer: {peer.PlayerName} in syncshell {peer.SyncshellId} from {peer.IPAddress}");
                             }
                             else
                             {
-                                _pluginLog.Debug($"Ignoring self-announcement from {peer.PlayerName}");
+                                _pluginLog.Info($"❌ Ignoring self-announcement from {peer.PlayerName} at {result.RemoteEndPoint.Address}");
                             }
                         }
                     }
@@ -172,12 +180,22 @@ namespace FyteClub
         {
             try
             {
-                // Get all local network interfaces
+                // Only filter out our own IP addresses, not the entire local network
                 var host = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName());
-                return host.AddressList.Any(ip => ip.Equals(address));
+                var localIPs = host.AddressList.ToList();
+                
+                // Log our local IPs for debugging
+                _pluginLog.Info($"Local IPs: {string.Join(", ", localIPs.Select(ip => ip.ToString()))}");
+                _pluginLog.Info($"Checking if {address} matches any local IP");
+                
+                var isLocal = localIPs.Any(ip => ip.Equals(address));
+                _pluginLog.Info($"Result: {address} is {(isLocal ? "local" : "external")}");
+                
+                return isLocal;
             }
-            catch
+            catch (Exception ex)
             {
+                _pluginLog.Warning($"Failed to check if {address} is local: {ex.Message}");
                 return false;
             }
         }

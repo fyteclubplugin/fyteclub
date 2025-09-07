@@ -3,7 +3,7 @@ using System.Threading.Tasks;
 
 namespace FyteClub
 {
-    public class MockWebRTCConnection : IDisposable
+    public class MockWebRTCConnection : IWebRTCConnection
     {
         private bool _isConnected;
         private bool _disposed;

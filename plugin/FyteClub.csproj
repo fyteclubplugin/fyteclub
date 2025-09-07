@@ -4,7 +4,7 @@
     <AssemblyName>FyteClub</AssemblyName>
     <Version>4.1.2</Version>
     <PackageProjectUrl>https://github.com/fyteclubplugin/fyteclub</PackageProjectUrl>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
     <!-- Suppress platform-specific warnings since this is a Windows-only FFXIV plugin -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>

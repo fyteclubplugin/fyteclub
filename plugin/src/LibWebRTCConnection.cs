@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 
 namespace FyteClub
 {
-    public class LibWebRTCConnection : IDisposable
+    public class LibWebRTCConnection : IWebRTCConnection
     {
         private IntPtr _peerConnection = IntPtr.Zero;
         private IntPtr _dataChannel = IntPtr.Zero;
@@ -13,6 +13,7 @@ namespace FyteClub
 
         public event Action? OnConnected;
         public event Action? OnDisconnected;
+        public event Action<byte[]>? OnDataReceived;
 
         public bool IsConnected => _isConnected;
 

@@ -92,5 +92,46 @@ namespace FyteClubPlugin.Tests
             Assert.Equal(port, decodedPort);
             Assert.Equal(counter, decodedCounter);
         }
+
+        [Fact]
+        public void BootstrapInvite_GenerateAndDecode_RoundTrip()
+        {
+            // Arrange
+            var syncshellId = "bootstrap-test-syncshell";
+            var offerSdp = "v=0\no=- 123456 2 IN IP4 127.0.0.1\ns=-\nt=0 0\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel";
+            var groupKey = Encoding.UTF8.GetBytes("test-group-key-32-bytes-long!!");
+            var publicKey = "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+            var ipAddress = "192.168.1.100";
+            var port = 7777;
+            
+            // Act
+            var inviteCode = InviteCodeGenerator.GenerateBootstrapInvite(syncshellId, offerSdp, groupKey, publicKey, ipAddress, port);
+            var (decodedSyncshell, decodedOffer, _, bootstrap) = InviteCodeGenerator.DecodeBootstrapInvite(inviteCode, groupKey);
+            
+            // Assert
+            Assert.StartsWith("syncshell://", inviteCode);
+            Assert.Equal(syncshellId, decodedSyncshell);
+            Assert.Equal(offerSdp, decodedOffer);
+            Assert.NotNull(bootstrap);
+            Assert.Equal(publicKey, bootstrap.PublicKey);
+            Assert.Equal(ipAddress, bootstrap.IpAddress);
+            Assert.Equal(port, bootstrap.Port);
+        }
+
+        [Fact]
+        public void BootstrapInvite_WithoutBootstrapData_ReturnsNull()
+        {
+            // Arrange
+            var syncshellId = "regular-invite-test";
+            var offerSdp = "test-offer-sdp";
+            var groupKey = Encoding.UTF8.GetBytes("test-group-key-32-bytes-long!!");
+            
+            // Act - Generate regular invite without bootstrap data
+            var inviteCode = InviteCodeGenerator.GenerateWebRTCInvite(syncshellId, offerSdp, groupKey);
+            var (_, _, _, bootstrap) = InviteCodeGenerator.DecodeBootstrapInvite(inviteCode, groupKey);
+            
+            // Assert
+            Assert.Null(bootstrap);
+        }
     }
 }

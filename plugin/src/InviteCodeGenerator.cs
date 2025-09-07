@@ -1,3 +1,4 @@
+
 using System;
 using System.IO;
 using System.IO.Compression;
@@ -20,6 +21,38 @@ namespace FyteClub
                 sdp = offerSdp,
                 timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 answerChannel = answerChannel // Optional automated signaling channel
+            };
+            
+            var json = JsonSerializer.Serialize(invite);
+            var compressed = CompressString(json);
+            
+            using var hmac = new HMACSHA256(groupKey);
+            var signature = hmac.ComputeHash(compressed);
+            
+            var combined = new byte[compressed.Length + 8];
+            Array.Copy(compressed, 0, combined, 0, compressed.Length);
+            Array.Copy(signature, 0, combined, compressed.Length, 8);
+            
+            return "syncshell://" + Convert.ToBase64String(combined).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        }
+        
+        public static string GenerateBootstrapInvite(string syncshellId, string offerSdp, byte[] groupKey, string publicKey, string ipAddress, int port, string? answerChannel = null)
+        {
+            var bootstrapData = new
+            {
+                publicKey,
+                ipAddress,
+                port
+            };
+            
+            var invite = new
+            {
+                syncshell = syncshellId,
+                type = "offer",
+                sdp = offerSdp,
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                answerChannel = answerChannel,
+                bootstrap = bootstrapData
             };
             
             var json = JsonSerializer.Serialize(invite);
@@ -110,6 +143,44 @@ namespace FyteClub
             var answerChannel = invite.TryGetProperty("answerChannel", out var channel) ? channel.GetString() : null;
             
             return (invite.GetProperty("syncshell").GetString()!, invite.GetProperty("sdp").GetString()!, answerChannel);
+        }
+        
+        public static (string syncshellId, string offerSdp, string? answerChannel, BootstrapInfo? bootstrap) DecodeBootstrapInvite(string inviteCode, byte[] groupKey)
+        {
+            if (!inviteCode.StartsWith("syncshell://"))
+                throw new InvalidOperationException("Invalid invite code format");
+                
+            var base64 = inviteCode[12..].Replace('-', '+').Replace('_', '/');
+            while (base64.Length % 4 != 0) base64 += "=";
+            
+            var bytes = Convert.FromBase64String(base64);
+            
+            var payload = new byte[bytes.Length - 8];
+            var signature = new byte[8];
+            Array.Copy(bytes, 0, payload, 0, payload.Length);
+            Array.Copy(bytes, payload.Length, signature, 0, 8);
+            
+            using var hmac = new HMACSHA256(groupKey);
+            var expectedSig = hmac.ComputeHash(payload);
+            
+            for (int i = 0; i < 8; i++)
+            {
+                if (signature[i] != expectedSig[i])
+                    throw new InvalidOperationException("Invalid invite code signature");
+            }
+            
+            var json = DecompressString(payload);
+            var invite = JsonSerializer.Deserialize<JsonElement>(json);
+            
+            var answerChannel = invite.TryGetProperty("answerChannel", out var channel) ? channel.GetString() : null;
+            
+            BootstrapInfo? bootstrapInfo = null;
+            if (invite.TryGetProperty("bootstrap", out var bootstrapElement))
+            {
+                var bootstrapJson = bootstrapElement.GetRawText();
+                bootstrapInfo = JsonSerializer.Deserialize<BootstrapInfo>(bootstrapJson);
+            }
+            return (invite.GetProperty("syncshell").GetString()!, invite.GetProperty("sdp").GetString()!, answerChannel, bootstrapInfo);
         }
         
         public static (string syncshellId, string answerSdp) DecodeWebRTCAnswer(string answerCode, byte[] groupKey)
@@ -274,5 +345,12 @@ namespace FyteClub
             gzip.CopyTo(output);
             return Encoding.UTF8.GetString(output.ToArray());
         }
+    }
+    
+    public class BootstrapInfo
+    {
+        public string PublicKey { get; set; } = string.Empty;
+        public string IpAddress { get; set; } = string.Empty;
+        public int Port { get; set; }
     }
 }
