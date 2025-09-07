@@ -34,6 +34,7 @@ namespace FyteClub
             Console.WriteLine($"Syncshell host listening on port 7777");
             
             _ = Task.Run(AcceptConnections, _cancellation.Token);
+            await Task.Delay(100); // Allow listener to start
         }
 
         public async Task ConnectToHost(IPAddress hostIP, int hostPort)

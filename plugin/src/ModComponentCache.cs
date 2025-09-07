@@ -187,6 +187,22 @@ namespace FyteClub
         }
 
         /// <summary>
+        /// Clear all recipes and component references for a specific player.
+        /// </summary>
+        public void ClearPlayerCache(string playerName)
+        {
+            var keysToRemove = _recipes.Keys.Where(k => k.StartsWith(playerName + ":")).ToList();
+            foreach (var key in keysToRemove)
+            {
+                _recipes.TryRemove(key, out _);
+                var recipePath = Path.Combine(_recipesDir, $"{key.Replace(":", "_")}.json");
+                if (File.Exists(recipePath))
+                    File.Delete(recipePath);
+            }
+            _pluginLog.Info($"Cleared component cache for {playerName}");
+        }
+
+        /// <summary>
         /// Store an individual mod component for reuse across multiple appearances.
         /// </summary>
         private async Task<string> StoreModComponentInternal(string componentType, string identifier, string? data)

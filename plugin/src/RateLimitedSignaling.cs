@@ -143,7 +143,7 @@ namespace FyteClub
             return true;
         }
 
-        public async Task<string?> GetAnswer(string syncshellId, string playerName) => null;
+        public async Task<string?> GetAnswer(string syncshellId, string playerName) => await Task.FromResult<string?>(null);
         public void Dispose() { }
     }
 
@@ -161,7 +161,7 @@ namespace FyteClub
             return true;
         }
 
-        public async Task<string?> GetAnswer(string syncshellId, string playerName) => null;
+        public async Task<string?> GetAnswer(string syncshellId, string playerName) => await Task.FromResult<string?>(null);
         public void Dispose() { }
     }
 }

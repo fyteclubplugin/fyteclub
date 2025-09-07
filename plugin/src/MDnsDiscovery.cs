@@ -40,7 +40,7 @@ namespace FyteClub
                 _udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, MDNS_PORT));
                 _udpClient.JoinMulticastGroup(IPAddress.Parse("224.0.0.251"));
 
-                _pluginLog.Info("mDNS discovery started");
+                SecureLogger.LogInfo("mDNS discovery started");
 
                 // Start listening for mDNS responses
                 _ = Task.Run(ListenForResponses);
@@ -50,7 +50,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Failed to start mDNS discovery: {ex.Message}");
+                SecureLogger.LogError("Failed to start mDNS discovery: {0}", InputValidator.SanitizeForLog(ex.Message));
             }
             
             return Task.CompletedTask;
@@ -60,8 +60,8 @@ namespace FyteClub
         {
             try
             {
-                var effectivePlayerName = playerName ?? Environment.UserName;
-                _pluginLog.Info($"Announcing {syncshells.Count} syncshells as player '{effectivePlayerName}'");
+                var effectivePlayerName = InputValidator.SanitizeForLog(playerName ?? Environment.UserName);
+                SecureLogger.LogInfo("Announcing {0} syncshells as player '{1}'", syncshells.Count, effectivePlayerName);
                 
                 foreach (var syncshell in syncshells.Where(s => s.IsActive))
                 {
@@ -79,12 +79,12 @@ namespace FyteClub
                     var multicastEndpoint = new IPEndPoint(IPAddress.Parse("224.0.0.251"), MDNS_PORT);
                     await _udpClient.SendAsync(data, multicastEndpoint);
                     
-                    _pluginLog.Info($"Announced syncshell '{syncshell.Name}' with ID '{syncshell.Id}' as player '{effectivePlayerName}'");
+                    SecureLogger.LogInfo("Announced syncshell '{0}' with ID '{1}' as player '{2}'", InputValidator.SanitizeForLog(syncshell.Name), InputValidator.SanitizeForLog(syncshell.Id), effectivePlayerName);
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Failed to announce syncshells: {ex.Message}");
+                SecureLogger.LogError("Failed to announce syncshells: {0}", InputValidator.SanitizeForLog(ex.Message));
             }
         }
 
@@ -112,14 +112,14 @@ namespace FyteClub
                             };
 
                             // Log all received announcements for debugging
-                            _pluginLog.Info($"Received announcement from {peer.PlayerName} at {result.RemoteEndPoint.Address} for syncshell {peer.SyncshellId}");
+                            SecureLogger.LogInfo("Received announcement from {0} at {1} for syncshell {2}", InputValidator.SanitizeForLog(peer.PlayerName), InputValidator.SanitizeForLog(result.RemoteEndPoint.Address.ToString()), InputValidator.SanitizeForLog(peer.SyncshellId));
                             
                             // Don't discover ourselves - check if this is our own announcement
                             var isLoopback = result.RemoteEndPoint.Address.Equals(IPAddress.Loopback) || 
                                            result.RemoteEndPoint.Address.Equals(IPAddress.IPv6Loopback);
                             var isLocalIP = IsLocalIPAddress(result.RemoteEndPoint.Address);
                             
-                            _pluginLog.Info($"IP filtering: {result.RemoteEndPoint.Address} - Loopback: {isLoopback}, LocalIP: {isLocalIP}");
+                            SecureLogger.LogInfo("IP filtering: {0} - Loopback: {1}, LocalIP: {2}", InputValidator.SanitizeForLog(result.RemoteEndPoint.Address.ToString()), isLoopback, isLocalIP);
                             
                             // Only filter out our own IP, allow other computers on the network
                             var isOwnAddress = isLoopback || isLocalIP;
@@ -128,11 +128,11 @@ namespace FyteClub
                             {
                                 _discoveredPeers[peer.PlayerName] = peer;
                                 PeerDiscovered?.Invoke(peer);
-                                _pluginLog.Info($"✅ Discovered peer: {peer.PlayerName} in syncshell {peer.SyncshellId} from {peer.IPAddress}");
+                                SecureLogger.LogInfo("Discovered peer: {0} in syncshell {1} from {2}", InputValidator.SanitizeForLog(peer.PlayerName), InputValidator.SanitizeForLog(peer.SyncshellId), InputValidator.SanitizeForLog(peer.IPAddress));
                             }
                             else
                             {
-                                _pluginLog.Info($"❌ Ignoring self-announcement from {peer.PlayerName} at {result.RemoteEndPoint.Address}");
+                                SecureLogger.LogInfo("Ignoring self-announcement from {0} at {1}", InputValidator.SanitizeForLog(peer.PlayerName), InputValidator.SanitizeForLog(result.RemoteEndPoint.Address.ToString()));
                             }
                         }
                     }
@@ -144,7 +144,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Error in mDNS listener: {ex.Message}");
+                SecureLogger.LogError("Error in mDNS listener: {0}", InputValidator.SanitizeForLog(ex.Message));
             }
         }
 
@@ -185,17 +185,17 @@ namespace FyteClub
                 var localIPs = host.AddressList.ToList();
                 
                 // Log our local IPs for debugging
-                _pluginLog.Info($"Local IPs: {string.Join(", ", localIPs.Select(ip => ip.ToString()))}");
-                _pluginLog.Info($"Checking if {address} matches any local IP");
+                SecureLogger.LogInfo("Local IPs: {0}", InputValidator.SanitizeForLog(string.Join(", ", localIPs.Select(ip => ip.ToString()))));
+                SecureLogger.LogInfo("Checking if {0} matches any local IP", InputValidator.SanitizeForLog(address.ToString()));
                 
                 var isLocal = localIPs.Any(ip => ip.Equals(address));
-                _pluginLog.Info($"Result: {address} is {(isLocal ? "local" : "external")}");
+                SecureLogger.LogInfo("Result: {0} is {1}", InputValidator.SanitizeForLog(address.ToString()), isLocal ? "local" : "external");
                 
                 return isLocal;
             }
             catch (Exception ex)
             {
-                _pluginLog.Warning($"Failed to check if {address} is local: {ex.Message}");
+                SecureLogger.LogWarning("Failed to check if {0} is local: {1}", InputValidator.SanitizeForLog(address.ToString()), InputValidator.SanitizeForLog(ex.Message));
                 return false;
             }
         }

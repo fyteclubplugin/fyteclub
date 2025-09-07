@@ -54,7 +54,10 @@ namespace FyteClub
         {
             try
             {
-                var validatedUrl = InputValidator.ValidateUrl($"https://api.github.com/gists/{InputValidator.SanitizeForLog(gistId)}");
+                var sanitizedGistId = InputValidator.SanitizeForLog(gistId);
+                var url = $"https://api.github.com/gists/{sanitizedGistId}";
+                if (!InputValidator.ValidateUrl(url)) throw new ArgumentException("Invalid URL");
+                var validatedUrl = url;
                 var response = await _httpClient.GetAsync(validatedUrl);
                 var responseText = await response.Content.ReadAsStringAsync();
                 

@@ -160,9 +160,18 @@ namespace FyteClub
             InitializeClientCache();
             InitializeComponentCache();
             
-            _ = Task.Run(async () => await _mdnsDiscovery.StartDiscovery());
+            _ = Task.Run(async () => {
+                try
+                {
+                    await _mdnsDiscovery.StartDiscovery();
+                }
+                catch (Exception ex)
+                {
+                    SecureLogger.LogError("mDNS discovery startup failed: {0}", ex.Message);
+                }
+            });
             
-            _pluginLog.Info("FyteClub v4.2.0 initialized - P2P mod sharing with syncshells");
+            SecureLogger.LogInfo("FyteClub v4.2.0 initialized - P2P mod sharing with syncshells");
         }
 
         private void InitializeClientCache()
@@ -294,7 +303,7 @@ namespace FyteClub
             var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive).ToList();
             if (activeSyncshells.Count == 0) return;
             
-            _pluginLog.Info($"FyteClub: Attempting to discover peers for {activeSyncshells.Count} active syncshells...");
+            SecureLogger.LogInfo("FyteClub: Attempting to discover peers for {0} active syncshells...", activeSyncshells.Count);
             
             string? localPlayerName = null;
             await Task.Run(() => _framework.RunOnFrameworkThread(() =>
@@ -325,21 +334,27 @@ namespace FyteClub
                 
                 localPlayerName ??= "Unknown";
                 await _mdnsDiscovery.AnnounceSyncshells(activeSyncshells, localPlayerName);
-                _pluginLog.Info($"FyteClub: Announced {activeSyncshells.Count} syncshells as player '{localPlayerName}'");
+                SecureLogger.LogInfo("FyteClub: Announced {0} syncshells as player '{1}'", activeSyncshells.Count, localPlayerName);
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"FyteClub: Peer discovery failed: {ex.Message}");
+                SecureLogger.LogError("FyteClub: Peer discovery failed: {0}", ex.Message);
             }
         }
 
         private void OnPlayerDetected(PlayerDetectedMessage message)
         {
-            _pluginLog.Info($"FyteClub: OnPlayerDetected called for: {message.PlayerName}");
+            SecureLogger.LogInfo("FyteClub: OnPlayerDetected called for: {0}", message.PlayerName);
             
             if (_blockedUsers.ContainsKey(message.PlayerName))
             {
-                _pluginLog.Info($"FyteClub: Ignoring blocked user: {message.PlayerName}");
+                SecureLogger.LogInfo("FyteClub: Ignoring blocked user: {0}", message.PlayerName);
+                return;
+            }
+            
+            // Only process players who are in our syncshells
+            if (!IsPlayerInAnySyncshell(message.PlayerName))
+            {
                 return;
             }
 
@@ -381,18 +396,19 @@ namespace FyteClub
                 var cachedMods = await _clientCache.GetCachedPlayerMods(playerName);
                 if (cachedMods != null)
                 {
-                    _pluginLog.Info($"🎯 Cache HIT for {playerName}");
+                    SecureLogger.LogInfo("🎯 Cache HIT for {0}", playerName);
                     return;
                 }
                 else
                 {
-                    _pluginLog.Info($"🌐 Cache MISS for {playerName}");
+                    SecureLogger.LogInfo("🌐 Cache MISS for {0}", playerName);
                 }
             }
             var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
             foreach (var syncshell in activeSyncshells)
             {
-                var success = RequestPlayerModsFromSyncshell(playerName, syncshell);
+                // Fix: Run RequestPlayerModsFromSyncshell in a Task to avoid CS1998 warning
+                var success = await Task.Run(() => RequestPlayerModsFromSyncshell(playerName, syncshell));
                 if (success)
                 {
                     _playerSyncshellAssociations[playerName] = syncshell;
@@ -415,18 +431,59 @@ namespace FyteClub
             _loadingStates[playerName] = LoadingState.Downloading;
             if (_recentlySyncedUsers.ContainsKey(playerName))
             {
-                _pluginLog.Info($"FyteClub: Found {playerName} in syncshell {syncshell.Name} (P2P)");
+                SecureLogger.LogInfo("FyteClub: Found {0} in syncshell {1} (P2P)", playerName, syncshell.Name);
                 _loadingStates[playerName] = LoadingState.Complete;
                 _playerLastSeen[playerName] = DateTime.UtcNow;
                 return true;
             }
             return false;
         }
+        
+        private bool IsPlayerInAnySyncshell(string playerName)
+        {
+            var playerNameOnly = playerName.Split('@')[0];
+            var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
+            
+            return activeSyncshells.Any(syncshell => 
+                syncshell.Members?.Any(member => 
+                    member.Equals(playerName, StringComparison.OrdinalIgnoreCase) ||
+                    member.Equals(playerNameOnly, StringComparison.OrdinalIgnoreCase)) ?? false);
+        }
+        
+        private FyteClubObjectKind? GetFyteClubObjectKind(Dalamud.Game.ClientState.Objects.Types.IGameObject obj)
+        {
+            return obj.ObjectKind switch
+            {
+                Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player => FyteClubObjectKind.Player,
+                Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc => FyteClubObjectKind.Companion, // Chocobo companions, carbuncles, etc.
+                Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion => FyteClubObjectKind.MinionOrMount, // Minions and mounts
+                Dalamud.Game.ClientState.Objects.Enums.ObjectKind.MountType => FyteClubObjectKind.MinionOrMount, // Mounts
+                _ => null // Don't handle other object types
+            };
+        }
+        
+        private bool IsOwnedByPlayer(Dalamud.Game.ClientState.Objects.Types.IGameObject obj, uint playerId)
+        {
+            return obj switch
+            {
+                IBattleNpc battleNpc => battleNpc.OwnerId == playerId,
+                ICharacter character => character.OwnerId == playerId,
+                _ => false
+            };
+        }
 
         public async Task<SyncshellInfo> CreateSyncshell(string name)
         {
             var syncshell = await _syncshellManager.CreateSyncshell(name);
             syncshell.IsActive = true;
+            
+            // Set creator as owner
+            var localPlayer = _clientState.LocalPlayer;
+            if (localPlayer?.Name?.TextValue != null)
+            {
+                syncshell.SetMemberRole(localPlayer.Name.TextValue, MemberRole.Owner);
+            }
+            
             SaveConfiguration();
             return syncshell;
         }
@@ -436,14 +493,35 @@ namespace FyteClub
             var joinResult = _syncshellManager.JoinSyncshell(syncshellName, encryptionKey);
             if (joinResult) 
             {
-                SaveConfiguration();
-                // Automatically share appearance when joining
-                _ = Task.Run(async () => {
-                    await Task.Delay(2000); // Give connection time to establish
+                // Set joiner role based on syncshell size
+                var syncshells = _syncshellManager.GetSyncshells();
+                var joinedSyncshell = syncshells.FirstOrDefault(s => s.Name == syncshellName);
+                if (joinedSyncshell != null)
+                {
                     var localPlayer = _clientState.LocalPlayer;
                     if (localPlayer?.Name?.TextValue != null)
                     {
-                        await SharePlayerModsToSyncshells(localPlayer.Name.TextValue);
+                        // Small syncshells: auto-inviter, large syncshells: member
+                        var role = joinedSyncshell.GetActiveMemberCount() < 10 ? MemberRole.Inviter : MemberRole.Member;
+                        joinedSyncshell.SetMemberRole(localPlayer.Name.TextValue, role);
+                    }
+                }
+                
+                SaveConfiguration();
+                // Automatically share appearance when joining
+                _ = Task.Run(async () => {
+                    try
+                    {
+                        await Task.Delay(2000); // Give connection time to establish
+                        var localPlayer = _clientState.LocalPlayer;
+                        if (localPlayer?.Name?.TextValue != null)
+                        {
+                            await SharePlayerModsToSyncshells(localPlayer.Name.TextValue);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        SecureLogger.LogError("Failed to auto-share appearance after joining syncshell: {0}", ex.Message);
                     }
                 });
             }
@@ -486,11 +564,11 @@ namespace FyteClub
                     try
                     {
                         await SharePlayerModsToSyncshells(capturedPlayerName);
-                        _pluginLog.Info($"FyteClub: Shared mods to syncshell peers");
+                        SecureLogger.LogInfo("FyteClub: Shared mods to syncshell peers");
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog.Error($"FyteClub: Failed to share mods: {ex.Message}");
+                        SecureLogger.LogError("FyteClub: Failed to share mods: {0}", ex.Message);
                     }
                 });
             });
@@ -513,7 +591,7 @@ namespace FyteClub
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog.Error($"FyteClub: Manual mod upload failed: {ex.Message}");
+                        SecureLogger.LogError("FyteClub: Manual mod upload failed: {0}", ex.Message);
                     }
                 });
             });
@@ -521,29 +599,80 @@ namespace FyteClub
 
         public void BlockUser(string playerName)
         {
+            if (string.IsNullOrEmpty(playerName)) return;
             if (_blockedUsers.TryAdd(playerName, 0))
             {
+                SecureLogger.LogInfo("Blocked user: {0}", playerName);
+                
+                // Immediately de-sync any mods from this user
+                DeSyncUserMods(playerName);
+                
+                // Remove from loading states
                 _loadingStates.TryRemove(playerName, out _);
+                
                 SaveConfiguration();
             }
         }
 
         public void UnblockUser(string playerName)
         {
+            if (string.IsNullOrEmpty(playerName)) return;
             if (_blockedUsers.TryRemove(playerName, out _))
             {
+                SecureLogger.LogInfo("Unblocked user: {0}, attempting to re-sync their mods", playerName);
+                
+                // Try to get their mods again and apply them
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await RequestPlayerMods(playerName);
+                    }
+                    catch (Exception ex)
+                    {
+                        SecureLogger.LogError("Failed to re-sync mods for unblocked user {0}: {1}", playerName, ex.Message);
+                    }
+                });
+                
                 SaveConfiguration();
             }
         }
 
         public bool IsUserBlocked(string playerName)
         {
+            if (string.IsNullOrEmpty(playerName)) return false;
             return _blockedUsers.ContainsKey(playerName);
         }
 
         public IEnumerable<string> GetRecentlySyncedUsers()
         {
             return _recentlySyncedUsers.Keys.OrderBy(name => name);
+        }
+        
+        private void DeSyncUserMods(string playerName)
+        {
+            try
+            {
+                SecureLogger.LogInfo("De-syncing mods from blocked user: {0}", playerName);
+                
+                // Remove from phonebook and clear their mods
+                var phonebookEntry = _syncshellManager.GetPhonebookEntry(playerName);
+                if (phonebookEntry != null)
+                {
+                    // Clear cached mods for this player
+                    _clientCache?.ClearPlayerCache(playerName);
+                    _componentCache?.ClearPlayerCache(playerName);
+                    
+                    // Request redraw to default appearance
+                    _redrawCoordinator.RedrawCharacterIfFound(playerName);
+                    
+                    SecureLogger.LogInfo("Cleared mods and triggered redraw for blocked user: {0}", playerName);
+                }
+            }
+            catch (Exception ex)
+            {
+                SecureLogger.LogError("Error de-syncing mods for {0}: {1}", playerName, ex.Message);
+            }
         }
 
         public void TestBlockUser(string playerName)
@@ -555,8 +684,15 @@ namespace FyteClub
         {
             _ = Task.Run(async () =>
             {
-                await PerformPeerDiscovery();
-                await AttemptPeerReconnections();
+                try
+                {
+                    await PerformPeerDiscovery();
+                    await AttemptPeerReconnections();
+                }
+                catch (Exception ex)
+                {
+                    SecureLogger.LogError("Peer reconnection failed: {0}", ex.Message);
+                }
             });
         }
 
@@ -568,7 +704,8 @@ namespace FyteClub
             {
                 if (syncshell.IsOwner)
                 {
-                    _syncshellManager.CreateSyncshellInternal(syncshell.Name, syncshell.EncryptionKey);
+                    // Fix: Await async call to avoid CS4014 warning
+                    Task.Run(async () => await _syncshellManager.CreateSyncshellInternal(syncshell.Name, syncshell.EncryptionKey)).Wait();
                 }
                 else
                 {
@@ -615,11 +752,14 @@ namespace FyteClub
                         };
 
                         var json = JsonSerializer.Serialize(modData);
-                        await _syncshellManager.SendModData(syncshell.Id, json);
+                        
+                        // ENCRYPT the mod data before sending
+                        var encryptedData = EncryptModData(json, syncshell.EncryptionKey);
+                        await _syncshellManager.SendModData(syncshell.Id, encryptedData);
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog.Warning($"FyteClub: Failed to send mods to syncshell {syncshell.Name}: {ex.Message}");
+                        SecureLogger.LogWarning("FyteClub: Failed to send mods to syncshell {0}: {1}", syncshell.Name, ex.Message);
                     }
                 }
                 
@@ -636,10 +776,17 @@ namespace FyteClub
                 var playerName = localPlayer.Name.TextValue;
                 _ = Task.Run(async () =>
                 {
-                    await Task.Delay(1000); // Brief delay for changes to apply
-                    await SharePlayerModsToSyncshells(playerName);
-                    ShareCompanionMods(playerName); // Also share companion mods
-                    _pluginLog.Debug($"Auto-shared appearance and companion mods after change");
+                    try
+                    {
+                        await Task.Delay(1000); // Brief delay for changes to apply
+                        await SharePlayerModsToSyncshells(playerName);
+                        ShareCompanionMods(playerName); // Also share owned object mods (companions, pets, minions, mounts)
+                        SecureLogger.LogInfo("Auto-shared appearance and companion mods after change");
+                    }
+                    catch (Exception ex)
+                    {
+                        SecureLogger.LogError("Failed to auto-share mods after system change: {0}", ex.Message);
+                    }
                 });
             }
         }
@@ -648,25 +795,31 @@ namespace FyteClub
         {
             try
             {
-                // Find companions owned by this player
-                var companions = new List<CompanionSnapshot>();
+                // Find all owned objects (companions, pets, minions, mounts)
+                var ownedObjects = new List<OwnedObjectSnapshot>();
+                var localPlayerId = _clientState.LocalPlayer?.GameObjectId;
+                
+                if (localPlayerId == null) return;
+                
                 foreach (var obj in _objectTable)
                 {
-                    if (obj is IBattleNpc npc && npc.OwnerId == _clientState.LocalPlayer?.GameObjectId)
+                    var objectKind = GetFyteClubObjectKind(obj);
+                    if (objectKind != null && IsOwnedByPlayer(obj, (uint)localPlayerId.Value))
                     {
-                        companions.Add(new CompanionSnapshot
+                        ownedObjects.Add(new OwnedObjectSnapshot
                         {
-                            Name = $"{ownerName}'s {npc.Name}",
-                            ObjectKind = npc.ObjectKind.ToString(),
-                            ObjectIndex = obj.ObjectIndex
+                            Name = $"{ownerName}'s {obj.Name}",
+                            ObjectKind = objectKind.Value,
+                            ObjectIndex = obj.ObjectIndex,
+                            OwnerName = ownerName
                         });
                     }
                 }
 
-                if (companions.Count > 0)
+                if (ownedObjects.Count > 0)
                 {
-                    CheckCompanionsForChanges(companions);
-                    _pluginLog.Debug($"Shared {companions.Count} companion mods for {ownerName}");
+                    CheckOwnedObjectsForChanges(ownedObjects);
+                    _pluginLog.Debug($"Shared {ownedObjects.Count} owned object mods for {ownerName}");
                 }
             }
             catch
@@ -744,7 +897,16 @@ namespace FyteClub
                         DebugLogObjectTypes();
                         break;
                     case "recovery":
-                        _ = Task.Run(HandlePluginRecovery);
+                        _ = Task.Run(async () => {
+                            try
+                            {
+                                await HandlePluginRecovery();
+                            }
+                            catch (Exception ex)
+                            {
+                                SecureLogger.LogError("Plugin recovery failed: {0}", ex.Message);
+                            }
+                        });
                         break;
                     default:
                         _configWindow.Toggle();
@@ -814,7 +976,7 @@ namespace FyteClub
                 {
                     await _clientCache.ApplyRecipeToPlayer(playerName, cachedMods.RecipeData);
                 }
-                _pluginLog.Info($"Applied cached mods for {playerName}");
+                SecureLogger.LogInfo("Applied cached mods for {0}", playerName);
             }
         }
 
@@ -822,14 +984,38 @@ namespace FyteClub
         {
             foreach (var player in nearbyPlayers)
             {
+                // Only process players who are in our syncshells
+                if (!IsPlayerInAnySyncshell(player.Name))
+                {
+                    continue;
+                }
+                
                 // Check network phonebook for peer changes
                 var phonebookEntry = _syncshellManager.GetPhonebookEntry(player.Name);
                 if (phonebookEntry != null)
                 {
                     // Get mod data from separate mapping
                     var modData = _syncshellManager.GetPlayerModData(player.Name);
-                    if (modData != null)
+                    if (modData?.AdvancedInfo != null)
                     {
+                        // Apply the mods to the character
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                var success = await _modSystemIntegration.ApplyPlayerMods(modData.AdvancedInfo, player.Name);
+                                if (success)
+                                {
+                                    SecureLogger.LogInfo("Applied phonebook mods for {0}", player.Name);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                SecureLogger.LogError("Failed to apply phonebook mods for {0}: {1}", player.Name, ex.Message);
+                            }
+                        });
+                        
+                        // Update cache
                         if (_componentCache != null && modData.ComponentData != null)
                         {
                             _componentCache.UpdateComponentForPlayer(player.Name, modData.ComponentData);
@@ -838,57 +1024,64 @@ namespace FyteClub
                         {
                             _clientCache.UpdateRecipeForPlayer(player.Name, modData.RecipeData);
                         }
-                        _pluginLog.Info($"Updated cache for {player.Name} from mod data");
+                        SecureLogger.LogInfo("Updated cache for {0} from phonebook", player.Name);
                     }
                 }
             }
         }
 
-        private void CheckCompanionsForChanges(List<CompanionSnapshot> companions)
+        private void CheckOwnedObjectsForChanges(List<OwnedObjectSnapshot> ownedObjects)
         {
-            foreach (var companion in companions)
+            foreach (var ownedObject in ownedObjects)
             {
-                // Check network phonebook for companion peer info
-                var phonebookEntry = _syncshellManager.GetPhonebookEntry(companion.Name);
+                // Only process objects whose owners are in our syncshells
+                if (!IsPlayerInAnySyncshell(ownedObject.OwnerName))
+                {
+                    continue;
+                }
+                
+                // Check network phonebook for object peer info
+                var phonebookEntry = _syncshellManager.GetPhonebookEntry(ownedObject.Name);
                 if (phonebookEntry != null)
                 {
-                    // Get companion mod data from separate mapping
-                    var modData = _syncshellManager.GetPlayerModData(companion.Name);
+                    // Get object mod data from separate mapping
+                    var modData = _syncshellManager.GetPlayerModData(ownedObject.Name);
                     if (modData?.ComponentData != null && _componentCache != null)
                     {
-                        _componentCache.UpdateComponentForPlayer(companion.Name, modData.ComponentData);
-                        _pluginLog.Info($"Updated companion cache for {companion.Name} from mod data");
+                        _componentCache.UpdateComponentForPlayer(ownedObject.Name, modData.ComponentData);
+                        SecureLogger.LogInfo("Updated {0} cache for {1} from mod data", ownedObject.ObjectKind, ownedObject.Name);
                     }
                 }
                 else
                 {
-                    ShareCompanionToSyncshells(companion);
+                    _ = Task.Run(async () => await ShareOwnedObjectToSyncshells(ownedObject));
                 }
             }
         }
 
-        private void ShareCompanionToSyncshells(CompanionSnapshot companion)
+        private async Task ShareOwnedObjectToSyncshells(OwnedObjectSnapshot ownedObject)
         {
             try
             {
-                var companionInfo = _modSystemIntegration.GetCurrentPlayerMods(companion.Name).Result;
-                if (companionInfo != null)
+                var objectInfo = await _modSystemIntegration.GetCurrentPlayerMods(ownedObject.Name);
+                if (objectInfo != null)
                 {
-                    var companionHash = CalculateModDataHash(companionInfo);
+                    var objectHash = CalculateModDataHash(objectInfo);
                     var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
                     foreach (var syncshell in activeSyncshells)
                     {
-                        var companionData = new
+                        var objectData = new
                         {
-                            type = "companion",
-                            companionName = companion.Name,
-                            objectKind = companion.ObjectKind,
-                            outfitHash = companionHash,
-                            mods = companionInfo.Mods,
+                            type = ownedObject.ObjectKind.ToString().ToLower(),
+                            objectName = ownedObject.Name,
+                            objectKind = ownedObject.ObjectKind.ToString(),
+                            ownerName = ownedObject.OwnerName,
+                            outfitHash = objectHash,
+                            mods = objectInfo.Mods,
                             timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                         };
-                        var json = JsonSerializer.Serialize(companionData);
-                        _syncshellManager.SendModData(syncshell.Id, json).Wait();
+                        var json = JsonSerializer.Serialize(objectData);
+                        await _syncshellManager.SendModData(syncshell.Id, json);
                     }
                 }
             }
@@ -1013,7 +1206,7 @@ namespace FyteClub
             
             if (toRemove.Count > 0)
             {
-                _pluginLog.Info($"Cleaned up {toRemove.Count} old player associations");
+                SecureLogger.LogInfo("Cleaned up {0} old player associations", toRemove.Count);
             }
         }
 
@@ -1045,6 +1238,64 @@ namespace FyteClub
                 _pluginLog.Error($"Plugin recovery failed");
             }
         }
+        
+        private string EncryptModData(string jsonData, string encryptionKey)
+        {
+            try
+            {
+                using var aes = Aes.Create();
+                var key = Convert.FromBase64String(encryptionKey);
+                aes.Key = key.Take(32).ToArray(); // Use first 32 bytes for AES-256
+                aes.GenerateIV();
+                
+                using var encryptor = aes.CreateEncryptor();
+                var dataBytes = Encoding.UTF8.GetBytes(jsonData);
+                var encryptedBytes = encryptor.TransformFinalBlock(dataBytes, 0, dataBytes.Length);
+                
+                // Prepend IV to encrypted data
+                var result = new byte[aes.IV.Length + encryptedBytes.Length];
+                Array.Copy(aes.IV, 0, result, 0, aes.IV.Length);
+                Array.Copy(encryptedBytes, 0, result, aes.IV.Length, encryptedBytes.Length);
+                
+                return Convert.ToBase64String(result);
+            }
+            catch (Exception ex)
+            {
+                SecureLogger.LogError("Failed to encrypt mod data: {0}", ex.Message);
+                return jsonData; // Fallback to unencrypted (should not happen in production)
+            }
+        }
+        
+        private string DecryptModData(string encryptedData, string encryptionKey)
+        {
+            try
+            {
+                using var aes = Aes.Create();
+                var key = Convert.FromBase64String(encryptionKey);
+                aes.Key = key.Take(32).ToArray(); // Use first 32 bytes for AES-256
+                
+                var encryptedBytes = Convert.FromBase64String(encryptedData);
+                
+                // Extract IV from the beginning
+                var iv = new byte[16];
+                Array.Copy(encryptedBytes, 0, iv, 0, 16);
+                aes.IV = iv;
+                
+                // Extract encrypted data
+                var dataBytes = new byte[encryptedBytes.Length - 16];
+                Array.Copy(encryptedBytes, 16, dataBytes, 0, dataBytes.Length);
+                
+                using var decryptor = aes.CreateDecryptor();
+                var decryptedBytes = decryptor.TransformFinalBlock(dataBytes, 0, dataBytes.Length);
+                
+                return Encoding.UTF8.GetString(decryptedBytes);
+            }
+            catch (Exception ex)
+            {
+                SecureLogger.LogError("Failed to decrypt mod data: {0}", ex.Message);
+                return encryptedData; // Fallback (should not happen in production)
+            }
+        }
 
 
     }
@@ -1055,7 +1306,7 @@ namespace FyteClub
         private string _newSyncshellName = "";
         private string _joinSyncshellName = "";
         private string _joinEncryptionKey = "";
-        private bool _showBlockList = false;
+        private bool _showBlockList = false; // Used in DrawBlockListTab
 
         public ConfigWindow(FyteClubPlugin plugin) : base("FyteClub - P2P Mod Sharing")
         {
@@ -1161,6 +1412,13 @@ namespace FyteClub
                 ImGui.Text($"{syncshell.Name} ({syncshell.Members?.Count ?? 0} members)");
                 
                 ImGui.SameLine();
+                if (ImGui.SmallButton($"Share##syncshell_{i}"))
+                {
+                    var shareText = $"Syncshell: {syncshell.Name}\nKey: {syncshell.EncryptionKey}";
+                    ImGui.SetClipboardText(shareText);
+                }
+                
+                ImGui.SameLine();
                 if (ImGui.SmallButton($"Leave##syncshell_{i}"))
                 {
                     _plugin.RemoveSyncshell(syncshell.Id);
@@ -1209,25 +1467,46 @@ namespace FyteClub
             }
             
             ImGui.Separator();
-            ImGui.Text("Recently Synced Players:");
-            foreach (var player in _plugin.GetRecentlySyncedUsers())
+            
+            // Show/Hide block list toggle
+            if (ImGui.Button(_showBlockList ? "Hide Block List" : "Show Block List"))
             {
-                ImGui.Text(player);
-                ImGui.SameLine();
-                if (_plugin.IsUserBlocked(player))
+                _showBlockList = !_showBlockList;
+            }
+            
+            if (_showBlockList)
+            {
+                ImGui.Text("Recently Synced Players (uncheck to block):");
+                ImGui.BeginChild("BlockListChild", new Vector2(0, 200));
+                
+                foreach (var player in _plugin.GetRecentlySyncedUsers().OrderBy(u => u))
                 {
-                    if (ImGui.SmallButton($"Unblock##{player}"))
+                    var isBlocked = _plugin.IsUserBlocked(player);
+                    bool allowSync = !isBlocked;
+                    
+                    if (ImGui.Checkbox($"{player}##user_{player}", ref allowSync))
                     {
-                        _plugin.UnblockUser(player);
+                        if (allowSync && isBlocked)
+                        {
+                            _plugin.UnblockUser(player);  // Unblock = allow syncing
+                        }
+                        else if (!allowSync && !isBlocked)
+                        {
+                            _plugin.BlockUser(player);    // Block = stop syncing
+                        }
                     }
+                    
+                    ImGui.SameLine();
+                    ImGui.TextColored(isBlocked ? new Vector4(1, 0, 0, 1) : new Vector4(0, 1, 0, 1), 
+                        isBlocked ? "(Blocked - mods cleared)" : "(Syncing)");
                 }
-                else
+                
+                if (!_plugin.GetRecentlySyncedUsers().Any())
                 {
-                    if (ImGui.SmallButton($"Block##{player}"))
-                    {
-                        _plugin.BlockUser(player);
-                    }
+                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No users to display. Get near other FyteClub users first!");
                 }
+                
+                ImGui.EndChild();
             }
         }
         
@@ -1245,7 +1524,16 @@ namespace FyteClub
             ImGui.SameLine();
             if (ImGui.Button("Recovery"))
             {
-                _ = Task.Run(_plugin.HandlePluginRecovery);
+                _ = Task.Run(async () => {
+                    try
+                    {
+                        await _plugin.HandlePluginRecovery();
+                    }
+                    catch (Exception ex)
+                    {
+                        SecureLogger.LogError("Plugin recovery failed: {0}", ex.Message);
+                    }
+                });
             }
             
             ImGui.SameLine();
@@ -1292,11 +1580,20 @@ namespace FyteClub
         public nint Address { get; set; }
     }
 
-    public class CompanionSnapshot
+    public enum FyteClubObjectKind
+    {
+        Player,
+        Companion,
+        MinionOrMount,
+        Pet
+    }
+    
+    public class OwnedObjectSnapshot
     {
         public string Name { get; set; } = string.Empty;
-        public string ObjectKind { get; set; } = string.Empty;
+        public FyteClubObjectKind ObjectKind { get; set; }
         public uint ObjectIndex { get; set; }
+        public string OwnerName { get; set; } = string.Empty;
     }
 
     public class BootstrapConnectionInfo

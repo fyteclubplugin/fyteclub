@@ -72,7 +72,8 @@ namespace FyteClub
 
                 // In real implementation, this would wait for SDP callback
                 await Task.Delay(100);
-                return "v=0\r\no=- 123 456 IN IP4 127.0.0.1\r\n"; // Placeholder
+                // TODO: Replace with actual SDP generation from native WebRTC library
+                throw new NotImplementedException("WebRTC SDP generation not yet implemented - requires native library integration");
             }
             catch (DllNotFoundException)
             {
@@ -82,32 +83,70 @@ namespace FyteClub
 
         public async Task<string> CreateAnswerAsync(string offerSdp)
         {
-            if (_peerConnection == IntPtr.Zero) return string.Empty;
+            try
+            {
+                if (string.IsNullOrEmpty(offerSdp))
+                    throw new ArgumentException("Offer SDP cannot be null or empty", nameof(offerSdp));
+                
+                if (_peerConnection == IntPtr.Zero) return string.Empty;
 
-            var result = CreateAnswer(_peerConnection, offerSdp);
-            if (result != 0) return string.Empty;
+                var result = CreateAnswer(_peerConnection, offerSdp);
+                if (result != 0) return string.Empty;
 
-            await Task.Delay(100);
-            return "v=0\r\no=- 456 789 IN IP4 127.0.0.1\r\n"; // Placeholder
+                await Task.Delay(100);
+                // TODO: Replace with actual SDP answer generation from native WebRTC library
+                throw new NotImplementedException("WebRTC SDP answer generation not yet implemented - requires native library integration");
+            }
+            catch (DllNotFoundException ex)
+            {
+                SecureLogger.LogError("WebRTC native library not found: {0}", ex.Message);
+                throw new InvalidOperationException("WebRTC native library is required but not available", ex);
+            }
         }
 
         public async Task SetRemoteAnswerAsync(string answerSdp)
         {
-            if (_peerConnection == IntPtr.Zero) return;
+            try
+            {
+                if (string.IsNullOrEmpty(answerSdp))
+                    throw new ArgumentException("Answer SDP cannot be null or empty", nameof(answerSdp));
+                
+                if (_peerConnection == IntPtr.Zero) return;
 
-            SetRemoteDescription(_peerConnection, answerSdp);
-            _isConnected = true;
-            OnConnected?.Invoke();
-            await Task.CompletedTask;
+                SetRemoteDescription(_peerConnection, answerSdp);
+                _isConnected = true;
+                OnConnected?.Invoke();
+                await Task.CompletedTask;
+            }
+            catch (DllNotFoundException ex)
+            {
+                SecureLogger.LogError("WebRTC native library not found: {0}", ex.Message);
+                throw new InvalidOperationException("WebRTC native library is required but not available", ex);
+            }
         }
 
         public async Task SendDataAsync(byte[] data)
         {
-            if (_dataChannel != IntPtr.Zero && _isConnected)
+            try
             {
-                SendData(_dataChannel, data, data.Length);
+                if (data == null)
+                    throw new ArgumentNullException(nameof(data));
+                
+                if (_dataChannel != IntPtr.Zero && _isConnected)
+                {
+                    var result = SendData(_dataChannel, data, data.Length);
+                    if (result != 0)
+                    {
+                        SecureLogger.LogWarning("SendData returned non-zero result: {0}", result);
+                    }
+                }
+                await Task.CompletedTask;
             }
-            await Task.CompletedTask;
+            catch (DllNotFoundException ex)
+            {
+                SecureLogger.LogError("WebRTC native library not found: {0}", ex.Message);
+                throw new InvalidOperationException("WebRTC native library is required but not available", ex);
+            }
         }
 
         public void Dispose()

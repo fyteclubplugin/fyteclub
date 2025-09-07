@@ -29,7 +29,7 @@ namespace FyteClub
             _identity = identity;
         }
 
-        public async Task<bool> AttemptReconnection(string syncshellId, WebRTCManager webrtcManager)
+        public async Task<bool> AttemptReconnection(string syncshellId)
         {
             // Check exponential backoff (30s -> 1h)
             var backoffSeconds = Math.Min(30 * Math.Pow(2, _failureCount), 3600);

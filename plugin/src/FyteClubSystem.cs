@@ -109,7 +109,6 @@ namespace FyteClub
         public void SimulateNetworkFailure()
         {
             _networkFailure = true;
-            _connectionRecovery.SimulateNetworkFailure();
         }
 
         public async Task<bool> AttemptRecovery()

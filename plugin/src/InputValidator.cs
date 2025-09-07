@@ -1,64 +1,60 @@
 using System;
 using System.Text.RegularExpressions;
-using System.Web;
 
 namespace FyteClub
 {
     public static class InputValidator
     {
-        private static readonly Regex SafeStringPattern = new(@"^[a-zA-Z0-9\s\-_\.]+$", RegexOptions.Compiled);
-        private static readonly Regex InviteCodePattern = new(@"^[a-zA-Z0-9\-_=]+$", RegexOptions.Compiled);
+        private static readonly Regex SyncshellNameRegex = new(@"^[a-zA-Z0-9\s\-_.]{1,50}$", RegexOptions.Compiled);
+        private static readonly Regex PlayerNameRegex = new(@"^[a-zA-Z0-9\s\-_.@]{1,32}$", RegexOptions.Compiled);
         
-        public static string SanitizeForLog(string input)
+        public static bool IsValidSyncshellName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            return SyncshellNameRegex.IsMatch(name);
+        }
+        
+        public static bool IsValidPlayerName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            return PlayerNameRegex.IsMatch(name);
+        }
+        
+        public static string SanitizeInput(string input, int maxLength = 100)
         {
             if (string.IsNullOrEmpty(input)) return string.Empty;
             
             // Remove control characters and limit length
-            var sanitized = Regex.Replace(input, @"[\r\n\t\x00-\x1F\x7F]", "_");
-            return sanitized.Length > 200 ? sanitized.Substring(0, 197) + "..." : sanitized;
+            var sanitized = Regex.Replace(input, @"[\x00-\x1F\x7F]", "");
+            
+            if (sanitized.Length > maxLength)
+                sanitized = sanitized.Substring(0, maxLength);
+                
+            return sanitized;
+        }
+        
+        public static bool IsValidSyncshellId(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id)) return false;
+            return Regex.IsMatch(id, @"^[a-fA-F0-9]{32,64}$");
         }
         
         public static string SanitizeForHtml(string input)
         {
             if (string.IsNullOrEmpty(input)) return string.Empty;
-            return HttpUtility.HtmlEncode(input);
+            return input.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&#x27;");
         }
         
-        public static bool IsValidSyncshellName(string name)
+        public static string SanitizeForLog(string input)
         {
-            return !string.IsNullOrWhiteSpace(name) && 
-                   name.Length <= 50 && 
-                   SafeStringPattern.IsMatch(name);
+            return SanitizeInput(input, 200);
         }
         
-        public static bool IsValidInviteCode(string code)
+        public static bool ValidateUrl(string url)
         {
-            return !string.IsNullOrWhiteSpace(code) && 
-                   code.Length <= 1000 && 
-                   InviteCodePattern.IsMatch(code);
-        }
-        
-        public static string ValidateUrl(string url)
-        {
-            if (string.IsNullOrWhiteSpace(url)) 
-                throw new ArgumentException("URL cannot be empty");
-                
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-                throw new ArgumentException("Invalid URL format");
-                
-            if (uri.Scheme != "https")
-                throw new ArgumentException("Only HTTPS URLs are allowed");
-                
-            return uri.ToString();
-        }
-        
-        public static bool IsValidSyncshellId(string syncshellId)
-        {
-            if (string.IsNullOrWhiteSpace(syncshellId)) return false;
-            if (syncshellId.Length > 64) return false; // Reasonable limit
-            
-            // Only allow alphanumeric characters and hyphens (no path separators)
-            return Regex.IsMatch(syncshellId, @"^[a-zA-Z0-9\-]+$");
+            if (string.IsNullOrWhiteSpace(url)) return false;
+            return Uri.TryCreate(url, UriKind.Absolute, out var result) && 
+                   (result.Scheme == Uri.UriSchemeHttp || result.Scheme == Uri.UriSchemeHttps);
         }
     }
 }
