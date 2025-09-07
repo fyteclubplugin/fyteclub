@@ -162,7 +162,7 @@ namespace FyteClub
             
             _ = Task.Run(async () => await _mdnsDiscovery.StartDiscovery());
             
-            _pluginLog.Info("FyteClub v4.1.0 initialized - P2P mod sharing with syncshells");
+            _pluginLog.Info("FyteClub v4.2.0 initialized - P2P mod sharing with syncshells");
         }
 
         private void InitializeClientCache()
