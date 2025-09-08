@@ -47,17 +47,21 @@ namespace FyteClub
 
         public async Task<SyncshellInfo> CreateSyncshell(string name)
         {
+            Console.WriteLine($"[DEBUG] CreateSyncshell START - name: '{name}'");
             SecureLogger.LogInfo("SyncshellManager.CreateSyncshell called with name: '{0}' (length: {1})", name, name?.Length ?? 0);
             
             if (string.IsNullOrEmpty(name))
             {
+                Console.WriteLine($"[DEBUG] CreateSyncshell FAIL - name is null or empty");
                 SecureLogger.LogError("Syncshell name is null or empty");
                 throw new ArgumentException("Syncshell name cannot be null or empty");
             }
             
+            Console.WriteLine($"[DEBUG] CreateSyncshell - validating name");
             SecureLogger.LogInfo("Validating syncshell name...");
             if (!InputValidator.IsValidSyncshellName(name))
             {
+                Console.WriteLine($"[DEBUG] CreateSyncshell FAIL - name validation failed");
                 SecureLogger.LogError("Syncshell name validation failed for: '{0}'", name);
                 SecureLogger.LogError("Name must contain only letters, numbers, spaces, hyphens, underscores, and dots");
                 
@@ -71,31 +75,35 @@ namespace FyteClub
                 throw new ArgumentException($"Invalid syncshell name: '{name}'. Name must contain only letters, numbers, spaces, hyphens, underscores, and dots.");
             }
             
+            Console.WriteLine($"[DEBUG] CreateSyncshell - generating password");
             SecureLogger.LogInfo("Syncshell name validation passed, generating secure password...");
             var masterPassword = SyncshellIdentity.GenerateSecurePassword();
+            Console.WriteLine($"[DEBUG] CreateSyncshell - password generated, length: {masterPassword?.Length ?? 0}");
             
+            Console.WriteLine($"[DEBUG] CreateSyncshell - creating session");
             SecureLogger.LogInfo("Creating syncshell session...");
-            var session = await CreateSyncshellInternal(name, masterPassword);
+            var session = CreateSyncshellInternal(name, masterPassword);
+            Console.WriteLine($"[DEBUG] CreateSyncshell - session created");
             
-            SecureLogger.LogInfo("Syncshell session created successfully, building SyncshellInfo...");
-            var result = new SyncshellInfo
+            Console.WriteLine($"[DEBUG] CreateSyncshell - getting created syncshell from list");
+            var result = _syncshells.LastOrDefault(s => s.Name == name && s.EncryptionKey == masterPassword);
+            if (result == null)
             {
-                Id = session.Identity.GetSyncshellHash(),
-                Name = session.Identity.Name,
-                EncryptionKey = Convert.ToBase64String(session.Identity.EncryptionKey),
-                IsOwner = session.IsHost,
-                IsActive = true,
-                Members = new List<string> { "You" }
-            };
+                throw new InvalidOperationException("Failed to create syncshell");
+            }
             
+            Console.WriteLine($"[DEBUG] CreateSyncshell - found syncshell, ID: {result.Id}");
             SecureLogger.LogInfo("SyncshellInfo created successfully with ID: {0}, Name: {1}", result.Id, result.Name);
+            Console.WriteLine($"[DEBUG] CreateSyncshell SUCCESS - returning result");
             return result;
         }
 
-        public async Task<SyncshellSession> CreateSyncshellInternal(string name, string masterPassword)
+        public SyncshellSession CreateSyncshellInternal(string name, string masterPassword)
         {
+            Console.WriteLine($"[DEBUG] CreateSyncshellInternal START - name: '{name}'");
             SecureLogger.LogInfo("Creating SyncshellIdentity...");
             var identity = new SyncshellIdentity(name, masterPassword);
+            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - identity created");
             
             SecureLogger.LogInfo("Creating SyncshellPhonebook...");
             var phonebook = new SyncshellPhonebook
@@ -104,21 +112,38 @@ namespace FyteClub
                 MasterPasswordHash = identity.MasterPasswordHash,
                 EncryptionKey = identity.EncryptionKey
             };
+            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - phonebook created");
 
             SecureLogger.LogInfo("Getting local IP address...");
             var localIP = GetLocalIPAddress();
+            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - local IP: {localIP}");
             phonebook.AddMember(identity.PublicKey, localIP, 7777);
+            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - member added to phonebook");
 
             SecureLogger.LogInfo("Creating SyncshellSession...");
             var session = new SyncshellSession(identity, phonebook, isHost: true);
+            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - session created");
             
             SecureLogger.LogInfo("Adding session to sessions dictionary...");
             _sessions[identity.GetSyncshellHash()] = session;
+            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - session added to dictionary");
 
-            SecureLogger.LogInfo("Starting session listening...");
-            await session.StartListening();
+            // Add to syncshells list for configuration persistence
+            var syncshell = new SyncshellInfo
+            {
+                Id = identity.GetSyncshellHash(),
+                Name = name,
+                EncryptionKey = masterPassword,
+                IsOwner = true,
+                IsActive = true,
+                Members = new List<string> { "You" }
+            };
+            _syncshells.Add(syncshell);
+
+            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - session ready for WebRTC P2P");
             
             SecureLogger.LogInfo("Syncshell '{0}' created successfully as host", name);
+            Console.WriteLine($"[DEBUG] CreateSyncshellInternal SUCCESS - returning session");
             
             return session;
         }
@@ -170,51 +195,17 @@ namespace FyteClub
         {
             try
             {
-                var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
-                await connection.InitializeAsync();
-                
-                connection.OnDataReceived += data => HandleModData(syncshellId, data);
-                connection.OnConnected += () => Console.WriteLine($"WebRTC host ready in {syncshellId}");
-                
-                var offer = await connection.CreateOfferAsync();
-                
-                var session = _sessions.Values.FirstOrDefault(s => s.Identity.GetSyncshellHash() == syncshellId);
-                if (session == null) throw new InvalidOperationException("Syncshell not found");
-                
-                string? answerChannel = null;
-                if (enableAutomated)
+                // Find syncshell by ID
+                var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+                if (syncshell == null)
                 {
-                    answerChannel = $"https://api.tempurl.org/answer/{syncshellId}";
-                    _ = Task.Run(async () => await ListenForAutomatedAnswer(syncshellId, answerChannel));
+                    Console.WriteLine($"Syncshell not found: {syncshellId}");
+                    return string.Empty;
                 }
                 
-                var localIP = GetLocalIPAddress();
-                var publicKey = session.Identity.GetPublicKey();
-                var port = 7777;
-                
-                var inviteCode = InviteCodeGenerator.GenerateBootstrapInvite(
-                    syncshellId, 
-                    offer, 
-                    session.Identity.EncryptionKey, 
-                    publicKey, 
-                    localIP.ToString(), 
-                    port, 
-                    answerChannel);
-                
-                _webrtcConnections[syncshellId] = connection;
-                _pendingConnections[syncshellId] = DateTime.UtcNow;
-                
-                Console.WriteLine($"Generated bootstrap invite code: {inviteCode}");
-                Console.WriteLine($"Bootstrap info - Public Key: {publicKey}, IP: {localIP}, Port: {port}");
-                if (enableAutomated)
-                {
-                    Console.WriteLine("Automated answer exchange enabled - connection will establish automatically.");
-                }
-                else
-                {
-                    Console.WriteLine($"Waiting for answer code (timeout in {CONNECTION_TIMEOUT_SECONDS}s)...");
-                }
-                
+                // Generate simple invite code with name:password format
+                var inviteCode = $"{syncshell.Name}:{syncshell.EncryptionKey}";
+                Console.WriteLine($"Generated simple invite code for {syncshell.Name}");
                 return inviteCode;
             }
             catch (Exception ex)
@@ -379,11 +370,90 @@ namespace FyteClub
             }
         }
 
-        // Keep all other existing methods unchanged...
-        public bool JoinSyncshell(string name, string masterPassword) { /* existing implementation */ return true; }
-        public bool JoinSyncshellById(string syncshellId, string encryptionKey, string? syncshellName = null) { /* existing implementation */ return true; }
-        public void RemoveSyncshell(string syncshellId) { /* existing implementation */ }
-        public List<SyncshellInfo> GetSyncshells() { return new List<SyncshellInfo>(); }
+        private readonly List<SyncshellInfo> _syncshells = new();
+        
+        public bool JoinSyncshell(string name, string masterPassword)
+        {
+            Console.WriteLine($"[DEBUG] JoinSyncshell START - name: '{name}'");
+            SecureLogger.LogInfo("JoinSyncshell called with name: '{0}'", name);
+            
+            try
+            {
+                Console.WriteLine($"[DEBUG] JoinSyncshell - creating identity");
+                // Use same ID generation as SyncshellIdentity.GetSyncshellHash()
+                var identity = new SyncshellIdentity(name, masterPassword);
+                Console.WriteLine($"[DEBUG] JoinSyncshell - identity created");
+                
+                var syncshellId = identity.GetSyncshellHash();
+                Console.WriteLine($"[DEBUG] JoinSyncshell - syncshell ID: {syncshellId}");
+                
+                Console.WriteLine($"[DEBUG] JoinSyncshell - creating SyncshellInfo");
+                var syncshell = new SyncshellInfo
+                {
+                    Id = syncshellId,
+                    Name = name,
+                    EncryptionKey = masterPassword,
+                    IsOwner = false,
+                    IsActive = true,
+                    Members = new List<string> { "You" }
+                };
+                Console.WriteLine($"[DEBUG] JoinSyncshell - SyncshellInfo created");
+                
+                _syncshells.Add(syncshell);
+                Console.WriteLine($"[DEBUG] JoinSyncshell - added to list, total syncshells: {_syncshells.Count}");
+                
+                SecureLogger.LogInfo("Successfully joined syncshell '{0}' with ID '{1}'", name, syncshellId);
+                Console.WriteLine($"[DEBUG] JoinSyncshell SUCCESS - returning true");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DEBUG] JoinSyncshell EXCEPTION: {ex.Message}");
+                Console.WriteLine($"[DEBUG] JoinSyncshell Stack trace: {ex.StackTrace}");
+                SecureLogger.LogError("Failed to join syncshell '{0}': {1}", name, ex.Message);
+                return false;
+            }
+        }
+        
+        public bool JoinSyncshellById(string syncshellId, string encryptionKey, string? syncshellName = null)
+        {
+            SecureLogger.LogInfo("JoinSyncshellById called with ID: '{0}', Name: '{1}'", syncshellId, syncshellName ?? "Unknown");
+            
+            try
+            {
+                var syncshell = new SyncshellInfo
+                {
+                    Id = syncshellId,
+                    Name = syncshellName ?? "Unknown Syncshell",
+                    EncryptionKey = encryptionKey,
+                    IsOwner = false,
+                    IsActive = true,
+                    Members = new List<string> { "You" }
+                };
+                
+                _syncshells.Add(syncshell);
+                SecureLogger.LogInfo("Successfully joined syncshell by ID '{0}'", syncshellId);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SecureLogger.LogError("Failed to join syncshell by ID '{0}': {1}", syncshellId, ex.Message);
+                return false;
+            }
+        }
+        
+        public void RemoveSyncshell(string syncshellId)
+        {
+            SecureLogger.LogInfo("RemoveSyncshell called with ID: '{0}'", syncshellId);
+            
+            var removed = _syncshells.RemoveAll(s => s.Id == syncshellId);
+            SecureLogger.LogInfo("Removed {0} syncshells with ID '{1}'", removed, syncshellId);
+        }
+        
+        public List<SyncshellInfo> GetSyncshells()
+        {
+            return new List<SyncshellInfo>(_syncshells);
+        }
         
         // Separate mod data mapping from network phonebook
         private readonly Dictionary<string, PlayerModEntry> _playerModData = new();
