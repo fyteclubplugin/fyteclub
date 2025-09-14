@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.MixedReality.WebRTC;
 
@@ -6,6 +7,8 @@ namespace FyteClub
 {
     public class LibWebRTCConnection : IWebRTCConnection
     {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetDllDirectory(string lpPathName);
         private PeerConnection? _peerConnection;
         private bool _disposed;
         private bool _isConnected;
@@ -22,6 +25,8 @@ namespace FyteClub
         {
             _pluginLog = pluginLog;
         }
+        
+        public static string? PluginDirectory { get; set; }
 
 
 
@@ -31,13 +36,28 @@ namespace FyteClub
             {
                 _pluginLog?.Info("Initializing Microsoft WebRTC (article approach)...");
                 
+                // Set DLL directory to plugin directory
+                var pluginDir = PluginDirectory ?? System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+                _pluginLog?.Info($"Plugin directory: {pluginDir}");
+                if (!string.IsNullOrEmpty(pluginDir))
+                {
+                    var mrwebrtcPath = System.IO.Path.Combine(pluginDir, "mrwebrtc.dll");
+                    _pluginLog?.Info($"Looking for mrwebrtc.dll at: {mrwebrtcPath}");
+                    _pluginLog?.Info($"File exists: {System.IO.File.Exists(mrwebrtcPath)}");
+                    
+                    var success = SetDllDirectory(pluginDir);
+                    _pluginLog?.Info($"SetDllDirectory result: {success}");
+                }
+                
                 // Follow the working approach from the article
                 var config = new PeerConnectionConfiguration();
                 
                 // Add STUN servers like the article mentions
                 config.IceServers.Add(new IceServer { Urls = { "stun:stun.l.google.com:19302" } });
                 
+                _pluginLog?.Info("Creating PeerConnection...");
                 _peerConnection = new PeerConnection();
+                _pluginLog?.Info("PeerConnection created successfully");
                 
                 // Set up event handlers before initialization
                 _peerConnection.Connected += () => {
@@ -50,8 +70,11 @@ namespace FyteClub
                     _pluginLog?.Debug($"ICE state changed: {state}");
                 };
                 
-                // Initialize synchronously like the article suggests
-                await _peerConnection.InitializeAsync(config);
+                // Initialize peer connection with timeout
+                _pluginLog?.Info("Initializing PeerConnection...");
+                using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await _peerConnection.InitializeAsync(config, cts.Token);
+                _pluginLog?.Info("PeerConnection initialized successfully");
                 
                 _pluginLog?.Info("Microsoft WebRTC initialized successfully (article method)");
                 return true;

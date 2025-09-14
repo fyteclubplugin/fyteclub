@@ -374,7 +374,7 @@ namespace FyteClub
 
         private readonly List<SyncshellInfo> _syncshells = new();
         
-        public Task<bool> JoinSyncshellByInviteCode(string inviteCode)
+        public Task<JoinResult> JoinSyncshellByInviteCode(string inviteCode)
         {
             try
             {
@@ -383,18 +383,29 @@ namespace FyteClub
                 if (parts.Length != 2)
                 {
                     SecureLogger.LogError("Invalid invite code format");
-                    return Task.FromResult(false);
+                    return Task.FromResult(JoinResult.InvalidCode);
                 }
                 
                 var name = parts[0];
                 var password = parts[1];
                 
-                return Task.FromResult(JoinSyncshell(name, password));
+                // Check if already in this syncshell
+                var identity = new SyncshellIdentity(name, password);
+                var syncshellId = identity.GetSyncshellHash();
+                
+                if (_syncshells.Any(s => s.Id == syncshellId))
+                {
+                    SecureLogger.LogInfo("Already in syncshell '{0}' with ID '{1}'", name, syncshellId);
+                    return Task.FromResult(JoinResult.AlreadyJoined);
+                }
+                
+                var success = JoinSyncshell(name, password);
+                return Task.FromResult(success ? JoinResult.Success : JoinResult.Failed);
             }
             catch (Exception ex)
             {
                 SecureLogger.LogError("Failed to join syncshell by invite code: {0}", ex.Message);
-                return Task.FromResult(false);
+                return Task.FromResult(JoinResult.Failed);
             }
         }
         
@@ -545,5 +556,13 @@ namespace FyteClub
         public object? ComponentData { get; set; }
         public object? RecipeData { get; set; }
         public DateTime LastUpdated { get; set; }
+    }
+
+    public enum JoinResult
+    {
+        Success,
+        AlreadyJoined,
+        InvalidCode,
+        Failed
     }
 }

@@ -102,6 +102,7 @@ namespace FyteClub
             _pluginLog = pluginLog;
 
             // Initialize WebRTC factory
+            LibWebRTCConnection.PluginDirectory = pluginInterface.AssemblyLocation.Directory?.FullName;
             WebRTCConnectionFactory.Initialize(pluginLog, testMode: false);
 
             // Initialize services
@@ -1229,15 +1230,22 @@ namespace FyteClub
                         try
                         {
                             _plugin._pluginLog.Info($"Attempting to join via invite code: {capturedCode}");
-                            var success = await _plugin._syncshellManager.JoinSyncshellByInviteCode(capturedCode);
-                            if (success)
+                            var result = await _plugin._syncshellManager.JoinSyncshellByInviteCode(capturedCode);
+                            switch (result)
                             {
-                                _plugin._pluginLog.Info("Successfully joined syncshell via invite code");
-                                _plugin.SaveConfiguration();
-                            }
-                            else
-                            {
-                                _plugin._pluginLog.Warning("Failed to join syncshell - invite code may be invalid or expired");
+                                case JoinResult.Success:
+                                    _plugin._pluginLog.Info("Successfully joined syncshell via invite code");
+                                    _plugin.SaveConfiguration();
+                                    break;
+                                case JoinResult.AlreadyJoined:
+                                    _plugin._pluginLog.Info("You are already in this syncshell");
+                                    break;
+                                case JoinResult.InvalidCode:
+                                    _plugin._pluginLog.Warning("Invalid invite code format");
+                                    break;
+                                case JoinResult.Failed:
+                                    _plugin._pluginLog.Warning("Failed to join syncshell - invite code may be invalid or expired");
+                                    break;
                             }
                         }
                         catch (Exception ex)
@@ -1291,22 +1299,19 @@ namespace FyteClub
                 
                 if (ImGui.SmallButton($"Copy Invite Code##syncshell_{i}"))
                 {
-                    if (webrtcAvailable)
+                    try
                     {
-                        try
-                        {
-                            _ = Task.Run(async () => {
-                                var inviteCode = await _plugin._syncshellManager.GenerateInviteCode(syncshell.Id);
-                                ImGui.SetClipboardText(inviteCode);
-                                _plugin._pluginLog.Info($"Copied invite code to clipboard: {syncshell.Name}");
-                            });
-                            _lastCopyTime = DateTime.UtcNow;
-                            _lastCopiedIndex = i;
-                        }
-                        catch (Exception ex)
-                        {
-                            _plugin._pluginLog.Error($"Invite code generation failed for {syncshell.Name}: {ex.Message}");
-                        }
+                        _ = Task.Run(async () => {
+                            var inviteCode = await _plugin._syncshellManager.GenerateInviteCode(syncshell.Id);
+                            ImGui.SetClipboardText(inviteCode);
+                            _plugin._pluginLog.Info($"Copied invite code to clipboard: {syncshell.Name}");
+                        });
+                        _lastCopyTime = DateTime.UtcNow;
+                        _lastCopiedIndex = i;
+                    }
+                    catch (Exception ex)
+                    {
+                        _plugin._pluginLog.Error($"Invite code generation failed for {syncshell.Name}: {ex.Message}");
                     }
                 }
                 

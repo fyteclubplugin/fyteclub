@@ -37,8 +37,9 @@ namespace FyteClub
             else
             {
                 _pluginLog?.Error("CRITICAL: WebRTC native library not available. P2P features disabled.");
-                _pluginLog?.Error("Please ensure a proper WebRTC library is installed.");
-                throw new InvalidOperationException("WebRTC native library not available. P2P features cannot function.");
+                _pluginLog?.Error("Please ensure Visual C++ Redistributable is installed.");
+                _pluginLog?.Info("WebRTC: Falling back to MockWebRTCConnection (limited functionality)");
+                return new MockWebRTCConnection();
             }
         }
 
