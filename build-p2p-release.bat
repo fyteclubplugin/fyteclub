@@ -16,17 +16,8 @@ mkdir "release"
 echo Build directory cleaned
 echo.
 
-:: build native WebRTC library
-echo [2/5] Building WebRTC native library...
-call build-native.bat
-if %errorlevel% neq 0 (
-    echo WebRTC native build failed - using mock implementation
-    echo See integration-test.md for build requirements
-)
-echo.
-
 :: build plugin
-echo [3/5] Building P2P plugin...
+echo [2/4] Building P2P plugin...
 cd /d "%~dp0plugin"
 dotnet build -c Release --verbosity minimal
 if %errorlevel% neq 0 (
@@ -39,7 +30,7 @@ echo P2P plugin built
 echo.
 
 :: create plugin package
-echo [4/5] Creating P2P plugin package...
+echo [3/4] Creating P2P plugin package...
 mkdir "release\FyteClub-Plugin"
 
 :: copy main files
@@ -47,10 +38,10 @@ copy "plugin\bin\Release\win-x64\FyteClub.dll" "release\FyteClub-Plugin\" >nul
 copy "plugin\FyteClub.json" "release\FyteClub-Plugin\" >nul
 copy "plugin\bin\Release\win-x64\FyteClub.deps.json" "release\FyteClub-Plugin\" >nul
 
-:: copy native WebRTC library (critical for P2P functionality)
-copy "plugin\bin\Release\webrtc_native.dll" "release\FyteClub-Plugin\" >nul
+:: copy native WebRTC library (optional custom wrapper)
+copy "plugin\bin\Release\win-x64\webrtc_native.dll" "release\FyteClub-Plugin\" >nul
 if %errorlevel% neq 0 (
-    echo WARNING: webrtc_native.dll not found - P2P features will be disabled
+    echo INFO: webrtc_native.dll not found - using ProximityVoiceChat WebRTC library only
 )
 
 :: copy Microsoft WebRTC library (critical for P2P functionality)
@@ -59,10 +50,12 @@ if %errorlevel% neq 0 (
     echo WARNING: Microsoft.MixedReality.WebRTC.dll not found - P2P features will be disabled
 )
 
-:: copy native WebRTC runtime (mrwebrtc.dll)
-if exist "%USERPROFILE%\.nuget\packages\microsoft.mixedreality.webrtc\2.0.2\runtimes\win10-x64\native\mrwebrtc.dll" copy "%USERPROFILE%\.nuget\packages\microsoft.mixedreality.webrtc\2.0.2\runtimes\win10-x64\native\mrwebrtc.dll" "release\FyteClub-Plugin\" >nul
-if %errorlevel% neq 0 (
-    echo WARNING: mrwebrtc.dll not found - WebRTC will fail to initialize
+:: copy native WebRTC runtime (mrwebrtc.dll) - critical for P2P functionality
+if exist "plugin\bin\Release\win-x64\mrwebrtc.dll" (
+    copy "plugin\bin\Release\win-x64\mrwebrtc.dll" "release\FyteClub-Plugin\" >nul
+    echo mrwebrtc.dll copied
+) else (
+    echo ERROR: mrwebrtc.dll not found - WebRTC will fail to initialize
 )
 
 :: copy API dependencies
@@ -82,7 +75,7 @@ echo P2P plugin package created
 echo.
 
 :: create zip file
-echo [5/5] Creating ZIP file...
+echo [4/4] Creating ZIP file...
 
 cd release
 powershell -command "Compress-Archive -Path 'FyteClub-Plugin\*' -DestinationPath 'FyteClub-Plugin.zip' -Force"

@@ -100,9 +100,6 @@ dotnet build -c Release
 cd plugin-tests
 dotnet test
 
-# Build WebRTC native library (optional)
-build-webrtc-native.bat
-
 # Create release package
 build-p2p-release.bat
 ```
@@ -116,8 +113,8 @@ build-p2p-release.bat
 
 ### WebRTC Dependencies
 The plugin includes:
-- `Microsoft.MixedReality.WebRTC.dll` - Managed WebRTC library
-- `mrwebrtc.dll` - Native WebRTC runtime
+- `Microsoft.MixedReality.WebRTC.dll` - ProximityVoiceChat's stable WebRTC library
+- `mrwebrtc.dll` - Native WebRTC runtime (from ProximityVoiceChat)
 - `webrtc_native.dll` - Custom native wrapper (optional)
 
 See `docs/` for detailed documentation.
