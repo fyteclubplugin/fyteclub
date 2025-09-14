@@ -82,24 +82,22 @@ namespace FyteClub
 
         public GitHubGistProvider(IPluginLog pluginLog) => _pluginLog = pluginLog;
 
-        public async Task<bool> PostOffer(string syncshellId, string playerName, string offer)
+        public Task<bool> PostOffer(string syncshellId, string playerName, string offer)
         {
             // Use user's GitHub token if available, otherwise skip
             var token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
             if (string.IsNullOrEmpty(token))
             {
                 _pluginLog.Debug("No GitHub token - skipping Gist provider");
-                return false;
+                return Task.FromResult(false);
             }
 
-            await Task.Delay(100); // Simulate API call
-            return true;
+            return Task.FromResult(true);
         }
 
-        public async Task<string?> GetAnswer(string syncshellId, string playerName)
+        public Task<string?> GetAnswer(string syncshellId, string playerName)
         {
-            await Task.Delay(100);
-            return null;
+            return Task.FromResult<string?>(null);
         }
 
         public void Dispose() { }
@@ -112,18 +110,16 @@ namespace FyteClub
 
         public LocalCacheProvider(IPluginLog pluginLog) => _pluginLog = pluginLog;
 
-        public async Task<bool> PostOffer(string syncshellId, string playerName, string offer)
+        public Task<bool> PostOffer(string syncshellId, string playerName, string offer)
         {
             // Use mDNS for local network discovery as fallback
             _pluginLog.Info("Using local network discovery (no rate limits)");
-            await Task.Delay(50);
-            return true;
+            return Task.FromResult(true);
         }
 
-        public async Task<string?> GetAnswer(string syncshellId, string playerName)
+        public Task<string?> GetAnswer(string syncshellId, string playerName)
         {
-            await Task.Delay(50);
-            return null;
+            return Task.FromResult<string?>(null);
         }
 
         public void Dispose() { }
@@ -136,11 +132,10 @@ namespace FyteClub
 
         public PastebinProvider(IPluginLog pluginLog) => _pluginLog = pluginLog;
 
-        public async Task<bool> PostOffer(string syncshellId, string playerName, string offer)
+        public Task<bool> PostOffer(string syncshellId, string playerName, string offer)
         {
             // Pastebin has different rate limits
-            await Task.Delay(100);
-            return true;
+            return Task.FromResult(true);
         }
 
         public async Task<string?> GetAnswer(string syncshellId, string playerName) => null;
@@ -154,11 +149,10 @@ namespace FyteClub
 
         public DiscordWebhookProvider(IPluginLog pluginLog) => _pluginLog = pluginLog;
 
-        public async Task<bool> PostOffer(string syncshellId, string playerName, string offer)
+        public Task<bool> PostOffer(string syncshellId, string playerName, string offer)
         {
             // Discord webhooks have generous limits
-            await Task.Delay(100);
-            return true;
+            return Task.FromResult(true);
         }
 
         public async Task<string?> GetAnswer(string syncshellId, string playerName) => null;

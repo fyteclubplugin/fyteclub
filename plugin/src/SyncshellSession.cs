@@ -24,9 +24,9 @@ namespace FyteClub
             IsHost = isHost;
         }
 
-        public async Task StartListening()
+        public Task StartListening()
         {
-            if (!IsHost) return;
+            if (!IsHost) return Task.CompletedTask;
 
             _listener = new TcpListener(IPAddress.Any, 7777);
             _listener.Start();
@@ -34,6 +34,7 @@ namespace FyteClub
             Console.WriteLine($"Syncshell host listening on port 7777");
             
             _ = Task.Run(AcceptConnections, _cancellation.Token);
+            return Task.CompletedTask;
         }
 
         public async Task ConnectToHost(IPAddress hostIP, int hostPort)

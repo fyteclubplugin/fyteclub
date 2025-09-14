@@ -288,14 +288,15 @@ namespace FyteClub
             }
         }
 
-        private async Task AttemptPeerReconnections()
+        private Task AttemptPeerReconnections()
         {
             // Peer reconnection logic without duplicate announcements
             var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive).ToList();
-            if (activeSyncshells.Count == 0) return;
+            if (activeSyncshells.Count == 0) return Task.CompletedTask;
             
             _pluginLog.Info($"FyteClub: Attempting peer reconnections for {activeSyncshells.Count} active syncshells...");
             // Actual reconnection logic would go here
+            return Task.CompletedTask;
         }
 
         private async Task PerformPeerDiscovery()
@@ -499,7 +500,7 @@ namespace FyteClub
                         _pluginLog.Info($"[DEBUG] Starting auto-share task");
                         await Task.Delay(2000); // Give connection time to establish
                         string? playerName = null;
-                        await _framework.RunOnFrameworkThread(() => {
+                        _framework.RunOnFrameworkThread(() => {
                             var localPlayer = _clientState.LocalPlayer;
                             playerName = localPlayer?.Name?.TextValue;
                         });
@@ -1136,11 +1137,12 @@ namespace FyteClub
         private readonly FyteClubPlugin _plugin;
         private string _newSyncshellName = "";
         private string _inviteCode = "";
-        private bool _showBlockList = false;
+
         private DateTime _lastCopyTime = DateTime.MinValue;
         private int _lastCopiedIndex = -1;
         private bool? _webrtcAvailable = null;
         private DateTime _lastWebrtcTest = DateTime.MinValue;
+        private string _blockPlayerName = "";
 
         public ConfigWindow(FyteClubPlugin plugin) : base("FyteClub - P2P Mod Sharing")
         {
@@ -1293,9 +1295,11 @@ namespace FyteClub
                     {
                         try
                         {
-                            var inviteCode = _plugin._syncshellManager.GenerateInviteCode(syncshell.Id).Result;
-                            ImGui.SetClipboardText(inviteCode);
-                            _plugin._pluginLog.Info($"Copied invite code to clipboard: {syncshell.Name}");
+                            _ = Task.Run(async () => {
+                                var inviteCode = await _plugin._syncshellManager.GenerateInviteCode(syncshell.Id);
+                                ImGui.SetClipboardText(inviteCode);
+                                _plugin._pluginLog.Info($"Copied invite code to clipboard: {syncshell.Name}");
+                            });
                             _lastCopyTime = DateTime.UtcNow;
                             _lastCopiedIndex = i;
                         }
@@ -1353,7 +1357,7 @@ namespace FyteClub
             }
         }
         
-        private string _blockPlayerName = "";
+
         
         private void DrawBlockListTab()
         {

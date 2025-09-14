@@ -36,6 +36,7 @@ namespace FyteClub
         public async Task<string> CreateAnswer(string peerId, string offerJson)
         {
             var offer = JsonSerializer.Deserialize<RTCSessionDescription>(offerJson);
+            if (offer == null) return string.Empty;
             
             var peer = new WebRTCPeer(_pluginLog, _stunServers);
             _peers[peerId] = peer;
@@ -55,7 +56,10 @@ namespace FyteClub
             }
 
             var answer = JsonSerializer.Deserialize<RTCSessionDescription>(answerJson);
-            await peer.SetRemoteDescription(answer);
+            if (answer != null)
+            {
+                await peer.SetRemoteDescription(answer);
+            }
             
             _pluginLog.Info($"Set WebRTC answer for {peerId}");
         }
@@ -93,7 +97,7 @@ namespace FyteClub
         private readonly List<string> _stunServers;
         private bool _isConnected = false;
 
-        public event Action<string>? OnDataReceived;
+
         public event Action? OnConnected;
         public event Action? OnDisconnected;
 
