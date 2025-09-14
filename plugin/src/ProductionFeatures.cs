@@ -98,17 +98,9 @@ namespace FyteClub
 
     public class ConnectionRecovery
     {
-        private bool _networkFailure = false;
-
-        public void SimulateNetworkFailure()
-        {
-            _networkFailure = true;
-        }
-
         public async Task<bool> AttemptRecovery(WebRTCConnection connection)
         {
             await Task.Delay(10); // Simulate recovery attempt
-            _networkFailure = false;
             return true;
         }
     }

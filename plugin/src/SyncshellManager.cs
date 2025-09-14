@@ -20,9 +20,7 @@ namespace FyteClub
         private readonly SignalingService _signalingService;
         private readonly Timer _uptimeTimer;
         private readonly Timer _connectionTimeoutTimer;
-        private readonly SecureTokenStorage? _tokenStorage;
-        private readonly PhonebookPersistence? _phonebookPersistence;
-        private readonly ReconnectionProtocol? _reconnectionProtocol;
+
         private bool _disposed;
         
         private const int CONNECTION_TIMEOUT_SECONDS = 60;
@@ -33,9 +31,7 @@ namespace FyteClub
             _signalingService = new SignalingService();
             _uptimeTimer = new Timer(UpdateUptimeCounters, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
             _connectionTimeoutTimer = new Timer(CheckConnectionTimeouts, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
-            _tokenStorage = null;
-            _phonebookPersistence = null;
-            _reconnectionProtocol = null;
+
         }
 
         public SyncshellManager(object config)
@@ -45,7 +41,7 @@ namespace FyteClub
             _connectionTimeoutTimer = new Timer(CheckConnectionTimeouts, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
         }
 
-        public async Task<SyncshellInfo> CreateSyncshell(string name)
+        public Task<SyncshellInfo> CreateSyncshell(string name)
         {
             Console.WriteLine($"[DEBUG] CreateSyncshell START - name: '{name}'");
             SecureLogger.LogInfo("SyncshellManager.CreateSyncshell called with name: '{0}' (length: {1})", name, name?.Length ?? 0);
@@ -80,6 +76,11 @@ namespace FyteClub
             var masterPassword = SyncshellIdentity.GenerateSecurePassword();
             Console.WriteLine($"[DEBUG] CreateSyncshell - password generated, length: {masterPassword?.Length ?? 0}");
             
+            if (masterPassword == null)
+            {
+                throw new InvalidOperationException("Failed to generate secure password");
+            }
+            
             Console.WriteLine($"[DEBUG] CreateSyncshell - creating session");
             SecureLogger.LogInfo("Creating syncshell session...");
             var session = CreateSyncshellInternal(name, masterPassword);
@@ -95,7 +96,7 @@ namespace FyteClub
             Console.WriteLine($"[DEBUG] CreateSyncshell - found syncshell, ID: {result.Id}");
             SecureLogger.LogInfo("SyncshellInfo created successfully with ID: {0}, Name: {1}", result.Id, result.Name);
             Console.WriteLine($"[DEBUG] CreateSyncshell SUCCESS - returning result");
-            return result;
+            return Task.FromResult(result);
         }
 
         public SyncshellSession CreateSyncshellInternal(string name, string masterPassword)
@@ -191,7 +192,7 @@ namespace FyteClub
             return session;
         }
 
-        public async Task<string> GenerateInviteCode(string syncshellId, bool enableAutomated = true)
+        public Task<string> GenerateInviteCode(string syncshellId, bool enableAutomated = true)
         {
             try
             {
@@ -200,18 +201,18 @@ namespace FyteClub
                 if (syncshell == null)
                 {
                     Console.WriteLine($"Syncshell not found: {syncshellId}");
-                    return string.Empty;
+                    return Task.FromResult(string.Empty);
                 }
                 
                 // Generate simple invite code with name:password format
                 var inviteCode = $"{syncshell.Name}:{syncshell.EncryptionKey}";
                 Console.WriteLine($"Generated simple invite code for {syncshell.Name}");
-                return inviteCode;
+                return Task.FromResult(inviteCode);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Failed to generate invite code: {ex.Message}");
-                return string.Empty;
+                return Task.FromResult(string.Empty);
             }
         }
 
@@ -307,17 +308,18 @@ namespace FyteClub
             }
         }
 
-        public async Task SendModData(string syncshellId, string modData)
+        public Task SendModData(string syncshellId, string modData)
         {
             if (_webrtcConnections.TryGetValue(syncshellId, out var connection))
             {
                 if (connection.IsConnected)
                 {
                     var data = Encoding.UTF8.GetBytes(modData);
-                    await connection.SendDataAsync(data);
+                    _ = connection.SendDataAsync(data);
                     Console.WriteLine($"Sent mod data to {syncshellId}: {data.Length} bytes");
                 }
             }
+            return Task.CompletedTask;
         }
 
         private void CheckConnectionTimeouts(object? state)
@@ -371,6 +373,30 @@ namespace FyteClub
         }
 
         private readonly List<SyncshellInfo> _syncshells = new();
+        
+        public Task<bool> JoinSyncshellByInviteCode(string inviteCode)
+        {
+            try
+            {
+                // Parse simple invite code format: "name:password"
+                var parts = inviteCode.Split(':', 2);
+                if (parts.Length != 2)
+                {
+                    SecureLogger.LogError("Invalid invite code format");
+                    return Task.FromResult(false);
+                }
+                
+                var name = parts[0];
+                var password = parts[1];
+                
+                return Task.FromResult(JoinSyncshell(name, password));
+            }
+            catch (Exception ex)
+            {
+                SecureLogger.LogError("Failed to join syncshell by invite code: {0}", ex.Message);
+                return Task.FromResult(false);
+            }
+        }
         
         public bool JoinSyncshell(string name, string masterPassword)
         {

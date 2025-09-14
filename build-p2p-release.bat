@@ -53,6 +53,18 @@ if %errorlevel% neq 0 (
     echo WARNING: webrtc_native.dll not found - P2P features will be disabled
 )
 
+:: copy Microsoft WebRTC library (critical for P2P functionality)
+if exist "plugin\bin\Release\win-x64\Microsoft.MixedReality.WebRTC.dll" copy "plugin\bin\Release\win-x64\Microsoft.MixedReality.WebRTC.dll" "release\FyteClub-Plugin\" >nul
+if %errorlevel% neq 0 (
+    echo WARNING: Microsoft.MixedReality.WebRTC.dll not found - P2P features will be disabled
+)
+
+:: copy native WebRTC runtime (mrwebrtc.dll)
+if exist "%USERPROFILE%\.nuget\packages\microsoft.mixedreality.webrtc\2.0.2\runtimes\win10-x64\native\mrwebrtc.dll" copy "%USERPROFILE%\.nuget\packages\microsoft.mixedreality.webrtc\2.0.2\runtimes\win10-x64\native\mrwebrtc.dll" "release\FyteClub-Plugin\" >nul
+if %errorlevel% neq 0 (
+    echo WARNING: mrwebrtc.dll not found - WebRTC will fail to initialize
+)
+
 :: copy API dependencies
 if exist "plugin\bin\Release\win-x64\Penumbra.Api.dll" copy "plugin\bin\Release\win-x64\Penumbra.Api.dll" "release\FyteClub-Plugin\" >nul
 if exist "plugin\bin\Release\win-x64\Glamourer.Api.dll" copy "plugin\bin\Release\win-x64\Glamourer.Api.dll" "release\FyteClub-Plugin\" >nul

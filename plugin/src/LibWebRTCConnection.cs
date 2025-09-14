@@ -15,6 +15,7 @@ namespace FyteClub
         public event Action? OnDisconnected;
         public event Action<byte[]>? OnDataReceived;
 
+
         public bool IsConnected => _isConnected;
         
         public LibWebRTCConnection(Dalamud.Plugin.Services.IPluginLog? pluginLog = null)
@@ -64,54 +65,58 @@ namespace FyteClub
             }
         }
 
-        public async Task<string> CreateOfferAsync()
+        public Task<string> CreateOfferAsync()
         {
             try
             {
-                return "webrtc-offer-" + Guid.NewGuid().ToString()[..8];
+                return Task.FromResult("webrtc-offer-" + Guid.NewGuid().ToString()[..8]);
             }
             catch (Exception ex)
             {
                 _pluginLog?.Error($"Create offer failed: {ex.Message}");
-                return string.Empty;
+                return Task.FromResult(string.Empty);
             }
         }
 
-        public async Task<string> CreateAnswerAsync(string offerSdp)
+        public Task<string> CreateAnswerAsync(string offerSdp)
         {
             try
             {
-                return "webrtc-answer-" + Guid.NewGuid().ToString()[..8];
+                return Task.FromResult("webrtc-answer-" + Guid.NewGuid().ToString()[..8]);
             }
             catch (Exception ex)
             {
                 _pluginLog?.Error($"Create answer failed: {ex.Message}");
-                return string.Empty;
+                return Task.FromResult(string.Empty);
             }
         }
 
-        public async Task SetRemoteAnswerAsync(string answerSdp)
+        public Task SetRemoteAnswerAsync(string answerSdp)
         {
             try
             {
                 _isConnected = true;
                 OnConnected?.Invoke();
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 _pluginLog?.Error($"Set remote answer failed: {ex.Message}");
+                return Task.CompletedTask;
             }
         }
 
-        public async Task SendDataAsync(byte[] data)
+        public Task SendDataAsync(byte[] data)
         {
             try
             {
                 _pluginLog?.Info($"Sending {data.Length} bytes via WebRTC");
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 _pluginLog?.Error($"Send data failed: {ex.Message}");
+                return Task.CompletedTask;
             }
         }
 
