@@ -1,143 +1,122 @@
-# FyteClub FFXIV Plugin ✅ COMPLETE
+# FyteClub v4.1.0 (P2P Development)
 
-Dalamud plugin for detecting nearby players and managing mod synchronization in real-time.
+Share FFXIV mods with friends automatically using peer-to-peer technology.
 
-## Table of Contents
+## What it does
 
-- [Features](#features)
-- [Technology Stack](#technology-stack)
-- [Architecture](#architecture)
-- [Development Setup](#development-setup)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Core Functionality](#core-functionality)
-- [Safety & Compliance](#safety--compliance)
-- [Communication Protocol](#communication-protocol)
+When you're near other players in FFXIV, it syncs your mods directly between players using WebRTC P2P connections. No servers needed - just create or join a syncshell with friends. The plugin detects when you change your mods and shares them automatically.
+
+## New in v4.1.0 (P2P Architecture)
+
+- **Peer-to-peer connections**: No servers needed, direct WebRTC between friends
+- **Privacy-first**: Your home IP is never exposed to other players
+- **Syncshells**: Create private friend groups with invite codes
+- **Zero setup**: No port forwarding, no server hosting required
+- **Automatic change detection**: Mods sync when you change them
 
 ## Features
 
-- **Player Detection** - Uses Dalamud's ObjectTable for safe player scanning
-- **Penumbra Integration** - Works with existing mod framework
-- **IPC Communication** - Named pipes to Node.js client
-- **Memory Safety** - Built on proven Dalamud framework
-- **Auto-Updates** - Compatible with Dalamud's update system
-- **Proximity-Based Sync** - Real-time mod sharing with nearby players
+- Works with Penumbra, Glamourer, CustomizePlus, SimpleHeels, Honorific
+- Automatic mod change detection and sharing
+- Detects nearby players (50m range)
+- End-to-end encrypted mod sharing
+- Peer-to-peer connections (no servers)
+- Join multiple syncshells (friend groups)
+- WebRTC with NAT traversal
+- Manual sync button when you need it
 
-## Technology Stack
+## How to use
 
-- **Language**: C# (.NET 9)
-- **Framework**: Dalamud plugin system
-- **Game Integration**: Dalamud ObjectTable and ClientState
-- **Mod Management**: Penumbra integration + fallback system
-- **Communication**: Named pipes (Windows) / Unix sockets (Linux)
+1. Someone creates a syncshell and shares the invite code
+2. Everyone else joins using the invite code
+3. Play FFXIV together - mods sync automatically via P2P
+4. Each friend group has their own private syncshell
 
-## Architecture
+## Use cases
 
-```
-┌─────────────────┐    ┌─────────────────┐
-│   FFXIV Game    │    │  Node.js Client │
-└─────────────────┘    └─────────────────┘
-         │                       │
-┌─────────────────┐    ┌─────────────────┐
-│  XIVLauncher    │    │   Named Pipe    │
-└─────────────────┘    │   IPC Server    │
-         │              └─────────────────┘
-┌─────────────────┐              │
-│    Dalamud      │              │
-│   Framework     │              │
-└─────────────────┘              │
-         │                       │
-┌─────────────────┐              │
-│   FyteClub      │◄─────────────┘
-│ Plugin (.dll)   │
-├─────────────────┤
-│ • Player Detect │
-│ • Penumbra API  │
-│ • IPC Client    │
-│ • Mod Manager   │
-└─────────────────┘
-```
+- Share mods with friends without public uploads
+- Keep mod sharing private within your group
+- No server hosting or technical setup required
+- Your home IP stays private (WebRTC handles NAT)
+
+## How it works
+
+### Plugin (FFXIV)
+- Scans for nearby players (50m range)
+- Connects to friends via WebRTC P2P
+- Integrates with mod plugins (Penumbra, Glamourer, etc.)
+- Encrypts mod data before sending
+
+### P2P Architecture
+- WebRTC data channels for direct communication
+- Syncshells use persistent membership tokens
+- NAT traversal via free STUN servers
+- No central servers or data collection
 
 ## Installation
 
-### Prerequisites
-- FFXIV with XIVLauncher
-- Dalamud plugin framework
-- Penumbra (recommended)
+### Plugin (P2P Version)
+1. Install XIVLauncher and Dalamud
+2. Download FyteClub-Plugin.zip from releases
+3. Extract to `%APPDATA%\XIVLauncher\installedPlugins\FyteClub\latest\`
+4. Restart FFXIV
+5. Use `/fyteclub` command in-game
 
-### Build & Install
+### No Server Required!
+The P2P version eliminates the need for server setup. Just install the plugin and join syncshells with friends.
+
+## Requirements
+
+### Plugin (FFXIV)
+- Final Fantasy XIV Online
+- XIVLauncher and Dalamud
+- Windows 10/11, macOS, or Linux
+- Internet connection (for WebRTC signaling)
+
+### No Server Requirements
+P2P architecture eliminates server hosting requirements.
+
+## Configuration
+
+### Joining Syncshells
+Use `/fyteclub` in-game to:
+- Create new syncshells
+- Join syncshells with invite codes
+- View syncshell members
+- Manage P2P connections
+
+## Privacy & Security
+
+Your mod data is encrypted with AES-256 before being sent anywhere. P2P connections are direct between friends - no servers can see your data. Your home IP is protected by WebRTC NAT traversal.
+
+## Development
+
+To build from source:
 ```bash
-# Build plugin
-build.bat
+# Plugin
+cd plugin
+dotnet build
 
-# Install manually
-copy bin\FyteClub.dll %APPDATA%\XIVLauncher\installedPlugins\FyteClub\
-copy FyteClub.json %APPDATA%\XIVLauncher\installedPlugins\FyteClub\
-
-# Or use Dalamud's plugin installer (future)
+# Tests
+cd plugin-tests
+dotnet test
 ```
 
-### Usage
-1. Start FFXIV with XIVLauncher
-2. Run FyteClub client: `fyteclub start`
-3. Plugin automatically detects nearby players
-4. Mods sync in real-time when players are nearby
+See P2P_ROADMAP.md for development status.
 
-## Development Setup
+## Release
 
-### Dalamud Library Path
-The plugin uses environment variable fallback for cross-platform development:
-- **Default**: Uses XIVLauncher's dev environment (`%APPDATA%\XIVLauncher\addon\Hooks\dev\`)
-- **Custom**: Set `DALAMUD_HOME` environment variable
-- **Override**: Pass `-p:DalamudLibPath="path"` to dotnet build
-
-### Building
-```cmd
-build.bat
-# Or manually: dotnet build -c Release
+To build P2P release:
+```bash
+build-p2p-release.bat
 ```
 
-## Core Functionality
+## Support
 
-This plugin provides automatic mod synchronization:
-- **Real-time player detection** using game's object table
-- **Automatic mod synchronization** when players are nearby
-- **Seamless mod application** without game restart
-- **Distance-based filtering** only syncs visible players
-- **Zone awareness** respects game boundaries
+Check the wiki or open an issue if you run into problems.
 
-## Safety & Compliance
+## License
 
-- **Dalamud Framework** - Built on proven, safe foundation
-- **No Memory Hacking** - Uses official Dalamud APIs
-- **ToS Compliant** - Cosmetic modifications only
-- **Anti-Cheat Safe** - No gameplay advantages
-- **Crash Prevention** - Extensive error handling
-- **Update Compatible** - Dalamud handles game updates
+MIT License - See LICENSE file for details.
 
-## Communication Protocol
-
-### Plugin → Client Messages
-```json
-{
-  "type": "nearby_players",
-  "players": [
-    {
-      "Name": "PlayerName",
-      "WorldId": 40,
-      "ContentId": 12345,
-      "Position": [100.0, 0.0, 200.0]
-    }
-  ]
-}
-```
-
-### Client → Plugin Messages
-```json
-{
-  "type": "apply_mod",
-  "playerName": "PlayerName",
-  "modId": "mod_12345",
-  "modPath": "/path/to/mod.file"
-}
-```
+This project is not affiliated with Square Enix or Final Fantasy XIV.

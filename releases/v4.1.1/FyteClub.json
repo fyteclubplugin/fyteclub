@@ -1,0 +1,24 @@
+{
+  "Author": "FyteClub Team",
+  "Name": "FyteClub",
+  "Punchline": "P2P mod sharing with friends",
+  "Description": "Share FFXIV mods automatically using peer-to-peer connections. No servers needed!",
+  "InternalName": "FyteClub",
+    "AssemblyVersion": "4.1.1",
+  "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "mods",
+    "sharing",
+    "character",
+    "customization"
+  ],
+  "DalamudApiLevel": 13,
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "CanUnloadAsync": false,
+  "LoadPriority": 0,
+  "IconUrl": "",
+  "ImageUrls": [],
+  "AcceptsFeedback": true
+}

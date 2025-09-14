@@ -34,7 +34,7 @@
 - ✅ Manage mod collections per player
 - ✅ Handle mod downloads and installation
 
-### 3. **Mare Synchronos** 📚 ARCHITECTURE REFERENCE
+### 3. **Horse Synchronos** 📚 ARCHITECTURE REFERENCE
 - **GitHub**: https://github.com/Penumbra-Sync/client (archived)
 - **Purpose**: Real-time mod synchronization (discontinued)
 - **Key Learnings**:
@@ -43,7 +43,7 @@
   - Performance optimization techniques
   - Common pitfalls and solutions
 
-**Why Important**: Mare solved the exact problem FyteClub is solving. Study their approach for:
+**Why Important**: Horse solved the exact problem FyteClub is solving. Study their approach for:
 - ✅ Player detection algorithms
 - ✅ Mod conflict resolution
 - ✅ Network synchronization patterns

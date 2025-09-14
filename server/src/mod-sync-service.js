@@ -1,17 +1,30 @@
 const path = require('path');
 const fs = require('fs');
-const DeduplicationService = require('./deduplication-service');
+const OptimalModDeduplicationService = require('./optimal-mod-deduplication-service');
 const CacheService = require('./cache-service');
+const StorageMonitorService = require('./storage-monitor-service');
 
 class ModSyncService {
     constructor(dataDir) {
         this.dataDir = dataDir;
         this.modsDir = path.join(dataDir, 'mods');
-        this.deduplication = new DeduplicationService(dataDir);
+        
+        // Use the new optimal deduplication system
+        this.deduplication = new OptimalModDeduplicationService(dataDir);
+        
         this.cache = new CacheService({
             ttl: 300, // 5 minutes
             enableFallback: true
         });
+        
+        // Initialize storage monitoring
+        this.storageMonitor = new StorageMonitorService(dataDir, {
+            maxStorageGB: 50,
+            warningThresholdPercent: 95,
+            cleanupThresholdPercent: 98,
+            oldModThresholdDays: 30
+        });
+        
         this.ensureModsDirectory();
     }
 
@@ -66,43 +79,57 @@ class ModSyncService {
         }
     }
 
-    async updatePlayerMods(playerId, encryptedMods) {
+    async updatePlayerMods(playerId, playerModData) {
         try {
             if (!playerId) {
                 throw new Error('Player ID is required');
             }
             
-            if (!encryptedMods) {
-                throw new Error('Encrypted mods data is required');
+            if (!playerModData) {
+                throw new Error('Player mod data is required');
             }
+
+            // Parse the player mod data if it's encrypted/stringified
+            let parsedModData;
+            if (typeof playerModData === 'string') {
+                try {
+                    parsedModData = JSON.parse(playerModData);
+                } catch (parseError) {
+                    // Assume it's already in the right format or encrypted
+                    parsedModData = { rawData: playerModData };
+                }
+            } else {
+                parsedModData = playerModData;
+            }
+
+            // Process with optimal mod+config deduplication
+            const results = await this.deduplication.processPlayerMods(playerId, parsedModData);
             
-            // Store mod data with deduplication
-            const contentBuffer = Buffer.from(JSON.stringify(encryptedMods));
-            const storeResult = await this.deduplication.storeContent(contentBuffer);
-            
-            // Store metadata pointing to deduplicated content
-            const modFile = path.join(this.modsDir, `${playerId}.json`);
-            const modData = {
-                playerId,
-                contentHash: storeResult.hash,
-                size: storeResult.size,
-                isDuplicate: storeResult.isDuplicate,
-                updatedAt: Date.now()
-            };
-            
-            fs.writeFileSync(modFile, JSON.stringify(modData, null, 2));
-            
-            // Update cache
+            // Update cache with the processed results
             const cacheKey = `player_mods:${playerId}`;
-            await this.cache.set(cacheKey, encryptedMods, 300); // 5 minutes
+            await this.cache.set(cacheKey, parsedModData, 300); // 5 minutes
             
-            const dedupeMsg = storeResult.isDuplicate ? ' (deduplicated)' : ' (new content)';
-            console.log(`💾 Updated mods for player ${playerId}${dedupeMsg}`);
+            // Calculate deduplication stats for logging
+            const modDupes = results.modResults.filter(r => r.isDuplicate).length;
+            const configDupes = results.configResults.filter(r => r.isDuplicate).length;
+            const totalItems = results.modResults.length + results.configResults.length;
+            const totalDupes = modDupes + configDupes;
+            
+            console.log(`💾 Updated mods for player ${playerId}:`);
+            console.log(`   📦 Mods: ${results.modResults.length} (${modDupes} deduplicated)`);
+            console.log(`   ⚙️ Configs: ${results.configResults.length} (${configDupes} deduplicated)`);
+            console.log(`   🎯 Overall efficiency: ${totalItems > 0 ? ((totalDupes / totalItems) * 100).toFixed(1) : 0}% deduplicated`);
             
             return { 
                 success: true,
-                isDuplicate: storeResult.isDuplicate,
-                hash: storeResult.hash
+                modResults: results.modResults,
+                configResults: results.configResults,
+                associations: results.associations,
+                deduplicationStats: {
+                    totalItems,
+                    totalDeduplicated: totalDupes,
+                    efficiencyPercent: totalItems > 0 ? ((totalDupes / totalItems) * 100).toFixed(1) : 0
+                }
             };
         } catch (error) {
             console.error('Error updating player mods:', error);
@@ -115,146 +142,237 @@ class ModSyncService {
             // Check cache first
             const cacheKey = `player_mods:${playerId}`;
             const cachedMods = await this.cache.get(cacheKey);
-            if (cachedMods) {
+            if (cachedMods && cachedMods.lastModified) { // Only use cache if it has lastModified field
                 return cachedMods;
             }
 
-            const modFile = path.join(this.modsDir, `${playerId}.json`);
+            // Get packaged mods with configs from optimal deduplication service
+            const packagedMods = await this.deduplication.packagePlayerMods(playerId, playerId);
             
-            if (!fs.existsSync(modFile)) {
+            if (!packagedMods) {
                 return null;
             }
-            
-            const data = fs.readFileSync(modFile, 'utf8');
-            const modData = JSON.parse(data);
-            
-            // Check if data is stale (older than 24 hours)
-            const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-            if (Date.now() - modData.updatedAt > maxAge) {
-                // Clean up stale data and remove content reference
-                if (modData.contentHash) {
-                    await this.deduplication.removeContentReference(modData.contentHash);
-                }
-                fs.unlinkSync(modFile);
-                return null;
-            }
-            
-            let encryptedMods = null;
-            
-            // Retrieve deduplicated content
-            if (modData.contentHash) {
-                const contentBuffer = await this.deduplication.getContent(modData.contentHash);
-                if (contentBuffer) {
-                    encryptedMods = JSON.parse(contentBuffer.toString());
-                }
-            } else {
-                // Fallback for old format
-                encryptedMods = modData.encryptedMods || null;
-            }
-            
+
             // Cache the result for future requests
-            if (encryptedMods) {
-                await this.cache.set(cacheKey, encryptedMods, 300); // 5 minutes
-            }
+            await this.cache.set(cacheKey, packagedMods, 300); // 5 minutes
             
-            return encryptedMods;
+            console.log(`📦 Retrieved ${packagedMods.mods.length} packaged mods for ${playerId}`);
+            return packagedMods;
+            
         } catch (error) {
             console.error('Error getting player mods:', error);
             return null;
         }
     }
 
+    // New method: Get mods for another player (cross-player sharing)
+    async getPlayerModsForSharing(requestingPlayerId, targetPlayerId) {
+        try {
+            // Check cache first
+            const cacheKey = `shared_mods:${requestingPlayerId}:${targetPlayerId}`;
+            const cachedMods = await this.cache.get(cacheKey);
+            if (cachedMods) {
+                return cachedMods;
+            }
+
+            // Package target player's mods for the requesting player
+            const packagedMods = await this.deduplication.packagePlayerMods(requestingPlayerId, targetPlayerId);
+            
+            if (!packagedMods) {
+                return null;
+            }
+
+            // Cache the result for a shorter time (cross-player data changes more frequently)
+            await this.cache.set(cacheKey, packagedMods, 60); // 1 minute
+            
+            console.log(`🔄 ${requestingPlayerId} retrieved ${packagedMods.mods.length} mods from ${targetPlayerId}`);
+            return packagedMods;
+            
+        } catch (error) {
+            console.error('Error getting player mods for sharing:', error);
+            return null;
+        }
+    }
+
     async cleanupOldMods() {
         try {
-            const files = fs.readdirSync(this.modsDir);
-            const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-            let cleaned = 0;
+            const twentyFourHours = 24 * 60 * 60 * 1000;
+            let cleanedPlayersCount = 0;
+            let totalSpaceSaved = 0;
+
+            // Get all player manifests from optimal deduplication service
+            const playerManifests = await this.deduplication.getAllPlayerManifests();
             
-            for (const file of files) {
-                if (!file.endsWith('.json')) continue;
+            for (const [playerId, manifest] of Object.entries(playerManifests)) {
+                const isStale = Date.now() - manifest.updatedAt > twentyFourHours;
                 
-                const filePath = path.join(this.modsDir, file);
-                const data = fs.readFileSync(filePath, 'utf8');
-                const modData = JSON.parse(data);
-                
-                if (Date.now() - modData.updatedAt > maxAge) {
-                    // Remove content reference for deduplication
-                    if (modData.contentHash) {
-                        await this.deduplication.removeContentReference(modData.contentHash);
-                    }
-                    fs.unlinkSync(filePath);
-                    cleaned++;
+                if (isStale) {
+                    // Clean up player's mods and configs
+                    const spaceSaved = await this.deduplication.cleanupPlayerData(playerId);
+                    totalSpaceSaved += spaceSaved;
+                    cleanedPlayersCount++;
+                    
+                    // Invalidate cache
+                    const cacheKey = `player_mods:${playerId}`;
+                    await this.cache.delete(cacheKey);
+                    
+                    console.log(`🧹 Cleaned up stale mods for ${playerId}, saved ${this.formatFileSize(spaceSaved)}`);
                 }
             }
-            
-            // Also cleanup orphaned content
-            const orphansCleanedCount = await this.deduplication.cleanup();
-            
-            if (cleaned > 0 || orphansCleanedCount > 0) {
-                console.log(`🧹 Cleaned up ${cleaned} old mod files and ${orphansCleanedCount} orphaned content files`);
+
+            // Run deduplication maintenance (cleanup unreferenced content)
+            const additionalSpaceSaved = await this.deduplication.runMaintenance();
+            totalSpaceSaved += additionalSpaceSaved;
+
+            if (cleanedPlayersCount > 0) {
+                console.log(`✨ Cleanup complete: ${cleanedPlayersCount} players, ${this.formatFileSize(totalSpaceSaved)} reclaimed`);
+            } else {
+                console.log('🔍 No stale mod data found during cleanup');
             }
+            
+            return {
+                cleanedPlayers: cleanedPlayersCount,
+                spaceSaved: totalSpaceSaved
+            };
         } catch (error) {
-            console.error('Error cleaning up old mods:', error);
+            console.error('Error during cleanup:', error);
+            return {
+                cleanedPlayers: 0,
+                spaceSaved: 0
+            };
         }
     }
 
     async getServerStats() {
         try {
-            const files = fs.readdirSync(this.modsDir);
-            const modFiles = files.filter(f => f.endsWith('.json'));
-            
-            let totalSize = 0;
-            for (const file of modFiles) {
-                const filePath = path.join(this.modsDir, file);
-                const stats = fs.statSync(filePath);
-                totalSize += stats.size;
-            }
-            
-            // Get deduplication stats
-            const dedupeStats = this.deduplication.getStats();
+            // Get stats from optimal deduplication service
+            const deduplicationStats = await this.deduplication.getStats();
             
             // Get cache stats
-            const cacheStats = this.cache.getStats();
+            const cacheStats = await this.cache.getStats();
+            
+            // Get mod directory size (for legacy comparison)
+            const modsDirSize = this.getDirectorySize(this.modsDir);
             
             return {
-                totalPlayers: modFiles.length,
-                totalDataSize: totalSize,
-                dataDirectory: this.dataDir,
-                deduplication: dedupeStats,
-                cache: cacheStats
+                players: {
+                    total: deduplicationStats.totalPlayers,
+                    activeToday: deduplicationStats.activePlayers,
+                    withMods: deduplicationStats.playersWithMods
+                },
+                mods: {
+                    uniqueContent: deduplicationStats.uniqueMods,
+                    totalConfigurations: deduplicationStats.totalConfigs,
+                    averageModsPerPlayer: deduplicationStats.avgModsPerPlayer,
+                    largestModSize: this.formatFileSize(deduplicationStats.largestModSize),
+                    totalContentSize: this.formatFileSize(deduplicationStats.totalContentSize)
+                },
+                deduplication: {
+                    spaceSavings: this.formatFileSize(deduplicationStats.spaceSaved),
+                    savingsPercentage: deduplicationStats.savingsPercentage,
+                    duplicatesFound: deduplicationStats.duplicatesFound,
+                    mostPopularMod: deduplicationStats.mostPopularMod || 'None'
+                },
+                storage: {
+                    contentDirectory: this.formatFileSize(deduplicationStats.contentDirSize),
+                    configDirectory: this.formatFileSize(deduplicationStats.configDirSize), 
+                    manifestDirectory: this.formatFileSize(deduplicationStats.manifestDirSize),
+                    legacyModsDirectory: this.formatFileSize(modsDirSize),
+                    totalOptimalStorage: this.formatFileSize(deduplicationStats.totalOptimalSize)
+                },
+                cache: {
+                    hitRate: cacheStats.hitRate || 0,
+                    size: cacheStats.size || 0,
+                    memoryUsage: this.formatFileSize(cacheStats.memoryUsage || 0)
+                },
+                performance: {
+                    avgUploadTime: deduplicationStats.avgUploadTime || 0,
+                    avgDownloadTime: deduplicationStats.avgDownloadTime || 0,
+                    lastCleanup: deduplicationStats.lastCleanup || 'Never'
+                }
             };
         } catch (error) {
+            console.error('Error getting server stats:', error);
             return {
-                totalPlayers: 0,
-                totalDataSize: 0,
-                dataDirectory: this.dataDir,
-                deduplication: { error: error.message },
-                cache: { error: error.message }
+                players: { total: 0, activeToday: 0, withMods: 0 },
+                mods: { uniqueContent: 0, totalConfigurations: 0, averageModsPerPlayer: 0, largestModSize: '0 B', totalContentSize: '0 B' },
+                deduplication: { spaceSavings: '0 B', savingsPercentage: 0, duplicatesFound: 0, mostPopularMod: 'None' },
+                storage: { contentDirectory: '0 B', configDirectory: '0 B', manifestDirectory: '0 B', legacyModsDirectory: '0 B', totalOptimalStorage: '0 B' },
+                cache: { hitRate: 0, size: 0, memoryUsage: '0 B' },
+                performance: { avgUploadTime: 0, avgDownloadTime: 0, lastCleanup: 'Never' }
             };
         }
     }
 
-    async getAllRegisteredPlayers() {
+    getDirectorySize(dirPath) {
         try {
-            const files = fs.readdirSync(this.modsDir);
-            const modFiles = files.filter(f => f.endsWith('.json'));
+            if (!fs.existsSync(dirPath)) {
+                return 0;
+            }
             
-            const players = [];
-            for (const file of modFiles) {
-                try {
-                    const filePath = path.join(this.modsDir, file);
-                    const data = fs.readFileSync(filePath, 'utf8');
-                    const playerData = JSON.parse(data);
-                    players.push(playerData);
-                } catch (error) {
-                    console.error(`Error reading player file ${file}:`, error.message);
+            let totalSize = 0;
+            const files = fs.readdirSync(dirPath);
+            
+            for (const file of files) {
+                const filePath = path.join(dirPath, file);
+                const stats = fs.statSync(filePath);
+                
+                if (stats.isDirectory()) {
+                    totalSize += this.getDirectorySize(filePath);
+                } else {
+                    totalSize += stats.size;
                 }
             }
+            
+            return totalSize;
+        } catch (error) {
+            console.error('Error calculating directory size:', error);
+            return 0;
+        }
+    }
+
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    async getAllRegisteredPlayers() {
+        try {
+            // Get all player manifests from optimal deduplication service
+            const playerManifests = await this.deduplication.getAllPlayerManifests();
+            
+            const players = [];
+            for (const [playerId, manifest] of Object.entries(playerManifests)) {
+                players.push({
+                    playerId: playerId,
+                    characterName: manifest.characterName || playerId,
+                    lastSeen: new Date(manifest.updatedAt).toISOString(),
+                    modCount: manifest.mods.length,
+                    totalSize: this.formatFileSize(manifest.totalSize || 0),
+                    lastUpdate: manifest.updatedAt
+                });
+            }
+            
+            // Sort by last update time (most recent first)
+            players.sort((a, b) => b.lastUpdate - a.lastUpdate);
             
             return players;
         } catch (error) {
             console.error('Error getting registered players:', error.message);
             return [];
+        }
+    }
+
+    async getPlayerManifest(playerId) {
+        try {
+            const playerManifests = await this.deduplication.getAllPlayerManifests();
+            return playerManifests[playerId] || null;
+        } catch (error) {
+            console.error('Error getting player manifest:', error.message);
+            return null;
         }
     }
 }

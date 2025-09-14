@@ -1,14 +1,15 @@
 {
   "runtimeTarget": {
-    "name": ".NETCoreApp,Version=v9.0",
+    "name": ".NETCoreApp,Version=v9.0/win-x64",
     "signature": ""
   },
   "compilationOptions": {},
   "targets": {
-    ".NETCoreApp,Version=v9.0": {
-      "FyteClub/4.0.0": {
+    ".NETCoreApp,Version=v9.0": {},
+    ".NETCoreApp,Version=v9.0/win-x64": {
+      "FyteClub/4.1.2": {
         "dependencies": {
-          "DalamudPackager": "13.0.0",
+          "DalamudPackager": "13.1.0",
           "DotNet.ReproducibleBuilds": "1.2.25",
           "Glamourer.Api": "2.6.0",
           "Penumbra.Api": "5.12.0"
@@ -17,7 +18,7 @@
           "FyteClub.dll": {}
         }
       },
-      "DalamudPackager/13.0.0": {},
+      "DalamudPackager/13.1.0": {},
       "DotNet.ReproducibleBuilds/1.2.25": {},
       "Glamourer.Api/2.6.0": {
         "runtime": {
@@ -38,17 +39,17 @@
     }
   },
   "libraries": {
-    "FyteClub/4.0.0": {
+    "FyteClub/4.1.2": {
       "type": "project",
       "serviceable": false,
       "sha512": ""
     },
-    "DalamudPackager/13.0.0": {
+    "DalamudPackager/13.1.0": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-Mb3cUDSK/vDPQ8gQIeuCw03EMYrej1B4J44a1AvIJ9C759p9XeqdU9Hg4WgOmlnlPe0G7ILTD32PKSUpkQNa8w==",
-      "path": "dalamudpackager/13.0.0",
-      "hashPath": "dalamudpackager.13.0.0.nupkg.sha512"
+      "sha512": "sha512-XdoNhJGyFby5M/sdcRhnc5xTop9PHy+H50PTWpzLhJugjB19EDBiHD/AsiDF66RETM+0qKUdJBZrNuebn7qswQ==",
+      "path": "dalamudpackager/13.1.0",
+      "hashPath": "dalamudpackager.13.1.0.nupkg.sha512"
     },
     "DotNet.ReproducibleBuilds/1.2.25": {
       "type": "package",

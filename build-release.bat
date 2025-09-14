@@ -160,4 +160,3 @@ echo   • Penumbra.Api.dll (Official API)
 echo   • Glamourer.Api.dll (Official API)  
 echo   • Direct IPC for CustomizePlus, SimpleHeels, Honorific
 echo.
-pause

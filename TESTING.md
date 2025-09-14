@@ -54,7 +54,7 @@ cd client && npm test -- --coverage
 ### **✅ Client Tests (15/15 passing)**
 - ✅ **Server Manager** - Multi-server switching, configuration persistence
 - ✅ **Encryption Services** - RSA/AES encryption, key management
-- ✅ **Daemon Communication** - Named pipe message handling, plugin integration
+- ✅ **HTTP Communication** - Direct server communication, plugin integration
 - ✅ **Error Recovery** - Connection failures, retry mechanisms
 
 ### **✅ Live Integration Tests (5/5 passing)**
@@ -139,11 +139,11 @@ cd server && npx jest src/database-service.test.js --verbose
 - [x] Graceful shutdown cleans up services
 
 ### **Client Functionality**
-- [x] Daemon starts and connects to plugin
+- [x] Plugin connects directly to server
 - [x] Server switching works with v3.0.0 endpoints
 - [x] Share code lookup works
 - [x] HTTP requests to enhanced servers work
-- [x] Named pipe communication works
+- [x] Direct plugin communication works
 - [x] Error recovery works
 
 ### **Plugin Functionality**

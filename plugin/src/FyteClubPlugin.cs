@@ -3,10 +3,11 @@ using Dalamud.Plugin;
 using Dalamud.Game.ClientState.Objects;
 using Dalamud.Game.ClientState;
 using Dalamud.Plugin.Services;
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Interface.Windowing;
-using Dalamud.Interface.Colors;
 using Dalamud.Bindings.ImGui;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -16,22 +17,22 @@ using System.Threading;
 using System.Text;
 using System.Security.Cryptography;
 using Dalamud.Plugin.Ipc;
+using System.Text.Json;
 
 namespace FyteClub
 {
-    public sealed class FyteClubPlugin : IDalamudPlugin, IMediatorSubscriber
+    public sealed partial class FyteClubPlugin : IDalamudPlugin, IMediatorSubscriber
     {
         public string Name => "FyteClub";
         private const string CommandName = "/fyteclub";
-        private const int MaxServerFailures = 3; // Number of failures before marking server as disconnected
-
+        
         private readonly IDalamudPluginInterface _pluginInterface;
         private readonly ICommandManager _commandManager;
+        private readonly IObjectTable _objectTable;
         private readonly IClientState _clientState;
         private readonly IFramework _framework;
-        private readonly IPluginLog _pluginLog;
-
-        // FyteClub's core architecture - keep your innovations!
+        public readonly IPluginLog _pluginLog;
+        
         private readonly FyteClubMediator _mediator = new();
         private readonly PlayerDetectionService _playerDetection;
         private readonly HttpClient _httpClient = new();
@@ -39,49 +40,51 @@ namespace FyteClub
         private readonly ConfigWindow _configWindow;
         private readonly FyteClubModIntegration _modSystemIntegration;
         private readonly FyteClubRedrawCoordinator _redrawCoordinator;
+        private readonly SafeModIntegration _safeModIntegration;
+        public readonly SyncshellManager _syncshellManager;
 
-        // FyteClub's multi-server friend network - your key innovation
-        private readonly List<ServerInfo> _servers = new();
-        private readonly Dictionary<string, LoadingState> _loadingStates = new();
         private readonly CancellationTokenSource _cancellationTokenSource = new();
+
+        // Client-side cache for mod deduplication
+        private ClientModCache? _clientCache;
+        private ModComponentCache? _componentCache;
+
+        // Thread-safe collections using ConcurrentDictionary for efficient lookups
+        private readonly ConcurrentDictionary<string, byte> _recentlySyncedUsers = new();
+        private readonly ConcurrentDictionary<string, byte> _blockedUsers = new();
+        private readonly ConcurrentDictionary<string, SyncshellInfo> _playerSyncshellAssociations = new();
+        private readonly ConcurrentDictionary<string, DateTime> _playerLastSeen = new();
+        private readonly ConcurrentDictionary<string, LoadingState> _loadingStates = new();
         
-        // User blocking system - track recently synced users and blocked list
-        private readonly HashSet<string> _recentlySyncedUsers = new();
-        private readonly HashSet<string> _blockedUsers = new();
-        
-        // Player-to-server association tracking (reset on app restart)
-        private readonly Dictionary<string, ServerInfo> _playerServerAssociations = new();
-        private readonly Dictionary<string, DateTime> _playerLastSeen = new();
-        
-        // Detection retry system
-        private int _detectionRetryCount = 0;
-        private DateTime _lastDetectionRetry = DateTime.MinValue;
-        private bool _hasLoggedNoModSystems = false;
-        
-        // Server reconnection system
-        private DateTime _lastReconnectionAttempt = DateTime.MinValue;
-        private readonly TimeSpan _reconnectionInterval = TimeSpan.FromMinutes(2); // Try reconnecting every 2 minutes
-        
-        // Periodic health check system - test ALL servers regularly
-        private DateTime _lastHealthCheckAttempt = DateTime.MinValue;
-        private readonly TimeSpan _healthCheckInterval = TimeSpan.FromMinutes(5); // Health check all servers every 5 minutes
-        
-        // Automatic upload system with change detection
+        // Manual upload system (user-initiated)
         private bool _hasPerformedInitialUpload = false;
-        private string? _lastUploadedModHash = null;
-        private DateTime _lastChangeCheckTime = DateTime.MinValue;
-        private readonly TimeSpan _changeCheckInterval = TimeSpan.FromSeconds(30); // Check for changes every 30 seconds
+        
+        // Retry systems
+        private DateTime _lastReconnectionAttempt = DateTime.MinValue;
+        private readonly TimeSpan _reconnectionInterval = TimeSpan.FromMinutes(2);
+        private DateTime _lastDiscoveryAttempt = DateTime.MinValue;
+        private readonly TimeSpan _discoveryInterval = TimeSpan.FromMinutes(1);
         
         // Public accessors for UI
-        public DateTime LastChangeCheckTime => _lastChangeCheckTime;
-        public TimeSpan ChangeCheckInterval => _changeCheckInterval;
-        public string? LastUploadedModHash => _lastUploadedModHash;
+        public bool HasPerformedInitialUpload => _hasPerformedInitialUpload;
+        public ClientModCache? ClientCache => _clientCache;
+        public ModComponentCache? ComponentCache => _componentCache;
 
-        // IPC with version checking - established patterns
+        // IPC
         private readonly ICallGateSubscriber<bool>? _penumbraEnabled;
         private readonly ICallGateSubscriber<string, Guid>? _penumbraCreateCollection;
         private readonly ICallGateSubscriber<Guid, int, bool>? _penumbraAssignCollection;
-        private bool _isPenumbraAvailable = false;
+        private readonly ICallGateSubscriber<string, object>? _penumbraModSettingChanged;
+        private readonly ICallGateSubscriber<object>? _glamourerStateChanged;
+        private readonly ICallGateSubscriber<object>? _customizePlusProfileChanged;
+        private readonly ICallGateSubscriber<object>? _heelsOffsetChanged;
+        private readonly ICallGateSubscriber<object>? _honorificChanged;
+        // Mod system status flags (exposed to UI)
+        public bool IsPenumbraAvailable => _modSystemIntegration?.IsPenumbraAvailable ?? false;
+        public bool IsGlamourerAvailable => _modSystemIntegration?.IsGlamourerAvailable ?? false;
+        public bool IsCustomizePlusAvailable => _modSystemIntegration?.IsCustomizePlusAvailable ?? false;
+        public bool IsHeelsAvailable => _modSystemIntegration?.IsHeelsAvailable ?? false;
+        public bool IsHonorificAvailable => _modSystemIntegration?.IsHonorificAvailable ?? false;
 
         public FyteClubPlugin(
             IDalamudPluginInterface pluginInterface,
@@ -93,14 +96,20 @@ namespace FyteClub
         {
             _pluginInterface = pluginInterface;
             _commandManager = commandManager;
+            _objectTable = objectTable;
             _clientState = clientState;
             _framework = framework;
             _pluginLog = pluginLog;
 
-            // Initialize mod system integration
+            // Initialize WebRTC factory
+            WebRTCConnectionFactory.Initialize(pluginLog, testMode: false);
+
+            // Initialize services
             _modSystemIntegration = new FyteClubModIntegration(pluginInterface, pluginLog, objectTable, framework);
+            _safeModIntegration = new SafeModIntegration(pluginInterface, pluginLog);
             _redrawCoordinator = new FyteClubRedrawCoordinator(pluginLog, _mediator, _modSystemIntegration);
             _playerDetection = new PlayerDetectionService(objectTable, _mediator, _pluginLog);
+            _syncshellManager = new SyncshellManager(pluginLog);
 
             _windowSystem = new WindowSystem("FyteClub");
             _configWindow = new ConfigWindow(this);
@@ -115,986 +124,655 @@ namespace FyteClub
             _pluginInterface.UiBuilder.OpenConfigUi += () => _configWindow.Toggle();
             _framework.Update += OnFrameworkUpdate;
 
-            // Subscribe to mediator messages - your FyteClub mediator pattern
+            // Subscribe to mediator messages
             _mediator.Subscribe<PlayerDetectedMessage>(this, OnPlayerDetected);
             _mediator.Subscribe<PlayerRemovedMessage>(this, OnPlayerRemoved);
+            
 
-            // Initialize IPC - using established Penumbra patterns (legacy - now using ModSystemIntegration)
+
+            // Initialize IPC
             _penumbraEnabled = _pluginInterface.GetIpcSubscriber<bool>("Penumbra.GetEnabledState");
             _penumbraCreateCollection = _pluginInterface.GetIpcSubscriber<string, Guid>("Penumbra.CreateNamedTemporaryCollection");
             _penumbraAssignCollection = _pluginInterface.GetIpcSubscriber<Guid, int, bool>("Penumbra.AssignTemporaryCollection");
+            _penumbraModSettingChanged = _pluginInterface.GetIpcSubscriber<string, object>("Penumbra.ModSettingChanged");
+            _glamourerStateChanged = _pluginInterface.GetIpcSubscriber<object>("Glamourer.StateChanged");
+            _customizePlusProfileChanged = _pluginInterface.GetIpcSubscriber<object>("CustomizePlus.ProfileChanged");
+            _heelsOffsetChanged = _pluginInterface.GetIpcSubscriber<object>("SimpleHeels.OffsetChanged");
+            _honorificChanged = _pluginInterface.GetIpcSubscriber<object>("Honorific.TitleChanged");
+            
+            // Subscribe to all mod system changes for automatic appearance updates
+            try
+            {
+                    _penumbraModSettingChanged?.Subscribe((string _) => OnModSystemChanged());
+                    _glamourerStateChanged?.Subscribe(() => OnModSystemChanged());
+                    _customizePlusProfileChanged?.Subscribe(() => OnModSystemChanged());
+                    _heelsOffsetChanged?.Subscribe(() => OnModSystemChanged());
+                    _honorificChanged?.Subscribe(() => OnModSystemChanged());
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Failed to subscribe to mod system changes: {ex.Message}");
+            }
+            
             CheckModSystemAvailability();
             LoadConfiguration();
+            InitializeClientCache();
+            InitializeComponentCache();
+            
 
-            _pluginLog.Info("FyteClub v4.0.0 initialized - Enhanced mod sharing with automatic change detection, Penumbra, Glamourer, Customize+, and Simple Heels integration");
+            
+            _pluginLog.Info("FyteClub v4.1.0 initialized - P2P mod sharing with syncshells");
+        }
+
+        private void InitializeClientCache()
+        {
+            try
+            {
+                _clientCache = new ClientModCache(_pluginLog, _pluginInterface.ConfigDirectory.FullName);
+                _pluginLog.Info("FyteClub: Client cache initialized successfully");
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"CRITICAL: Failed to initialize client cache: {ex.Message}");
+                _pluginLog.Error("FyteClub will continue with reduced functionality");
+            }
+        }
+
+        private void InitializeComponentCache()
+        {
+            try
+            {
+                _componentCache = new ModComponentCache(_pluginLog, _pluginInterface.ConfigDirectory.FullName);
+                _pluginLog.Info("FyteClub: Component-based mod cache initialized successfully");
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"CRITICAL: Failed to initialize component cache: {ex.Message}");
+                _pluginLog.Error("FyteClub will continue with reduced functionality");
+            }
         }
 
         private void CheckModSystemAvailability()
         {
+            // Use ModIntegration's robust detection logic
             _modSystemIntegration.RetryDetection();
-            //var systems = _modSystemIntegration.GetAvailableModSystems();
-            
-            //if (!string.IsNullOrEmpty(systems))
-            //{
-            //    _pluginLog.Info($"FyteClub: Available mod systems: {systems}");
-            //}
-            //else
-            //{
-            //    _pluginLog.Warning("FyteClub: No mod systems detected. Plugin will work in limited mode.");
-            //}
-        }
-
-        private void CheckPenumbraApi()
-        {
-            try
-            {
-                _isPenumbraAvailable = _penumbraEnabled?.InvokeFunc() ?? false;
-                _pluginLog.Info($"Penumbra: {(_isPenumbraAvailable ? "Available" : "Unavailable")}");
-            }
-            catch
-            {
-                _isPenumbraAvailable = false;
-            }
         }
 
         private void OnFrameworkUpdate(IFramework framework)
         {
             try
             {
-                // Automatic upload when player becomes available (once per session)
-                if (!_hasPerformedInitialUpload && _clientState.LocalPlayer != null && !string.IsNullOrEmpty(_clientState.LocalPlayer.Name?.TextValue))
-                {
-                    var playerName = _clientState.LocalPlayer.Name.TextValue;
-                    _hasPerformedInitialUpload = true;
-                    _pluginLog.Info($"FyteClub: Player {playerName} detected, starting automatic mod upload...");
-                    
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            // Wait a bit for game and mod systems to fully load
-                            await Task.Delay(3000);
-                            await UploadPlayerModsToAllServers(playerName);
-                            _pluginLog.Info("FyteClub: Automatic mod upload completed");
-                        }
-                        catch (Exception ex)
-                        {
-                            _pluginLog.Error($"FyteClub: Automatic mod upload failed: {ex.Message}");
-                        }
-                    });
-                }
+                var localPlayer = _clientState.LocalPlayer;
+                var localPlayerName = localPlayer?.Name?.TextValue;
+                var isLocalPlayerValid = localPlayer != null && !string.IsNullOrEmpty(localPlayerName);
                 
-                // Periodic mod change detection - check every 30 seconds
-                if ((DateTime.UtcNow - _lastChangeCheckTime) >= _changeCheckInterval && 
-                    _clientState.LocalPlayer != null && 
-                    !string.IsNullOrEmpty(_clientState.LocalPlayer.Name?.TextValue))
-                {
-                    _lastChangeCheckTime = DateTime.UtcNow;
-                    var playerName = _clientState.LocalPlayer.Name.TextValue;
-                    
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await CheckForModChangesAndUpload(playerName);
-                        }
-                        catch (Exception ex)
-                        {
-                            _pluginLog.Debug($"FyteClub: Mod change check failed: {ex.Message}");
-                        }
-                    });
-                }
+                // No automatic polling - users manually update when they change appearance
                 
-                // Keep your FyteClub logic but use established state management
                 _mediator.ProcessQueue();
                 _playerDetection.ScanForPlayers();
                 
-                // Retry server connections periodically
-                if (ShouldRetryServerConnections())
+                // Poll phonebook for updates (targeted, not wasteful)
+                if (ShouldPollPhonebook())
                 {
-                    _ = Task.Run(AttemptServerReconnections);
+                    PollPhonebookUpdates();
+                }
+                
+                if (ShouldRetryPeerConnections())
+                {
+                    _ = Task.Run(AttemptPeerReconnections);
                     _lastReconnectionAttempt = DateTime.UtcNow;
                 }
                 
-                // Periodic health check for ALL servers (including ones marked as connected)
-                if (ShouldPerformHealthCheck())
+                if (ShouldPerformDiscovery())
                 {
-                    _ = Task.Run(PerformHealthCheckOnAllServers);
-                    _lastHealthCheckAttempt = DateTime.UtcNow;
+                    _ = Task.Run(PerformPeerDiscovery);
+                    _lastDiscoveryAttempt = DateTime.UtcNow;
                 }
-                
-                // Clean up old player-server associations periodically (every 10 minutes)
-                if ((DateTime.UtcNow - _lastReconnectionAttempt).TotalMinutes >= 10)
-                {
-                    CleanupOldPlayerAssociations();
-                }
-                
-                // Retry mod system detection periodically if not all systems are detected
-                if (ShouldRetryDetection())
-                {
-                    CheckModSystemAvailability();
-                    _lastDetectionRetry = DateTime.UtcNow;
-                    _detectionRetryCount++;
-                    
-                    if (_detectionRetryCount >= 10) // Stop retrying after 10 attempts
+                    // Periodically retry mod system detection if not all are available
+                    if (!IsPenumbraAvailable || !IsGlamourerAvailable || !IsHonorificAvailable)
                     {
-                        _detectionRetryCount = int.MaxValue; // Prevent further retries
-                        var detectedSystems = new List<string>();
-                        if (_modSystemIntegration.IsPenumbraAvailable) detectedSystems.Add("Penumbra");
-                        if (_modSystemIntegration.IsGlamourerAvailable) detectedSystems.Add("Glamourer");
-                        if (_modSystemIntegration.IsCustomizePlusAvailable) detectedSystems.Add("Customize+");
-                        if (_modSystemIntegration.IsHeelsAvailable) detectedSystems.Add("Simple Heels");
-                        if (_modSystemIntegration.IsHonorificAvailable) detectedSystems.Add("Honorific");
-                        
-                        if (detectedSystems.Count > 0)
-                        {
-                            _pluginLog.Info($"FyteClub: Final detection results - Found: {string.Join(", ", detectedSystems)}");
-                            _hasLoggedNoModSystems = false; // Reset flag if we find systems
-                        }
-                        else if (!_hasLoggedNoModSystems)
-                        {
-                            _pluginLog.Warning("FyteClub: No mod systems detected. Plugin will work in limited mode.");
-                            _hasLoggedNoModSystems = true; // Set flag to prevent spam
-                        }
+                        _modSystemIntegration.RetryDetection();
                     }
-                }
             }
             catch (Exception ex)
             {
                 _pluginLog.Error($"Framework error: {ex.Message}");
             }
         }
-        
-        private bool ShouldRetryDetection()
-        {
-            // Only retry if we haven't reached max attempts and enough time has passed
-            if (_detectionRetryCount >= 10) return false;
-            
-            // Retry every 15 seconds instead of 5 to reduce spam
-            if ((DateTime.UtcNow - _lastDetectionRetry).TotalSeconds < 15) return false;
-            
-            // Check if we need to retry (at least one system is missing that we expect to find)
-            return !_modSystemIntegration.IsPenumbraAvailable || 
-                   !_modSystemIntegration.IsGlamourerAvailable ||
-                   !_modSystemIntegration.IsHonorificAvailable;
-        }
 
-        private bool ShouldRetryServerConnections()
+        private bool ShouldRetryPeerConnections()
         {
-            // Check if enough time has passed since last reconnection attempt
             if ((DateTime.UtcNow - _lastReconnectionAttempt) < _reconnectionInterval) return false;
-            
-            // Check if we have any enabled but disconnected servers
-            return _servers.Any(s => s.Enabled && !s.Connected);
+            return _syncshellManager.GetSyncshells().Any(s => s.IsActive);
         }
 
-        private async Task AttemptServerReconnections()
+        private bool ShouldPerformDiscovery()
         {
-            var disconnectedServers = _servers.Where(s => s.Enabled && !s.Connected).ToList();
+            if ((DateTime.UtcNow - _lastDiscoveryAttempt) < _discoveryInterval) return false;
+            return _syncshellManager.GetSyncshells().Any(s => s.IsActive);
+        }
+
+        private DateTime _lastPhonebookPoll = DateTime.MinValue;
+        private readonly TimeSpan _phonebookPollInterval = TimeSpan.FromSeconds(10);
+        
+        private bool ShouldPollPhonebook()
+        {
+            if ((DateTime.UtcNow - _lastPhonebookPoll) < _phonebookPollInterval) return false;
+            return _syncshellManager.GetSyncshells().Any(s => s.IsActive);
+        }
+
+        private void PollPhonebookUpdates()
+        {
+            _lastPhonebookPoll = DateTime.UtcNow;
             
-            if (disconnectedServers.Count == 0) return;
-            
-            _pluginLog.Debug($"FyteClub: Attempting to reconnect to {disconnectedServers.Count} offline servers...");
-            
-            foreach (var server in disconnectedServers)
+            try
             {
-                try
+                var nearbyPlayers = new List<PlayerSnapshot>();
+                foreach (var obj in _objectTable)
                 {
-                    _pluginLog.Debug($"FyteClub: Testing reconnection to {server.Name} ({server.Address})...");
-                    
-                    // Try a simple health check to the server
-                    var response = await _httpClient.GetAsync($"http://{server.Address}/health", _cancellationTokenSource.Token);
-                    
-                    if (response.IsSuccessStatusCode)
+                    if (obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player && obj.Name.TextValue != _clientState.LocalPlayer?.Name.TextValue)
                     {
-                        server.Connected = true;
-                        server.LastConnected = DateTime.UtcNow;
-                        server.FailureCount = 0; // Reset failure count on successful reconnection
-                        SaveConfiguration();
-                        _pluginLog.Info($"FyteClub: Successfully reconnected to {server.Name}");
-                        
-                        // Upload our mods to the reconnected server (don't block main thread)
-                        _ = Task.Run(async () => {
-                            await Task.Delay(2000); // Wait 2 seconds before uploading
-                            await UploadModsToServer(server);
+                        nearbyPlayers.Add(new PlayerSnapshot
+                        {
+                            Name = obj.Name.TextValue,
+                            ObjectIndex = obj.ObjectIndex
                         });
                     }
-                    else
+                }
+                // Only check players we can see for phonebook updates
+                CheckPlayersForChanges(nearbyPlayers);
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Phonebook polling failed: {ex.Message}");
+            }
+        }
+
+        private async Task AttemptPeerReconnections()
+        {
+            // Peer reconnection logic without duplicate announcements
+            var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive).ToList();
+            if (activeSyncshells.Count == 0) return;
+            
+            _pluginLog.Info($"FyteClub: Attempting peer reconnections for {activeSyncshells.Count} active syncshells...");
+            // Actual reconnection logic would go here
+        }
+
+        private async Task PerformPeerDiscovery()
+        {
+            var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive).ToList();
+            if (activeSyncshells.Count == 0) return;
+            
+            // Test WebRTC availability with crash protection
+            try
+            {
+                await Task.Run(async () => {
+                    try
                     {
-                        _pluginLog.Debug($"FyteClub: Server {server.Name} still not responding (HTTP {response.StatusCode})");
+                        var testConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
+                        testConnection?.Dispose();
+                        
+                        _pluginLog.Info($"FyteClub: WebRTC P2P ready for {activeSyncshells.Count} active syncshells");
+                        foreach (var syncshell in activeSyncshells)
+                        {
+                            _pluginLog.Info($"  - '{syncshell.Name}' ID: {syncshell.Id} (Use invite codes to connect)");
+                        }
                     }
-                }
-                catch (Exception ex)
-                {
-                    _pluginLog.Debug($"FyteClub: Failed to reconnect to {server.Name}: {ex.Message}");
-                }
-                
-                // Add a small delay between reconnection attempts to avoid overwhelming servers
-                await Task.Delay(1000);
+                    catch (Exception innerEx)
+                    {
+                        _pluginLog.Error($"FyteClub: WebRTC initialization failed - {innerEx.Message}");
+                        _pluginLog.Warning($"FyteClub: {activeSyncshells.Count} syncshells configured but P2P connections disabled");
+                    }
+                });
             }
-        }
-
-        private bool ShouldPerformHealthCheck()
-        {
-            // Check if enough time has passed since last health check
-            if ((DateTime.UtcNow - _lastHealthCheckAttempt) < _healthCheckInterval) return false;
-            
-            // Only run health check if we have enabled servers
-            return _servers.Any(s => s.Enabled);
-        }
-
-        private async Task PerformHealthCheckOnAllServers()
-        {
-            var enabledServers = _servers.Where(s => s.Enabled).ToList();
-            
-            if (enabledServers.Count == 0) return;
-            
-            _pluginLog.Debug($"FyteClub: Performing health check on {enabledServers.Count} enabled servers...");
-            
-            foreach (var server in enabledServers)
+            catch (Exception ex)
             {
-                try
-                {
-                    await TestServerConnectivity(server);
-                }
-                catch (Exception ex)
-                {
-                    _pluginLog.Debug($"FyteClub: Health check failed for {server.Name}: {ex.Message}");
-                }
-                
-                // Small delay between health checks to avoid overwhelming servers
-                await Task.Delay(500);
-            }
-        }
-
-        private void CleanupOldPlayerAssociations()
-        {
-            var cutoffTime = DateTime.UtcNow.AddMinutes(-10); // Remove associations older than 10 minutes
-            var keysToRemove = new List<string>();
-
-            foreach (var kvp in _playerLastSeen)
-            {
-                if (kvp.Value < cutoffTime)
-                {
-                    keysToRemove.Add(kvp.Key);
-                }
-            }
-
-            foreach (var key in keysToRemove)
-            {
-                _playerLastSeen.Remove(key);
-                _playerServerAssociations.Remove(key);
-            }
-
-            if (keysToRemove.Count > 0)
-            {
-                _pluginLog.Debug($"FyteClub: Cleaned up {keysToRemove.Count} old player associations");
+                _pluginLog.Error($"FyteClub: WebRTC test task failed - {ex.Message}");
+                _pluginLog.Warning($"FyteClub: P2P connections disabled due to WebRTC issues");
             }
         }
 
         private void OnPlayerDetected(PlayerDetectedMessage message)
         {
-            // Check if user is blocked - don't sync with blocked users
-            if (_blockedUsers.Contains(message.PlayerName))
-            {
-                _pluginLog.Info($"Ignoring blocked user: {message.PlayerName}");
-                return;
-            }
-
-            // Skip requesting mods for the local player (ourselves) - check on main thread
-            var localPlayerName = _clientState.LocalPlayer?.Name?.TextValue;
-            if (!string.IsNullOrEmpty(localPlayerName) && message.PlayerName.StartsWith(localPlayerName))
-            {
-                _pluginLog.Debug($"FyteClub: Skipping mod request for local player: {message.PlayerName}");
-                return;
-            }
-
-            if (!_loadingStates.ContainsKey(message.PlayerName))
-            {
-                _loadingStates[message.PlayerName] = LoadingState.Requesting;
-                _ = Task.Run(() => RequestPlayerMods(message.PlayerName));
-            }
-        }
-
-        private void OnPlayerRemoved(PlayerRemovedMessage message)
-        {
-            _loadingStates.Remove(message.PlayerName);
-            // Keep the server association for a while in case they come back
-            // The association will be cleaned up periodically or on plugin restart
-        }
-
-        private async Task RequestPlayerMods(string playerName)
-        {
-            // Check if we already know which server this player is on
-            if (_playerServerAssociations.ContainsKey(playerName))
-            {
-                var knownServer = _playerServerAssociations[playerName];
-                
-                // Check if the known server is still enabled and worth trying
-                // (Connected OR still below failure threshold)
-                if (knownServer.Enabled && (knownServer.Connected || knownServer.FailureCount < MaxServerFailures))
-                {
-                    _pluginLog.Debug($"FyteClub: Using known server {knownServer.Name} for {playerName} (failures: {knownServer.FailureCount}/{MaxServerFailures})");
-                    var success = await RequestPlayerModsFromServer(playerName, knownServer);
-                    if (success)
-                    {
-                        return; // Successfully found player on known server
-                    }
-                    // If it failed, continue to search other servers below
-                }
-                else
-                {
-                    // Server is no longer available, remove association and fall back to search
-                    _playerServerAssociations.Remove(playerName);
-                    _pluginLog.Debug($"FyteClub: Known server {knownServer.Name} for {playerName} is no longer available (failures: {knownServer.FailureCount}), searching all servers");
-                }
-            }
+            _pluginLog.Info($"FyteClub: OnPlayerDetected called for: {message.PlayerName}");
             
-            // Search through all enabled servers to find the player
-            foreach (var server in _servers.Where(s => s.Enabled))
+            if (_blockedUsers.ContainsKey(message.PlayerName))
             {
-                var success = await RequestPlayerModsFromServer(playerName, server);
-                if (success)
-                {
-                    // Found the player on this server, associate them
-                    _playerServerAssociations[playerName] = server;
-                    _playerLastSeen[playerName] = DateTime.UtcNow;
-                    _pluginLog.Debug($"FyteClub: Associated {playerName} with server {server.Name}");
-                    break; // Stop searching once we find them
-                }
+                _pluginLog.Info($"FyteClub: Ignoring blocked user: {message.PlayerName}");
+                return;
             }
-        }
 
-        private async Task<bool> RequestPlayerModsFromServer(string playerName, ServerInfo server)
-        {
-            try
+            _framework.RunOnFrameworkThread(() =>
             {
-                _loadingStates[playerName] = LoadingState.Downloading;
-                
-                // FyteClub's encrypted communication to friend servers
-                var response = await _httpClient.GetAsync($"http://{server.Address}/api/mods/{playerName}", _cancellationTokenSource.Token);
-                if (response.IsSuccessStatusCode)
+                try
                 {
-                    // Mark server as connected when we get a successful response
-                    if (!server.Connected)
+                    var localPlayer = _clientState.LocalPlayer;
+                    var localPlayerName = localPlayer?.Name?.TextValue;
+                    
+                    if (!string.IsNullOrEmpty(localPlayerName) && message.PlayerName.StartsWith(localPlayerName))
                     {
-                        server.Connected = true;
-                        server.LastConnected = DateTime.UtcNow;
-                        SaveConfiguration();
-                        _pluginLog.Info($"FyteClub: Server {server.Name} is now connected");
-                        
-                        // Upload our mods to the newly connected server (don't block main thread)
+                        return;
+                    }
+
+                    if (!_loadingStates.ContainsKey(message.PlayerName))
+                    {
+                        _loadingStates[message.PlayerName] = LoadingState.Requesting;
+                        // Use safe mod integration with rate limiting
                         _ = Task.Run(async () => {
-                            await Task.Delay(2000); // Wait 2 seconds before uploading
-                            await UploadModsToServer(server);
+                            await RequestPlayerModsSafely(message.PlayerName);
                         });
                     }
-                    
-                    var jsonContent = await response.Content.ReadAsStringAsync();
-                    var playerInfo = System.Text.Json.JsonSerializer.Deserialize<AdvancedPlayerInfo>(jsonContent);
-                    
-                    if (playerInfo != null)
-                    {
-                        _loadingStates[playerName] = LoadingState.Applying;
-                        
-                        // Apply mods using comprehensive mod system integration
-                        var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, playerName);
-                        
-                        _loadingStates[playerName] = success ? LoadingState.Complete : LoadingState.Failed;
-                        
-                        if (success)
-                        {
-                            // Track successfully synced users
-                            _recentlySyncedUsers.Add(playerName);
-                            _pluginLog.Info($"FyteClub: Successfully applied mods for {playerName} from {server.Name}");
-                        }
-                        else
-                        {
-                            _pluginLog.Warning($"FyteClub: Failed to apply mods for {playerName}");
-                        }
-                    }
-                    
-                    // Update association timestamp to keep it fresh
-                    _playerServerAssociations[playerName] = server;
-                    _playerLastSeen[playerName] = DateTime.UtcNow;
-                    
-                    // Reset failure count on successful response
-                    server.FailureCount = 0;
-                    SaveConfiguration();
-                    
-                    return true; // Successfully found and processed player
                 }
-                else
+                catch
                 {
-                    // Increment failure count and only disconnect after threshold
-                    server.FailureCount++;
-                    if (server.FailureCount >= MaxServerFailures && server.Connected)
-                    {
-                        server.Connected = false;
-                        _pluginLog.Warning($"FyteClub: Server {server.Name} marked as disconnected after {server.FailureCount} failures (HTTP {response.StatusCode})");
-                    }
-                    else
-                    {
-                        _pluginLog.Debug($"FyteClub: Server {server.Name} failure {server.FailureCount}/{MaxServerFailures} (HTTP {response.StatusCode})");
-                    }
-                    SaveConfiguration();
-                    return false; // Player not found on this server
-                }
-            }
-            catch (Exception ex)
-            {
-                // Increment failure count and only disconnect after threshold
-                server.FailureCount++;
-                if (server.FailureCount >= MaxServerFailures && server.Connected)
-                {
-                    server.Connected = false;
-                    _pluginLog.Error($"FyteClub: Server {server.Name} marked as disconnected after {server.FailureCount} failures: {ex.Message}");
-                }
-                else
-                {
-                    _pluginLog.Debug($"FyteClub: Server {server.Name} failure {server.FailureCount}/{MaxServerFailures}: {ex.Message}");
-                }
-                SaveConfiguration();
-                
-                _loadingStates[playerName] = LoadingState.Failed;
-                return false; // Failed to contact this server
-            }
-        }
-
-        // FyteClub's friend server management - keep your UI innovations
-        public void AddServer(string address, string name, string password = "")
-        {
-            var server = new ServerInfo 
-            { 
-                Address = address, 
-                Name = name,
-                Password = password,
-                Enabled = true,
-                Connected = false
-            };
-            _servers.Add(server);
-            SaveConfiguration();
-            
-            // Test connectivity when server is added
-            _ = Task.Run(() => TestServerConnectivity(server));
-        }
-        
-        private async Task TestServerConnectivity(ServerInfo server)
-        {
-            try
-            {
-                _pluginLog.Info($"FyteClub: Testing connectivity to {server.Name} ({server.Address})...");
-                
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)); // 10 second timeout
-                var response = await _httpClient.GetAsync($"http://{server.Address}/health", cts.Token);
-                
-                if (response.IsSuccessStatusCode)
-                {
-                    server.Connected = true;
-                    server.LastConnected = DateTime.UtcNow;
-                    server.FailureCount = 0; // Reset failure count on successful connection test
-                    SaveConfiguration();
-                    _pluginLog.Info($"FyteClub: Successfully connected to {server.Name}");
-                }
-                else
-                {
-                    server.Connected = false;
-                    SaveConfiguration();
-                    _pluginLog.Warning($"FyteClub: Server {server.Name} health check failed (HTTP {response.StatusCode})");
-                }
-            }
-            catch (Exception ex)
-            {
-                server.Connected = false;
-                SaveConfiguration();
-                _pluginLog.Error($"FyteClub: Failed to connect to {server.Name}: {ex.Message}");
-            }
-        }
-
-        public void ReconnectAllServers()
-        {
-            _pluginLog.Info("FyteClub: Manually triggering reconnection to all servers...");
-            _ = Task.Run(async () =>
-            {
-                foreach (var server in _servers.Where(s => s.Enabled))
-                {
-                    await TestServerConnectivity(server);
-                    await Task.Delay(500); // Small delay between tests
+                    // Swallow exception
                 }
             });
         }
 
-        public void RemoveServer(int index)
+        private void OnPlayerRemoved(PlayerRemovedMessage message)
         {
-            if (index >= 0 && index < _servers.Count)
+            _loadingStates.TryRemove(message.PlayerName, out _);
+        }
+        
+
+
+        // Safe mod request with rate limiting and reduced logging
+        private async Task RequestPlayerModsSafely(string playerName)
+        {
+            try
             {
-                _servers.RemoveAt(index);
+                if (_clientCache != null)
+                {
+                    var cachedMods = await _clientCache.GetCachedPlayerMods(playerName);
+                    if (cachedMods != null)
+                    {
+                        _pluginLog.Debug($"Cache hit for {playerName}");
+                        return;
+                    }
+                }
+                
+                var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
+                foreach (var syncshell in activeSyncshells)
+                {
+                    var success = await RequestPlayerModsFromSyncshellSafely(playerName, syncshell);
+                    if (success)
+                    {
+                        _playerSyncshellAssociations[playerName] = syncshell;
+                        _playerLastSeen[playerName] = DateTime.UtcNow;
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Safe mod request failed for {playerName}: {ex.Message}");
+                _loadingStates[playerName] = LoadingState.Failed;
+            }
+        }
+        
+        private async Task<bool> RequestPlayerModsFromSyncshellSafely(string playerName, SyncshellInfo syncshell)
+        {
+            try
+            {
+                var playerNameOnly = playerName.Split('@')[0];
+                var isInSyncshell = syncshell.Members?.Any(member => 
+                    member.Equals(playerName, StringComparison.OrdinalIgnoreCase) ||
+                    member.Equals(playerNameOnly, StringComparison.OrdinalIgnoreCase)) ?? false;
+                    
+                if (!isInSyncshell) return false;
+                
+                _loadingStates[playerName] = LoadingState.Downloading;
+                
+                // Use safe mod integration for applying mods
+                if (_recentlySyncedUsers.ContainsKey(playerName))
+                {
+                    var success = await _safeModIntegration.SafelyApplyModsAsync(playerName, null);
+                    if (success)
+                    {
+                        _pluginLog.Debug($"Applied mods for {playerName} from syncshell {syncshell.Name}");
+                        _loadingStates[playerName] = LoadingState.Complete;
+                        _playerLastSeen[playerName] = DateTime.UtcNow;
+                        return true;
+                    }
+                }
+                
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Safe syncshell request failed: {ex.Message}");
+                return false;
+            }
+        }
+
+
+
+        public async Task<SyncshellInfo> CreateSyncshell(string name)
+        {
+            _pluginLog.Info($"[DEBUG] FyteClubPlugin.CreateSyncshell START - name: '{name}'");
+            Console.WriteLine($"[DEBUG] FyteClubPlugin.CreateSyncshell START - name: '{name}'");
+            
+            try
+            {
+                _pluginLog.Info($"[DEBUG] Calling _syncshellManager.CreateSyncshell");
+                var syncshell = await _syncshellManager.CreateSyncshell(name);
+                _pluginLog.Info($"[DEBUG] _syncshellManager.CreateSyncshell returned: {syncshell?.Name ?? "null"}");
+                
+                syncshell.IsActive = true;
+                _pluginLog.Info($"[DEBUG] Set syncshell.IsActive = true");
+                
                 SaveConfiguration();
+                _pluginLog.Info($"[DEBUG] SaveConfiguration() called");
+                
+                _pluginLog.Info($"[DEBUG] FyteClubPlugin.CreateSyncshell SUCCESS - returning syncshell");
+                return syncshell;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"[DEBUG] FyteClubPlugin.CreateSyncshell EXCEPTION: {ex.Message}");
+                _pluginLog.Error($"[DEBUG] Stack trace: {ex.StackTrace}");
+                Console.WriteLine($"[DEBUG] FyteClubPlugin.CreateSyncshell EXCEPTION: {ex.Message}");
+                throw;
             }
         }
 
-        public List<ServerInfo> GetServers()
+        public bool JoinSyncshell(string syncshellName, string encryptionKey)
         {
-            return _servers;
+            _pluginLog.Info($"[DEBUG] FyteClubPlugin.JoinSyncshell START - name: '{syncshellName}'");
+            Console.WriteLine($"[DEBUG] FyteClubPlugin.JoinSyncshell START - name: '{syncshellName}'");
+            
+            try
+            {
+                _pluginLog.Info($"[DEBUG] Calling _syncshellManager.JoinSyncshell");
+                var joinResult = _syncshellManager.JoinSyncshell(syncshellName, encryptionKey);
+                _pluginLog.Info($"[DEBUG] _syncshellManager.JoinSyncshell returned: {joinResult}");
+                
+                if (joinResult) 
+                {
+                    _pluginLog.Info($"[DEBUG] Join successful, saving configuration");
+                    SaveConfiguration();
+                    _pluginLog.Info($"[DEBUG] Configuration saved");
+                    
+                    // Automatically share appearance when joining
+                    _ = Task.Run(async () => {
+                        _pluginLog.Info($"[DEBUG] Starting auto-share task");
+                        await Task.Delay(2000); // Give connection time to establish
+                        string? playerName = null;
+                        await _framework.RunOnFrameworkThread(() => {
+                            var localPlayer = _clientState.LocalPlayer;
+                            playerName = localPlayer?.Name?.TextValue;
+                        });
+                        if (playerName != null)
+                        {
+                            _pluginLog.Info($"[DEBUG] Auto-sharing mods for player: {playerName}");
+                            await SharePlayerModsToSyncshells(playerName);
+                        }
+                    });
+                }
+                else
+                {
+                    _pluginLog.Warning($"[DEBUG] Join failed");
+                }
+                
+                _pluginLog.Info($"[DEBUG] FyteClubPlugin.JoinSyncshell returning: {joinResult}");
+                return joinResult;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"[DEBUG] FyteClubPlugin.JoinSyncshell EXCEPTION: {ex.Message}");
+                _pluginLog.Error($"[DEBUG] Stack trace: {ex.StackTrace}");
+                Console.WriteLine($"[DEBUG] FyteClubPlugin.JoinSyncshell EXCEPTION: {ex.Message}");
+                return false;
+            }
         }
 
-        public void ForceChangeCheck()
+        public void RemoveSyncshell(string syncshellId)
         {
-            _pluginLog.Info("FyteClub: Manual change check requested");
-            
-            // Get local player name on main thread before starting background task
-            var localPlayerName = _clientState.LocalPlayer?.Name?.TextValue;
-            if (string.IsNullOrEmpty(localPlayerName))
+            _syncshellManager.RemoveSyncshell(syncshellId);
+            SaveConfiguration();
+        }
+
+        public void SaveConfiguration()
+        {
+            var config = new Configuration 
+            { 
+                Syncshells = _syncshellManager.GetSyncshells(),
+                BlockedUsers = _blockedUsers.Keys.ToList(),
+                RecentlySyncedUsers = _recentlySyncedUsers.Keys.ToList()
+            };
+            _pluginInterface.SavePluginConfig(config);
+        }
+
+        public List<SyncshellInfo> GetSyncshells()
+        {
+            return _syncshellManager.GetSyncshells();
+        }
+
+        public void ShareMods()
+        {
+            _framework.RunOnFrameworkThread(() =>
             {
-                _pluginLog.Warning("FyteClub: Cannot check for changes - local player not available");
-                return;
-            }
-            
-            _ = Task.Run(async () =>
-            {
-                try
+                var localPlayer = _clientState.LocalPlayer;
+                var localPlayerName = localPlayer?.Name?.TextValue;
+                if (string.IsNullOrEmpty(localPlayerName)) return;
+                
+                var capturedPlayerName = localPlayerName;
+                _ = Task.Run(async () =>
                 {
-                    await CheckForModChangesAndUpload(localPlayerName);
-                    _pluginLog.Info("FyteClub: Manual change check completed");
-                }
-                catch (Exception ex)
-                {
-                    _pluginLog.Error($"FyteClub: Manual change check failed: {ex.Message}");
-                }
+                    try
+                    {
+                        await SharePlayerModsToSyncshells(capturedPlayerName);
+                        _pluginLog.Info($"FyteClub: Shared mods to syncshell peers");
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Error($"FyteClub: Failed to share mods: {ex.Message}");
+                    }
+                });
             });
         }
 
         public void RequestAllPlayerMods()
         {
-            // Force resync of all player mods - implementation ready
-            _pluginLog.Information("FyteClub: Manual resync requested from UI");
-            
-            // Get local player name on main thread before starting background task
-            var localPlayerName = _clientState.LocalPlayer?.Name?.TextValue;
-            if (string.IsNullOrEmpty(localPlayerName))
+            _framework.RunOnFrameworkThread(() =>
             {
-                _pluginLog.Warning("FyteClub: Cannot start manual resync - local player not available");
-                return;
-            }
-            
-            _ = Task.Run(async () =>
-            {
-                try
+                var localPlayer = _clientState.LocalPlayer;
+                var localPlayerName = localPlayer?.Name?.TextValue;
+                if (string.IsNullOrEmpty(localPlayerName)) return;
+                
+                var capturedPlayerName = localPlayerName;
+                _ = Task.Run(async () =>
                 {
-                    _pluginLog.Info("FyteClub: Starting manual mod upload...");
-                    await UploadPlayerModsToAllServers(localPlayerName);
-                    _pluginLog.Info("FyteClub: Manual mod upload completed");
-                }
-                catch (Exception ex)
-                {
-                    _pluginLog.Error($"FyteClub: Manual mod upload failed: {ex.Message}");
-                }
+                    try
+                    {
+                        await SharePlayerModsToSyncshells(capturedPlayerName);
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Error($"FyteClub: Manual mod upload failed: {ex.Message}");
+                    }
+                });
             });
         }
 
-        // User blocking functionality
         public void BlockUser(string playerName)
         {
-            if (!_blockedUsers.Contains(playerName))
+            if (_blockedUsers.TryAdd(playerName, 0))
             {
-                _blockedUsers.Add(playerName);
-                _pluginLog.Info($"Blocked user: {playerName}");
-                
-                // Immediately de-sync any mods from this user
-                DeSyncUserMods(playerName);
-                
-                // Remove from loading states
-                _loadingStates.Remove(playerName);
-                
+                _loadingStates.TryRemove(playerName, out _);
                 SaveConfiguration();
             }
         }
 
         public void UnblockUser(string playerName)
         {
-            if (_blockedUsers.Remove(playerName))
+            if (_blockedUsers.TryRemove(playerName, out _))
             {
-                _pluginLog.Info($"Unblocked user: {playerName}");
                 SaveConfiguration();
             }
         }
 
         public bool IsUserBlocked(string playerName)
         {
-            return _blockedUsers.Contains(playerName);
+            return _blockedUsers.ContainsKey(playerName);
         }
 
         public IEnumerable<string> GetRecentlySyncedUsers()
         {
-            return _recentlySyncedUsers.OrderBy(name => name);
+            return _recentlySyncedUsers.Keys.OrderBy(name => name);
         }
 
-        // Console command support for testing block functionality
         public void TestBlockUser(string playerName)
         {
-            // Add user to recently synced list for testing
-            _recentlySyncedUsers.Add(playerName);
-            _pluginLog.Info($"Added {playerName} to recently synced users for testing");
+            _recentlySyncedUsers.TryAdd(playerName, 0);
         }
 
-        private void DeSyncUserMods(string playerName)
+        public void ReconnectAllPeers()
         {
-            try
+            _ = Task.Run(async () =>
             {
-                // Remove any Penumbra collections or mod assignments for this user
-                // This is where we'd integrate with Penumbra to remove specific user's mods
-                _pluginLog.Info($"De-syncing mods from blocked user: {playerName}");
-                
-                // TODO: Implement actual mod removal when Penumbra integration is complete
-                // For now, we prevent future syncing with this user
-            }
-            catch (Exception ex)
-            {
-                _pluginLog.Error($"Error de-syncing mods for {playerName}: {ex.Message}");
-            }
+                await PerformPeerDiscovery();
+                await AttemptPeerReconnections();
+            });
         }
 
+        // Remove await warning by making CreateSyncshellInternal synchronous
         private void LoadConfiguration()
         {
             var config = _pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
-            _servers.AddRange(config.Servers ?? new List<ServerInfo>());
-            
-            // Load blocked users and recently synced users
+            foreach (var syncshell in config.Syncshells ?? new List<SyncshellInfo>())
+            {
+                if (syncshell.IsOwner)
+                {
+                    _syncshellManager.CreateSyncshellInternal(syncshell.Name, syncshell.EncryptionKey);
+                }
+                else
+                {
+                    _syncshellManager.JoinSyncshellById(syncshell.Id, syncshell.EncryptionKey, syncshell.Name);
+                }
+                // Auto-activate all loaded syncshells
+                var loadedSyncshell = _syncshellManager.GetSyncshells().LastOrDefault();
+                if (loadedSyncshell != null)
+                {
+                    loadedSyncshell.IsActive = syncshell.IsActive;
+                }
+            }
             foreach (var blockedUser in config.BlockedUsers ?? new List<string>())
             {
-                _blockedUsers.Add(blockedUser);
+                _blockedUsers.TryAdd(blockedUser, 0);
             }
-            
             foreach (var syncedUser in config.RecentlySyncedUsers ?? new List<string>())
             {
-                _recentlySyncedUsers.Add(syncedUser);
+                _recentlySyncedUsers.TryAdd(syncedUser, 0);
             }
         }
 
-        private void SaveConfiguration()
+
+
+
+
+        private async Task SharePlayerModsToSyncshells(string playerName)
         {
-            var config = new Configuration 
-            { 
-                Servers = _servers,
-                BlockedUsers = _blockedUsers.ToList(),
-                RecentlySyncedUsers = _recentlySyncedUsers.ToList()
-            };
-            _pluginInterface.SavePluginConfig(config);
+            var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
+            if (playerInfo != null)
+            {
+                var outfitHash = CalculateModDataHash(playerInfo);
+                
+                var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
+                foreach (var syncshell in activeSyncshells)
+                {
+                    try
+                    {
+                        var modData = new
+                        {
+                            playerId = playerName,
+                            playerName = playerName,
+                            outfitHash = outfitHash,
+                            mods = playerInfo.Mods,
+                            glamourerDesign = playerInfo.GlamourerDesign,
+                            customizePlusProfile = playerInfo.CustomizePlusProfile,
+                            simpleHeelsOffset = playerInfo.SimpleHeelsOffset,
+                            honorificTitle = playerInfo.HonorificTitle,
+                            timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                        };
+
+                        var json = JsonSerializer.Serialize(modData);
+                        await _syncshellManager.SendModData(syncshell.Id, json);
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Warning($"FyteClub: Failed to send mods to syncshell {syncshell.Name}: {ex.Message}");
+                    }
+                }
+                
+                _hasPerformedInitialUpload = true;
+            }
         }
 
-        private async Task CheckForModChangesAndUpload(string playerName)
+        private void OnModSystemChanged()
+        {
+            // Automatically share appearance when any mod system changes
+            var localPlayer = _clientState.LocalPlayer;
+            if (localPlayer?.Name?.TextValue != null)
+            {
+                var playerName = localPlayer.Name.TextValue;
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(1000); // Brief delay for changes to apply
+                    await SharePlayerModsToSyncshells(playerName);
+                    ShareCompanionMods(playerName); // Also share companion mods
+                    _pluginLog.Debug($"Auto-shared appearance and companion mods after change");
+                });
+            }
+        }
+
+        private void ShareCompanionMods(string ownerName)
         {
             try
             {
-                // Get current mod state
-                var currentPlayerInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
-                if (currentPlayerInfo == null)
+                // Find companions owned by this player
+                var companions = new List<CompanionSnapshot>();
+                foreach (var obj in _objectTable)
                 {
-                    _pluginLog.Debug($"FyteClub: Could not get current mod state for {playerName}");
-                    return;
+                    if (obj is IBattleNpc npc && npc.OwnerId == _clientState.LocalPlayer?.GameObjectId)
+                    {
+                        companions.Add(new CompanionSnapshot
+                        {
+                            Name = $"{ownerName}'s {npc.Name}",
+                            ObjectKind = npc.ObjectKind.ToString(),
+                            ObjectIndex = obj.ObjectIndex
+                        });
+                    }
                 }
-                
-                // Calculate hash of current mod state
-                var currentModHash = CalculateModDataHash(currentPlayerInfo);
-                
-                // Compare with last uploaded state
-                if (_lastUploadedModHash != null && _lastUploadedModHash == currentModHash)
+
+                if (companions.Count > 0)
                 {
-                    // No changes detected
-                    return;
+                    CheckCompanionsForChanges(companions);
+                    _pluginLog.Debug($"Shared {companions.Count} companion mods for {ownerName}");
                 }
-                
-                // Changes detected, upload to servers
-                _pluginLog.Info($"FyteClub: Mod changes detected for {playerName}, uploading to servers...");
-                await UploadPlayerModsToAllServers(playerName);
-                _lastUploadedModHash = currentModHash;
-                _pluginLog.Info($"FyteClub: Mod change upload completed for {playerName}");
             }
-            catch (Exception ex)
+            catch
             {
-                _pluginLog.Warning($"FyteClub: Failed to check for mod changes: {ex.Message}");
+                // Swallow exception
             }
         }
 
         private string CalculateModDataHash(AdvancedPlayerInfo playerInfo)
         {
-            try
+            var hashData = new
             {
-                // Create a stable, deterministic representation of the mod data for hashing
-                // Sort collections and normalize data to ensure consistent hashes across sessions
-                var hashData = new
-                {
-                    // Sort mods list to ensure consistent ordering
-                    Mods = (playerInfo.Mods ?? new List<string>()).OrderBy(x => x).ToList(),
-                    
-                    // Normalize string data - trim and handle nulls consistently
-                    GlamourerDesign = NormalizeDataForHash(playerInfo.GlamourerDesign),
-                    CustomizePlusProfile = NormalizeDataForHash(playerInfo.CustomizePlusProfile),
-                    HonorificTitle = NormalizeDataForHash(playerInfo.HonorificTitle),
-                    
-                    // Round float values to avoid precision differences
-                    SimpleHeelsOffset = Math.Round(playerInfo.SimpleHeelsOffset ?? 0.0f, 3)
-                };
+                Mods = (playerInfo.Mods ?? new List<string>()).OrderBy(x => x).ToList(),
+                GlamourerDesign = playerInfo.GlamourerDesign?.Trim() ?? "",
+                CustomizePlusProfile = playerInfo.CustomizePlusProfile?.Trim() ?? "",
+                HonorificTitle = playerInfo.HonorificTitle?.Trim() ?? "",
+                SimpleHeelsOffset = Math.Round(playerInfo.SimpleHeelsOffset ?? 0.0f, 3)
+            };
 
-                // Use consistent JSON serialization options
-                var jsonOptions = new System.Text.Json.JsonSerializerOptions 
-                { 
-                    WriteIndented = false,
-                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
-                    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-                };
-                
-                var json = System.Text.Json.JsonSerializer.Serialize(hashData, jsonOptions);
-                using var sha256 = System.Security.Cryptography.SHA256.Create();
-                var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(json));
-                return Convert.ToHexString(hashBytes);
-            }
-            catch (Exception ex)
-            {
-                _pluginLog.Warning($"FyteClub: Failed to calculate mod hash, using fallback: {ex.Message}");
-                return Guid.NewGuid().ToString(); // Fallback to always upload
-            }
-        }
-
-        private string NormalizeDataForHash(string? data)
-        {
-            // Normalize data for consistent hashing
-            if (string.IsNullOrWhiteSpace(data))
-                return "";
-            
-            // Trim whitespace and convert to consistent case for hashing
-            var normalized = data.Trim();
-            
-            // Remove any session-specific identifiers that might change between restarts
-            // This is a simple approach - could be enhanced based on actual data formats
-            return normalized;
-        }
-
-        private async Task UploadPlayerModsToAllServers(string playerName)
-        {
-            _pluginLog.Info($"FyteClub: Uploading mods for {playerName} to all servers...");
-            
-            // Wait a bit for mod systems to be available
-            await Task.Delay(2000);
-            
-            var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
-            if (playerInfo != null)
-            {
-                _pluginLog.Info($"FyteClub: Collected {playerInfo.Mods?.Count ?? 0} mods for {playerName}");
-                
-                // Calculate and store hash of uploaded data
-                var uploadedHash = CalculateModDataHash(playerInfo);
-                
-                // Upload to all enabled servers
-                foreach (var server in _servers.Where(s => s.Enabled))
-                {
-                    try
-                    {
-                        var request = new
-                        {
-                            playerId = playerName,
-                            playerName = playerName,
-                            mods = playerInfo.Mods,
-                            glamourerDesign = playerInfo.GlamourerDesign,
-                            customizePlusProfile = playerInfo.CustomizePlusProfile,
-                            simpleHeelsOffset = playerInfo.SimpleHeelsOffset,
-                            honorificTitle = playerInfo.HonorificTitle,
-                            timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                        };
-
-                        var json = System.Text.Json.JsonSerializer.Serialize(request);
-                        var content = new StringContent(json, Encoding.UTF8, "application/json");
-                        
-                        var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"http://{server.Address}/api/register-mods")
-                        {
-                            Content = content
-                        };
-                        
-                        // Add password header if server has one
-                        if (!string.IsNullOrEmpty(server.Password))
-                        {
-                            httpRequest.Headers.Add("x-fyteclub-password", server.Password);
-                        }
-                        
-                        var response = await _httpClient.SendAsync(httpRequest);
-                        
-                        if (response.IsSuccessStatusCode)
-                        {
-                            _pluginLog.Info($"FyteClub: Successfully uploaded mods to {server.Name}");
-                        }
-                        else
-                        {
-                            _pluginLog.Warning($"FyteClub: Failed to upload mods to {server.Name}: HTTP {response.StatusCode}");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _pluginLog.Warning($"FyteClub: Failed to upload mods to {server.Name}: {ex.Message}");
-                    }
-                }
-                
-                // Update last uploaded hash after successful upload
-                _lastUploadedModHash = uploadedHash;
-            }
-            else
-            {
-                _pluginLog.Warning($"FyteClub: Failed to collect mod info for {playerName} - mod systems may not be ready");
-            }
-        }
-
-        private async Task UploadCurrentPlayerMods()
-        {
-            // Wait for the game to be fully loaded and player to be available
-            var retryCount = 0;
-            while (retryCount < 30) // Try for 30 seconds
-            {
-                try
-                {
-                    string? playerName = null;
-                    try
-                    {
-                        // Try to get local player name, but catch threading exceptions
-                        var localPlayer = _clientState.LocalPlayer;
-                        if (localPlayer != null && !string.IsNullOrEmpty(localPlayer.Name?.TextValue))
-                        {
-                            playerName = localPlayer.Name.TextValue;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _pluginLog.Debug($"FyteClub: Cannot access LocalPlayer from background thread on attempt {retryCount + 1}: {ex.Message}");
-                    }
-                    
-                    if (!string.IsNullOrEmpty(playerName))
-                    {
-                        
-                        // Wait a bit more for mod systems to be available
-                        await Task.Delay(5000);
-                        
-                        var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
-                        if (playerInfo != null)
-                        {
-                            // Upload to all enabled servers
-                            foreach (var server in _servers.Where(s => s.Enabled))
-                            {
-                                try
-                                {
-                                    var request = new
-                                    {
-                                        playerId = playerName,
-                                        playerName = playerName,
-                                        mods = playerInfo.Mods,
-                                        glamourerDesign = playerInfo.GlamourerDesign,
-                                        customizePlusProfile = playerInfo.CustomizePlusProfile,
-                                        simpleHeelsOffset = playerInfo.SimpleHeelsOffset,
-                                        honorificTitle = playerInfo.HonorificTitle,
-                                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                                    };
-
-                                    var json = System.Text.Json.JsonSerializer.Serialize(request);
-                                    var content = new StringContent(json, Encoding.UTF8, "application/json");
-                                    
-                                    var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"http://{server.Address}/api/register-mods")
-                                    {
-                                        Content = content
-                                    };
-                                    
-                                    // Add password header if server has one
-                                    if (!string.IsNullOrEmpty(server.Password))
-                                    {
-                                        httpRequest.Headers.Add("x-fyteclub-password", server.Password);
-                                    }
-                                    
-                                    var response = await _httpClient.SendAsync(httpRequest);
-                                    
-                                    if (response.IsSuccessStatusCode)
-                                    {
-                                        _pluginLog.Info($"FyteClub: Successfully uploaded mods to {server.Name}");
-                                    }
-                                    else
-                                    {
-                                        _pluginLog.Warning($"FyteClub: Failed to upload mods to {server.Name}: HTTP {response.StatusCode}");
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    _pluginLog.Warning($"FyteClub: Failed to upload mods to {server.Name}: {ex.Message}");
-                                }
-                            }
-                        }
-                        return; // Success, exit the retry loop
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _pluginLog.Debug($"FyteClub: Waiting for player to be available: {ex.Message}");
-                }
-                
-                retryCount++;
-                await Task.Delay(1000); // Wait 1 second before retry
-            }
-            
-            _pluginLog.Debug("FyteClub: Automatic upload skipped - player not available after 30 seconds (normal during startup)");
-        }
-
-        private async Task UploadModsToServer(ServerInfo server)
-        {
-            try
-            {
-                if (_clientState.LocalPlayer != null && !string.IsNullOrEmpty(_clientState.LocalPlayer.Name.TextValue))
-                {
-                    var playerName = _clientState.LocalPlayer.Name.TextValue;
-                    var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
-                    
-                    if (playerInfo != null)
-                    {
-                        var request = new
-                        {
-                            playerId = playerName,
-                            playerName = playerName,
-                            mods = playerInfo.Mods,
-                            glamourerDesign = playerInfo.GlamourerDesign,
-                            customizePlusProfile = playerInfo.CustomizePlusProfile,
-                            simpleHeelsOffset = playerInfo.SimpleHeelsOffset,
-                            honorificTitle = playerInfo.HonorificTitle,
-                            timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                        };
-
-                        var json = System.Text.Json.JsonSerializer.Serialize(request);
-                        var content = new StringContent(json, Encoding.UTF8, "application/json");
-                        
-                        var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"http://{server.Address}/api/register-mods")
-                        {
-                            Content = content
-                        };
-                        
-                        // Add password header if server has one
-                        if (!string.IsNullOrEmpty(server.Password))
-                        {
-                            httpRequest.Headers.Add("x-fyteclub-password", server.Password);
-                        }
-                        
-                        var response = await _httpClient.SendAsync(httpRequest);
-                        
-                        if (response.IsSuccessStatusCode)
-                        {
-                            _pluginLog.Info($"FyteClub: Successfully uploaded mods to {server.Name}");
-                        }
-                        else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-                        {
-                            _pluginLog.Debug($"FyteClub: Server {server.Name} doesn't support mod registration (old version)");
-                        }
-                        else
-                        {
-                            _pluginLog.Warning($"FyteClub: Failed to upload mods to {server.Name}: HTTP {response.StatusCode}");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _pluginLog.Debug($"FyteClub: Failed to upload mods to {server.Name}: {ex.Message}");
-            }
+            var json = JsonSerializer.Serialize(hashData);
+            using var sha256 = SHA256.Create();
+            var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(json));
+            return Convert.ToHexString(hashBytes)[..16]; // 16-char hash for phonebook
         }
 
         private void OnCommand(string command, string args)
@@ -1117,12 +795,10 @@ namespace FyteClub
                         {
                             var playerName = parts[1];
                             _redrawCoordinator.RedrawCharacterIfFound(playerName);
-                            _pluginLog.Info($"Command: Triggered redraw for {playerName}");
                         }
                         else
                         {
                             _redrawCoordinator.RequestRedrawAll(RedrawReason.ManualRefresh);
-                            _pluginLog.Info("Command: Triggered redraw for all characters");
                         }
                         break;
                     case "block":
@@ -1130,11 +806,6 @@ namespace FyteClub
                         {
                             var playerName = parts[1];
                             BlockUser(playerName);
-                            _pluginLog.Info($"Command: Blocked user {playerName}");
-                        }
-                        else
-                        {
-                            _pluginLog.Info("Usage: /fyteclub block <playerName>");
                         }
                         break;
                     case "unblock":
@@ -1142,11 +813,6 @@ namespace FyteClub
                         {
                             var playerName = parts[1];
                             UnblockUser(playerName);
-                            _pluginLog.Info($"Command: Unblocked user {playerName}");
-                        }
-                        else
-                        {
-                            _pluginLog.Info("Usage: /fyteclub unblock <playerName>");
                         }
                         break;
                     case "testuser":
@@ -1154,16 +820,17 @@ namespace FyteClub
                         {
                             var playerName = parts[1];
                             TestBlockUser(playerName);
-                            _pluginLog.Info($"Command: Added test user {playerName}");
-                        }
-                        else
-                        {
-                            _pluginLog.Info("Usage: /fyteclub testuser <playerName>");
                         }
                         break;
+                    case "debug":
+                        _pluginLog.Info("=== Debug: Logging all object types ===");
+                        DebugLogObjectTypes();
+                        break;
+                    case "recovery":
+                        _ = Task.Run(HandlePluginRecovery);
+                        break;
                     default:
-                        _pluginLog.Info("Usage: /fyteclub [redraw|block|unblock|testuser] <playerName>");
-                        _pluginLog.Info("       /fyteclub redraw [playerName] - Redraw specific player or all");
+                        _configWindow.Toggle();
                         break;
                 }
             }
@@ -1173,396 +840,647 @@ namespace FyteClub
             }
         }
 
+        private void DebugLogObjectTypes()
+        {
+            try
+            {
+                var objects = _objectTable.Where(obj => obj != null).GroupBy(obj => obj.ObjectKind).ToList();
+                foreach (var group in objects)
+                {
+                    _pluginLog.Info($"{group.Key}: {group.Count()} objects");
+                }
+            }
+            catch
+            {
+                // Swallow exception
+            }
+        }
+
         public void Dispose()
         {
+            try
+            {
+                _penumbraModSettingChanged?.Unsubscribe((string _) => OnModSystemChanged());
+                _glamourerStateChanged?.Unsubscribe(() => OnModSystemChanged());
+                _customizePlusProfileChanged?.Unsubscribe(() => OnModSystemChanged());
+                _heelsOffsetChanged?.Unsubscribe(() => OnModSystemChanged());
+                _honorificChanged?.Unsubscribe(() => OnModSystemChanged());
+            }
+            catch { }
+            
             _framework.Update -= OnFrameworkUpdate;
             _pluginInterface.UiBuilder.Draw -= _windowSystem.Draw;
             _pluginInterface.UiBuilder.OpenConfigUi -= () => _configWindow.Toggle();
             _commandManager.RemoveHandler(CommandName);
             _windowSystem.RemoveAllWindows();
             _cancellationTokenSource.Cancel();
+            
+            _clientCache?.Dispose();
+            _componentCache?.Dispose();
+            _syncshellManager.Dispose();
+            
             _httpClient.Dispose();
             _cancellationTokenSource.Dispose();
         }
 
-        public class ConfigWindow : Window
+        // Cache methods
+        private async Task ApplyPlayerModsFromCache(string playerName, CachedPlayerMods cachedMods)
         {
-            private readonly FyteClubPlugin _plugin;
-            private string _newAddress = "";
-            private string _newName = "";
-            private string _newPassword = "";
-            private bool _showBlockList = false;
-            
-            // Cooldown tracking for buttons
-            private DateTime _lastResyncTime = DateTime.MinValue;
-            private DateTime _lastReconnectTime = DateTime.MinValue;
-            private DateTime _lastClearBlocksTime = DateTime.MinValue;
-            private const int CooldownSeconds = 30;
+            if (cachedMods != null)
+            {
+                if (_componentCache != null && cachedMods.ComponentData != null)
+                {
+                    await _componentCache.ApplyComponentToPlayer(playerName, cachedMods.ComponentData);
+                }
+                if (_clientCache != null && cachedMods.RecipeData != null)
+                {
+                    await _clientCache.ApplyRecipeToPlayer(playerName, cachedMods.RecipeData);
+                }
+                _pluginLog.Info($"Applied cached mods for {playerName}");
+            }
+        }
 
-            public ConfigWindow(FyteClubPlugin plugin) : base("FyteClub - Decentralized Sharing With Friends")
+        private void CheckPlayersForChanges(List<PlayerSnapshot> nearbyPlayers)
+        {
+            foreach (var player in nearbyPlayers)
             {
-                _plugin = plugin;
-                SizeConstraints = new WindowSizeConstraints
+                // Check network phonebook for peer changes
+                var phonebookEntry = _syncshellManager.GetPhonebookEntry(player.Name);
+                if (phonebookEntry != null)
                 {
-                    MinimumSize = new Vector2(400, 300),
-                    MaximumSize = new Vector2(800, 600)
-                };
-            }
-
-            public override void Draw()
-            {
-                // Connection Status Section
-                DrawConnectionStatus();
-                
-                // Server Management Section  
-                DrawServerManagement();
-                
-                // Block List Section - NEW FEATURE as requested
-                DrawBlockListSection();
-                
-                // Mod Cache Management Section
-                DrawModCacheSection();
-                
-                // Actions Section
-                DrawActionsSection();
-            }
-            
-            
-            private void DrawConnectionStatus()
-            {
-                // Connection Status Display (like v2.0.1)
-                var servers = _plugin.GetServers();
-                var connectedServers = servers.Count(s => s.Connected);
-                var totalServers = servers.Count;
-                var connectionColor = connectedServers > 0 ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1);
-                
-                ImGui.TextColored(connectionColor, $"Connected Servers: {connectedServers}/{totalServers}");
-                
-                // Display all 5 supported mod plugin statuses
-                ImGui.TextColored(_plugin._modSystemIntegration.IsPenumbraAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
-                    $"Penumbra: {(_plugin._modSystemIntegration.IsPenumbraAvailable ? "Available" : "Unavailable")}");
-                ImGui.TextColored(_plugin._modSystemIntegration.IsGlamourerAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
-                    $"Glamourer: {(_plugin._modSystemIntegration.IsGlamourerAvailable ? "Available" : "Unavailable")}");
-                ImGui.TextColored(_plugin._modSystemIntegration.IsCustomizePlusAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
-                    $"Customize+: {(_plugin._modSystemIntegration.IsCustomizePlusAvailable ? "Available" : "Unavailable")}");
-                ImGui.TextColored(_plugin._modSystemIntegration.IsHeelsAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
-                    $"SimpleHeels: {(_plugin._modSystemIntegration.IsHeelsAvailable ? "Available" : "Unavailable")}");
-                ImGui.TextColored(_plugin._modSystemIntegration.IsHonorificAvailable ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
-                    $"Honorific: {(_plugin._modSystemIntegration.IsHonorificAvailable ? "Available" : "Unavailable")}");
-                
-                // Add refresh button for plugin detection
-                if (ImGui.Button("Refresh Plugin Detection"))
-                {
-                    _plugin._modSystemIntegration.RefreshPluginDetection();
-                }
-                    
-                var syncingCount = _plugin.GetRecentlySyncedUsers().Count();
-                ImGui.Text($"Syncing with: {syncingCount} nearby players");
-            }
-            
-            private void DrawServerManagement()
-            {
-                // Server Management (enhanced from v2.0.1 design)
-                
-                var servers = _plugin.GetServers();
-                
-                // Add Server Section
-                ImGui.Separator();
-                ImGui.Text("Add New Server:");
-                ImGui.InputText("Address (IP:Port)", ref _newAddress, 100);
-                ImGui.InputText("Name", ref _newName, 50);
-                ImGui.InputText("Password (optional)", ref _newPassword, 100, ImGuiInputTextFlags.Password);
-                
-                if (ImGui.Button("Add Server"))
-                {
-                    if (!string.IsNullOrEmpty(_newAddress))
+                    // Get mod data from separate mapping
+                    var modData = _syncshellManager.GetPlayerModData(player.Name);
+                    if (modData != null)
                     {
-                        _plugin.AddServer(_newAddress, string.IsNullOrEmpty(_newName) ? _newAddress : _newName, _newPassword);
-                        _newAddress = "";
-                        _newName = "";
-                        _newPassword = "";
-                    }
-                }
-                
-                // Server List Section  
-                ImGui.Separator();
-                ImGui.Text("Servers:");
-                for (int i = 0; i < servers.Count; i++)
-                {
-                    var server = servers[i];
-                    
-                    // Checkbox for enable/disable
-                    bool enabled = server.Enabled;
-                    if (ImGui.Checkbox($"##server_{i}", ref enabled))
-                    {
-                        server.Enabled = enabled;
-                        _plugin.SaveConfiguration();
-                    }
-                    
-                    ImGui.SameLine();
-                    
-                    // Connection status dot (green = connected, gray = disconnected)
-                    var statusColor = server.Connected ? new Vector4(0, 1, 0, 1) : new Vector4(0.5f, 0.5f, 0.5f, 1);
-                    ImGui.TextColored(statusColor, "●");
-                    ImGui.SameLine();
-                    
-                    // Server name and address
-                    ImGui.Text($"{server.Name} ({server.Address})");
-                    
-                    // Remove button
-                    ImGui.SameLine();
-                    if (ImGui.Button($"Remove##server_{i}"))
-                    {
-                        _plugin.RemoveServer(i);
-                        break;
-                    }
-                }
-                
-                if (servers.Count == 0)
-                {
-                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No servers added yet.");
-                }
-            }
-            
-            private void DrawBlockListSection()
-            {
-                // Block List Feature - NEW as requested by user
-                // This shows all users you've synced with and lets you uncheck to stop syncing
-                
-                var recentUsers = _plugin.GetRecentlySyncedUsers().ToList();
-                
-                ImGui.Separator();
-                ImGui.Text("Block List - Manage Synced Users:");
-                ImGui.Text($"Currently syncing with {recentUsers.Count} users");
-                
-                if (ImGui.Button(_showBlockList ? "Hide Block List" : "Show Block List"))
-                {
-                    _showBlockList = !_showBlockList;
-                }
-                
-                // Only show Clear All Blocks button when block list is visible
-                if (_showBlockList)
-                {
-                    ImGui.SameLine();
-                    
-                    // Clear All Blocks button with cooldown
-                    var clearBlocksCooldown = (DateTime.Now - _lastClearBlocksTime).TotalSeconds;
-                    var clearBlocksDisabled = clearBlocksCooldown < CooldownSeconds;
-                    
-                    if (clearBlocksDisabled)
-                    {
-                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
-                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
-                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
-                    }
-                    
-                    if (ImGui.Button($"Clear All Blocks{(clearBlocksDisabled ? $" ({CooldownSeconds - (int)clearBlocksCooldown}s)" : "")}") && !clearBlocksDisabled)
-                    {
-                        var users = _plugin.GetRecentlySyncedUsers().ToList();
-                        foreach (var user in users)
+                        if (_componentCache != null && modData.ComponentData != null)
                         {
-                            if (_plugin.IsUserBlocked(user))
-                            {
-                                _plugin.UnblockUser(user);
-                            }
+                            _componentCache.UpdateComponentForPlayer(player.Name, modData.ComponentData);
                         }
-                        _lastClearBlocksTime = DateTime.Now;
-                    }
-                    
-                    if (clearBlocksDisabled)
-                    {
-                        ImGui.PopStyleColor(3);
-                    }
-                }
-                
-                if (_showBlockList)
-                {
-                    ImGui.BeginChild("BlockListChild", new Vector2(0, 200));
-                    
-                    foreach (var user in recentUsers.OrderBy(u => u))
-                    {
-                        var isBlocked = _plugin.IsUserBlocked(user);
-                        bool allowSync = !isBlocked;
-                        
-                        if (ImGui.Checkbox($"{user}##user_{user}", ref allowSync))
+                        if (_clientCache != null && modData.RecipeData != null)
                         {
-                            if (allowSync && isBlocked)
-                            {
-                                _plugin.UnblockUser(user);  // Unblock = allow syncing
-                            }
-                            else if (!allowSync && !isBlocked)
-                            {
-                                _plugin.BlockUser(user);    // Block = stop syncing
-                            }
+                            _clientCache.UpdateRecipeForPlayer(player.Name, modData.RecipeData);
                         }
-                        
-                        ImGui.SameLine();
-                        ImGui.TextColored(isBlocked ? new Vector4(1, 0, 0, 1) : new Vector4(0, 1, 0, 1), 
-                            isBlocked ? "(Blocked)" : "(Syncing)");
-                    }
-                    
-                    if (recentUsers.Count == 0)
-                    {
-                        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No users to display. Get near other FyteClub users first!");
-                    }
-                    
-                    ImGui.EndChild();
-                }
-            }
-            
-            private void DrawModCacheSection()
-            {
-                if (ImGui.CollapsingHeader("🎨 Mod Application Cache"))
-                {
-                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Prevents unnecessary re-applications of identical mods");
-                    
-                    var cacheStatus = _plugin._modSystemIntegration.GetCacheStatus();
-                    
-                    if (cacheStatus.Count == 0)
-                    {
-                        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "No cached mod applications");
-                    }
-                    else
-                    {
-                        ImGui.Text($"Cached applications: {cacheStatus.Count}");
-                        ImGui.Separator();
-                        
-                        foreach (var entry in cacheStatus.OrderBy(x => x.Key))
-                        {
-                            var playerName = entry.Key;
-                            var (hash, lastApplied) = entry.Value;
-                            var timeSince = DateTime.UtcNow - lastApplied;
-                            
-                            ImGui.Text($"• {playerName}");
-                            ImGui.SameLine();
-                            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), $"({hash}) - {timeSince.TotalMinutes:F0}m ago");
-                            
-                            ImGui.SameLine();
-                            if (ImGui.SmallButton($"Clear##{playerName}"))
-                            {
-                                _plugin._modSystemIntegration.ClearPlayerModCache(playerName);
-                            }
-                        }
-                        
-                        ImGui.Separator();
-                        if (ImGui.Button("Clear All Cache"))
-                        {
-                            _plugin._modSystemIntegration.ClearAllModCaches();
-                        }
-                        ImGui.SameLine();
-                        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Force re-application of all mods");
+                        _pluginLog.Info($"Updated cache for {player.Name} from mod data");
                     }
                 }
             }
+        }
 
-            private void DrawActionsSection()
+        private void CheckCompanionsForChanges(List<CompanionSnapshot> companions)
+        {
+            foreach (var companion in companions)
             {
-                // Action buttons (like v2.0.1 Resync button)
-                
-                ImGui.Separator();
-                
-                // Resync Mods button with cooldown
-                var resyncCooldown = (DateTime.Now - _lastResyncTime).TotalSeconds;
-                var resyncDisabled = resyncCooldown < CooldownSeconds;
-                
-                if (resyncDisabled)
+                // Check network phonebook for companion peer info
+                var phonebookEntry = _syncshellManager.GetPhonebookEntry(companion.Name);
+                if (phonebookEntry != null)
                 {
-                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
-                }
-                
-                if (ImGui.Button($"Resync Mods{(resyncDisabled ? $" ({CooldownSeconds - (int)resyncCooldown}s)" : "")}") && !resyncDisabled)
-                {
-                    // Force sync current mods to all servers
-                    _plugin.RequestAllPlayerMods();
-                    _lastResyncTime = DateTime.Now;
-                }
-                
-                if (resyncDisabled)
-                {
-                    ImGui.PopStyleColor(3);
-                }
-                
-                ImGui.SameLine();
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Force sync your current mods to servers");
-
-                // Check for Changes button - NEW
-                if (ImGui.Button("Check for Changes"))
-                {
-                    // Force an immediate change check
-                    _plugin.ForceChangeCheck();
-                }
-                
-                ImGui.SameLine();
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Check if your mods have changed and upload if needed");
-
-                // Reconnect All button with cooldown
-                var reconnectCooldown = (DateTime.Now - _lastReconnectTime).TotalSeconds;
-                var reconnectDisabled = reconnectCooldown < CooldownSeconds;
-                
-                if (reconnectDisabled)
-                {
-                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
-                }
-                
-                if (ImGui.Button($"Reconnect All{(reconnectDisabled ? $" ({CooldownSeconds - (int)reconnectCooldown}s)" : "")}") && !reconnectDisabled)
-                {
-                    // Attempt to reconnect to all disconnected servers
-                    _plugin.ReconnectAllServers();
-                    _lastReconnectTime = DateTime.Now;
-                }
-                
-                if (reconnectDisabled)
-                {
-                    ImGui.PopStyleColor(3);
-                }
-                
-                ImGui.SameLine();
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Try to reconnect to offline servers");
-                
-                // Show change detection info
-                ImGui.Separator();
-                ImGui.TextColored(new Vector4(0.6f, 0.8f, 1.0f, 1), "Automatic Change Detection:");
-                ImGui.Text($"Last check: {(DateTime.UtcNow - _plugin.LastChangeCheckTime).TotalSeconds:F0}s ago");
-                ImGui.Text($"Check interval: {_plugin.ChangeCheckInterval.TotalSeconds}s");
-                if (_plugin.LastUploadedModHash != null)
-                {
-                    ImGui.Text($"Last upload hash: {_plugin.LastUploadedModHash[..8]}...");
+                    // Get companion mod data from separate mapping
+                    var modData = _syncshellManager.GetPlayerModData(companion.Name);
+                    if (modData?.ComponentData != null && _componentCache != null)
+                    {
+                        _componentCache.UpdateComponentForPlayer(companion.Name, modData.ComponentData);
+                        _pluginLog.Info($"Updated companion cache for {companion.Name} from mod data");
+                    }
                 }
                 else
                 {
-                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No mods uploaded yet");
+                    ShareCompanionToSyncshells(companion);
                 }
+            }
+        }
+
+        private void ShareCompanionToSyncshells(CompanionSnapshot companion)
+        {
+            try
+            {
+                var companionInfo = _modSystemIntegration.GetCurrentPlayerMods(companion.Name).Result;
+                if (companionInfo != null)
+                {
+                    var companionHash = CalculateModDataHash(companionInfo);
+                    var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
+                    foreach (var syncshell in activeSyncshells)
+                    {
+                        var companionData = new
+                        {
+                            type = "companion",
+                            companionName = companion.Name,
+                            objectKind = companion.ObjectKind,
+                            outfitHash = companionHash,
+                            mods = companionInfo.Mods,
+                            timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                        };
+                        var json = JsonSerializer.Serialize(companionData);
+                        _syncshellManager.SendModData(syncshell.Id, json).Wait();
+                    }
+                }
+            }
+            catch
+            {
+                // Swallow exception
+            }
+        }
+
+        private void DisposeClientCache()
+        {
+            try
+            {
+                _clientCache?.Dispose();
+                _componentCache?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Error disposing caches: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Get comprehensive cache statistics showing deduplication efficiency.
+        /// </summary>
+        public string GetCacheStatsDisplay()
+        {
+            if (_clientCache == null && _componentCache == null)
+                return "Cache: Disabled";
+            
+            var parts = new List<string>();
+            
+            if (_clientCache != null)
+            {
+                var clientStats = _clientCache.GetCacheStats();
+                parts.Add($"Players: {clientStats.TotalPlayers}, Mods: {clientStats.TotalMods}, Size: {FormatBytes(clientStats.TotalSizeBytes)}");
+            }
+            
+            if (_componentCache != null)
+            {
+                var componentStats = _componentCache.GetCacheStats();
+                parts.Add($"Components: {componentStats.ComponentCount}, Recipes: {componentStats.RecipeCount}");
+            }
+            
+            return string.Join(" | ", parts);
+        }
+        
+        private string FormatBytes(long bytes)
+        {
+            string[] sizes = { "B", "KB", "MB", "GB" };
+            double len = bytes;
+            int order = 0;
+            while (len >= 1024 && order < sizes.Length - 1)
+            {
+                order++;
+                len = len / 1024;
+            }
+            return $"{len:0.##} {sizes[order]}";
+        }
+
+        /// <summary>
+        /// Log detailed cache statistics for debugging.
+        /// Shows the efficiency of the reference-based deduplication system.
+        /// </summary>
+        public void LogCacheStatistics()
+        {
+            try
+            {
+                if (_clientCache != null)
+                {
+                    var clientStats = _clientCache.GetClientDeduplicationStats();
+                    _pluginLog.Info($"Client Cache Stats: {clientStats}");
+                    _pluginLog.Info($"  - Traditional storage would need {clientStats.TotalReferences} files");
+                    _pluginLog.Info($"  - Actual storage uses {clientStats.TotalModFiles} files");
+                    _pluginLog.Info($"  - Average {clientStats.AverageReferencesPerMod:F1} references per mod file");
+                }
+                
+                if (_componentCache != null)
+                {
+                    var componentStats = _componentCache.GetDeduplicationStats();
+                    _pluginLog.Info($"Component Cache Stats: {componentStats}");
+                    _pluginLog.Info($"  - {componentStats.TotalComponents} unique components shared across {componentStats.TotalRecipes} recipes");
+                    _pluginLog.Info($"  - Average {componentStats.AverageReferencesPerComponent:F1} references per component");
+                    
+                    // Log component cache detailed statistics
+                    _componentCache.LogStatistics();
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Error logging cache statistics: {ex.Message}");
+            }
+        }
+
+        // Debug & Utility Methods
+        public void LogObjectType(object obj, string context = "")
+        {
+            var type = obj?.GetType()?.Name ?? "null";
+            _pluginLog.Debug($"[{context}] Object type: {type}");
+        }
+
+        public void LogModApplicationDetails(string playerName, object modData)
+        {
+            LogObjectType(modData, $"ModData for {playerName}");
+            var preview = modData?.ToString();
+            if (preview != null && preview.Length > 100) preview = preview[..100] + "...";
+            _pluginLog.Debug($"Applying mods to {playerName}: {preview}");
+        }
+
+        // Advanced Configuration & Recovery
+        public void CleanupOldPlayerAssociations()
+        {
+            var cutoff = DateTime.UtcNow.AddHours(-24);
+            var toRemove = _playerLastSeen.Where(kvp => kvp.Value < cutoff).Select(kvp => kvp.Key).ToList();
+            
+            foreach (var player in toRemove)
+            {
+                _playerLastSeen.TryRemove(player, out _);
+                _playerSyncshellAssociations.TryRemove(player, out _);
+                _loadingStates.TryRemove(player, out _);
+            }
+            
+            if (toRemove.Count > 0)
+            {
+                _pluginLog.Info($"Cleaned up {toRemove.Count} old player associations");
+            }
+        }
+
+        public async Task RetryDetection()
+        {
+            _pluginLog.Info("Retrying mod system detection...");
+            CheckModSystemAvailability();
+            await Task.Delay(1000);
+        }
+
+        public async Task HandlePluginRecovery()
+        {
+            _pluginLog.Info("Starting plugin recovery sequence...");
+            
+            try
+            {
+                CleanupOldPlayerAssociations();
+                await RetryDetection();
+                
+                if (_clientCache == null) InitializeClientCache();
+                if (_componentCache == null) InitializeComponentCache();
+                
+                await PerformPeerDiscovery();
+                
+                _pluginLog.Info("Plugin recovery completed");
+            }
+            catch
+            {
+                _pluginLog.Error($"Plugin recovery failed");
+            }
+        }
+
+
+    }
+
+    public class ConfigWindow : Window
+    {
+        private readonly FyteClubPlugin _plugin;
+        private string _newSyncshellName = "";
+        private string _inviteCode = "";
+        private bool _showBlockList = false;
+        private DateTime _lastCopyTime = DateTime.MinValue;
+        private int _lastCopiedIndex = -1;
+        private bool? _webrtcAvailable = null;
+        private DateTime _lastWebrtcTest = DateTime.MinValue;
+
+        public ConfigWindow(FyteClubPlugin plugin) : base("FyteClub - P2P Mod Sharing")
+        {
+            _plugin = plugin;
+            SizeConstraints = new WindowSizeConstraints
+            {
+                MinimumSize = new Vector2(400, 300),
+                MaximumSize = new Vector2(800, 600)
+            };
+        }
+
+        public override void Draw()
+        {
+            if (ImGui.BeginTabBar("FyteClubTabs"))
+            {
+                if (ImGui.BeginTabItem("Syncshells"))
+                {
+                    DrawSyncshellsTab();
+                    ImGui.EndTabItem();
+                }
+                
+                if (ImGui.BeginTabItem("Block List"))
+                {
+                    DrawBlockListTab();
+                    ImGui.EndTabItem();
+                }
+                
+                if (ImGui.BeginTabItem("Cache"))
+                {
+                    DrawCacheTab();
+                    ImGui.EndTabItem();
+                }
+                
+                ImGui.EndTabBar();
+            }
+        }
+        
+        private void DrawSyncshellsTab()
+        {
+            var syncshells = _plugin.GetSyncshells();
+            var activeSyncshells = syncshells.Count(s => s.IsActive);
+            
+            ImGui.TextColored(activeSyncshells > 0 ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
+                $"Active Syncshells: {activeSyncshells}/{syncshells.Count}");
+            
+            ImGui.Separator();
+            ImGui.Text("Create New Syncshell:");
+            ImGui.InputText("Syncshell Name##create", ref _newSyncshellName, 50);
+            
+            if (ImGui.Button("Create Syncshell"))
+            {
+                if (!string.IsNullOrEmpty(_newSyncshellName))
+                {
+                    var capturedName = _newSyncshellName;
+                    _newSyncshellName = "";
+                    
+                    _ = Task.Run(async () => 
+                    {
+                        try
+                        {
+                            await _plugin.CreateSyncshell(capturedName);
+                        }
+                        catch
+                        {
+                            // Error logged by plugin
+                        }
+                    });
+                }
+            }
+            
+            ImGui.Separator();
+            ImGui.Text("Join Syncshell:");
+            ImGui.InputText("Invite Code (syncshell://...)", ref _inviteCode, 500);
+            
+            if (ImGui.Button("Join Syncshell"))
+            {
+                if (!string.IsNullOrEmpty(_inviteCode))
+                {
+                    var capturedCode = _inviteCode;
+                    _inviteCode = "";
+                    
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            _plugin._pluginLog.Info($"Attempting to join via invite code: {capturedCode}");
+                            var success = await _plugin._syncshellManager.JoinSyncshellByInviteCode(capturedCode);
+                            if (success)
+                            {
+                                _plugin._pluginLog.Info("Successfully joined syncshell via invite code");
+                                _plugin.SaveConfiguration();
+                            }
+                            else
+                            {
+                                _plugin._pluginLog.Warning("Failed to join syncshell - invite code may be invalid or expired");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _plugin._pluginLog.Error($"Failed to join via invite: {ex.Message}");
+                        }
+                    });
+                }
+            }
+            
+            ImGui.Separator();
+            ImGui.Text("Your Syncshells:");
+            for (int i = 0; i < syncshells.Count; i++)
+            {
+                var syncshell = syncshells[i];
+                
+                bool active = syncshell.IsActive;
+                if (ImGui.Checkbox($"##syncshell_{i}", ref active))
+                {
+                    syncshell.IsActive = active;
+                    _plugin.SaveConfiguration();
+                }
+                
+                ImGui.SameLine();
+                ImGui.Text($"{syncshell.Name} ({syncshell.Members?.Count ?? 0} members)");
+                
+                ImGui.SameLine();
+                
+                // Test WebRTC availability (cached for 30 seconds)
+                if (_webrtcAvailable == null || (DateTime.UtcNow - _lastWebrtcTest).TotalSeconds > 30)
+                {
+                    try
+                    {
+                        var testConnection = WebRTCConnectionFactory.CreateConnectionAsync().Result;
+                        testConnection.Dispose();
+                        _webrtcAvailable = true;
+                    }
+                    catch
+                    {
+                        _webrtcAvailable = false;
+                    }
+                    _lastWebrtcTest = DateTime.UtcNow;
+                }
+                
+                bool webrtcAvailable = _webrtcAvailable.Value;
+                
+                if (!webrtcAvailable)
+                {
+                    ImGui.BeginDisabled();
+                }
+                
+                if (ImGui.SmallButton($"Copy Invite Code##syncshell_{i}"))
+                {
+                    if (webrtcAvailable)
+                    {
+                        try
+                        {
+                            var inviteCode = _plugin._syncshellManager.GenerateInviteCode(syncshell.Id).Result;
+                            ImGui.SetClipboardText(inviteCode);
+                            _plugin._pluginLog.Info($"Copied invite code to clipboard: {syncshell.Name}");
+                            _lastCopyTime = DateTime.UtcNow;
+                            _lastCopiedIndex = i;
+                        }
+                        catch (Exception ex)
+                        {
+                            _plugin._pluginLog.Error($"Invite code generation failed for {syncshell.Name}: {ex.Message}");
+                        }
+                    }
+                }
+                
+                if (!webrtcAvailable)
+                {
+                    ImGui.EndDisabled();
+                    if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    {
+                        ImGui.SetTooltip("WebRTC not available - P2P connections disabled");
+                    }
+                }
+                
+                if (_lastCopiedIndex == i && (DateTime.UtcNow - _lastCopyTime).TotalSeconds < 2)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(new Vector4(0, 1, 0, 1), "✓ Copied!");
+                }
+                
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Leave##syncshell_{i}"))
+                {
+                    _plugin.RemoveSyncshell(syncshell.Id);
+                    break;
+                }
+            }
+            
+            if (syncshells.Count == 0)
+            {
+                ImGui.Text("No syncshells yet. Create one to share mods with friends!");
+            }
+            
+            ImGui.Separator();
+            if (ImGui.Button("Resync Mods"))
+            {
+                _plugin.RequestAllPlayerMods();
+            }
+            
+            ImGui.SameLine();
+            if (ImGui.Button("Resync My Appearance"))
+            {
+                _plugin.ShareMods();
+            }
+            
+            ImGui.SameLine();
+            if (ImGui.Button("Discover Peers"))
+            {
+                _plugin.ReconnectAllPeers();
+            }
+        }
+        
+        private string _blockPlayerName = "";
+        
+        private void DrawBlockListTab()
+        {
+            ImGui.Text("Block Player:");
+            ImGui.InputText("Player Name##block", ref _blockPlayerName, 100);
+            ImGui.SameLine();
+            if (ImGui.Button("Block"))
+            {
+                if (!string.IsNullOrEmpty(_blockPlayerName))
+                {
+                    _plugin.BlockUser(_blockPlayerName);
+                    _blockPlayerName = "";
+                }
+            }
+            
+            ImGui.Separator();
+            ImGui.Text("Recently Synced Players:");
+            foreach (var player in _plugin.GetRecentlySyncedUsers())
+            {
+                ImGui.Text(player);
+                ImGui.SameLine();
+                if (_plugin.IsUserBlocked(player))
+                {
+                    if (ImGui.SmallButton($"Unblock##{player}"))
+                    {
+                        _plugin.UnblockUser(player);
+                    }
+                }
+                else
+                {
+                    if (ImGui.SmallButton($"Block##{player}"))
+                    {
+                        _plugin.BlockUser(player);
+                    }
+                }
+            }
+        }
+        
+        private void DrawCacheTab()
+        {
+            ImGui.Text("Cache Statistics:");
+            ImGui.Text(_plugin.GetCacheStatsDisplay());
+            
+            ImGui.Separator();
+            if (ImGui.Button("Log Cache Stats"))
+            {
+                _plugin.LogCacheStatistics();
+            }
+            
+            ImGui.SameLine();
+            if (ImGui.Button("Recovery"))
+            {
+                _ = Task.Run(_plugin.HandlePluginRecovery);
+            }
+            
+            ImGui.SameLine();
+            if (ImGui.Button("Clear All Cache"))
+            {
+                ImGui.OpenPopup("Confirm Clear Cache");
+            }
+            
+            if (ImGui.BeginPopupModal("Confirm Clear Cache"))
+            {
+                ImGui.Text("Are you sure you want to clear all cached mod data?");
+                if (ImGui.Button("Yes"))
+                {
+                    _plugin.ClientCache?.ClearAllCache();
+                    _plugin.ComponentCache?.ClearAllCache();
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("No"))
+                {
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.EndPopup();
             }
         }
     }
 
     public enum LoadingState { None, Requesting, Downloading, Applying, Complete, Failed }
-    
-    // FyteClub's ServerInfo with encryption and friend network features
-    public class ServerInfo
-    {
-        public string Address { get; set; } = "";
-        public string Name { get; set; } = "";
-        public string Password { get; set; } = "";
-        public bool Enabled { get; set; } = true;
-        public bool Connected { get; set; } = false;
-        public DateTime? LastConnected { get; set; } = null;
-        public string EncryptionKey { get; set; } = ""; // FyteClub's E2E encryption
-        public bool IsFriend { get; set; } = true; // FyteClub's friend designation
-        public int FailureCount { get; set; } = 0; // Track consecutive failures before giving up
-    }
 
     public class Configuration : Dalamud.Configuration.IPluginConfiguration
     {
         public int Version { get; set; } = 0;
-        public List<ServerInfo> Servers { get; set; } = new();
-        public bool EncryptionEnabled { get; set; } = true; // FyteClub's encryption toggle
-        public int ProximityRange { get; set; } = 50; // FyteClub's proximity setting
-        public List<string> BlockedUsers { get; set; } = new(); // Block list for user management
-        public List<string> RecentlySyncedUsers { get; set; } = new(); // Track recently synced users
+        public List<SyncshellInfo> Syncshells { get; set; } = new();
+        public bool EncryptionEnabled { get; set; } = true;
+        public int ProximityRange { get; set; } = 50;
+        public List<string> BlockedUsers { get; set; } = new();
+        public List<string> RecentlySyncedUsers { get; set; } = new();
     }
+
+    public class PlayerSnapshot
+    {
+        public string Name { get; set; } = string.Empty;
+        public uint ObjectIndex { get; set; }
+        public nint Address { get; set; }
+    }
+
+    public class CompanionSnapshot
+    {
+        public string Name { get; set; } = string.Empty;
+        public string ObjectKind { get; set; } = string.Empty;
+        public uint ObjectIndex { get; set; }
+    }
+
+    public class BootstrapConnectionInfo
+    {
+        public string PublicKey { get; set; } = string.Empty;
+        public string IP { get; set; } = string.Empty;
+        public int Port { get; set; }
+    }
+
+    public static class BootstrapKeyUtil
+    {
+        public static BootstrapConnectionInfo? Decode(string base64)
+        {
+            try
+            {
+                var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(base64));
+                return JsonSerializer.Deserialize<BootstrapConnectionInfo>(json);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
 }

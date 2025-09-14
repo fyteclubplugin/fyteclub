@@ -36,12 +36,7 @@ if exist VERSION (
 echo New version: %NEW_VERSION%
 echo.
 
-REM Ask for confirmation
-set /p CONFIRM="Update all files to v%NEW_VERSION%? (Y/N): "
-if /i not "%CONFIRM%"=="Y" (
-    echo Update cancelled
-    exit /b 0
-)
+REM Auto-update without confirmation
 
 echo.
 echo [1/7] Updating VERSION file...
@@ -99,4 +94,3 @@ echo   3. Commit: git add . ^&^& git commit -m "Release v%NEW_VERSION%"
 echo   4. Tag: git tag -a v%NEW_VERSION% -m "FyteClub v%NEW_VERSION%"
 echo   5. Push: git push ^&^& git push origin v%NEW_VERSION%
 echo.
-pause

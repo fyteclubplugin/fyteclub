@@ -28,7 +28,7 @@ namespace FyteClub
                 HelpMessage = "FyteClub mod sharing"
             });
 
-            PluginLog.Information("FyteClub: Minimal plugin loaded with Mare patterns");
+            PluginLog.Information("FyteClub: Minimal plugin loaded with Horse patterns");
         }
 
         private void OnCommand(string command, string args)

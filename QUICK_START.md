@@ -1,113 +1,32 @@
-# Quick Start Guide - FyteClub v4.0.0
+# QUICK START
 
-Get mod sharing working.
-
-## For the person hosting the server
-
-### Option 1: Your PC
-1. Download FyteClub-Server.zip
-2. Extract and run `build-pc.bat`
-3. Share your IP:port with friends (like `192.168.1.100:3000`)
-
-### Option 2: Raspberry Pi
-1. Download FyteClub-Server.zip to your Pi
-2. Run `build-pi.sh`
-3. Share your Pi's IP:port with friends
-
-### Option 3: Cloud server
-1. Download FyteClub-Server.zip
-2. Upload to your VPS/AWS/etc.
-3. Run `npm install && npm start`
-4. Share your server's IP:port
-
-## For everyone else (your friends)
-
-### Install the plugin
-1. Download FyteClub-Plugin.zip from releases
-2. Extract to `%APPDATA%\XIVLauncher\installedPlugins\FyteClub\4.0.0\`
+1. Download FyteClub-Plugin.zip
+2. Extract to `%APPDATA%\XIVLauncher\installedPlugins\FyteClub\latest\`
 3. Restart FFXIV
+4. In-game: `/fyteclub` → create syncshell → generate invite code → send to friends
+5. Friends join with invite code. No server setup required. If they can’t figure it out, that’s on them.
+6. Mods sync automatically when you’re near other members (50m). Uses encrypted WebRTC channels. If it’s not working, check your range, check your config, or just try again.
 
-### Connect to the server
-1. In FFXIV, type `/fyteclub`
-2. Add your friend's server (their IP:port)
-3. Test the connection
-4. Enable syncing
-
-## That's it
-
-Your mods will sync when you're near other players. Version 4.0.0 detects changes automatically and uploads them.
-
-## New in v4.0.0! 🎉
-
-**Automatic Change Detection**: Your mods are uploaded automatically when you change them. Just equip a new glamour, enable a mod, or adjust your Customize+ settings and it'll sync within 30 seconds!
-
-**Smart Uploads**: No more duplicate uploads on restart - the plugin remembers what you've already shared.
-
-**Manual Override**: Still want to force a sync? Use the "Check for Changes" button in the plugin UI.
+## How it works
+- Each syncshell is a group. Invite codes let friends join. No server, no nonsense.
+- Membership is managed by tokens. Tokens are signed and stored locally. Lose your token, you’re out.
+- Phonebook tracks group members. Host rotates if needed. No drama.
+- All mod data is encrypted end-to-end. If you want plaintext, look elsewhere.
 
 ## Troubleshooting
+- Plugin won’t load? Update XIVLauncher/Dalamud, check folder, restart game.
+- Can’t connect? Double-check invite code, make sure everyone is online, stand closer.
+- Mods not syncing? Enable syncing, restart plugin, check your range.
 
-**Plugin won't load?**
-- Make sure XIVLauncher and Dalamud are updated
-- Check the plugin is in the right folder
-- Restart FFXIV
+## What Gets Synced
+- Penumbra mods
+- Glamourer designs
+- Customize+ profiles
+- SimpleHeels offsets
+- Honorific titles
 
-**Can't connect to server?**
-- Double-check the IP:port
-- Make sure the server is running
-- Check firewall settings
+## Security
+- End-to-end encrypted. No servers. No data collection. If you find a server, it’s not ours.
 
-**Mods not syncing?**
-- Stand within 50 meters of your friend
-- Check both players have syncing enabled
-- Restart the plugin if needed
-
-## **Troubleshooting**
-
-### **Plugin Not Connecting**
-```bash
-# Check if client is running
-fyteclub status
-
-# Restart client if needed
-fyteclub start
-```
-
-### **No Mods Syncing**
-- Make sure you're within 50 meters of friends
-- Check that both players have the plugin enabled
-- Verify you're connected to the same server
-
-### **Server Won't Start**
-```bash
-# Check if port is in use
-netstat -an | findstr :3000
-
-# Try different port
-fyteclub-server --port 3001
-```
-
-## **What Gets Synced**
-
-- **Penumbra Mods** - Clothing, textures, accessories
-- **Glamourer Designs** - Face, body, hair customization  
-- **Customize+ Profiles** - Advanced body scaling
-- **SimpleHeels Offsets** - Height adjustments
-- **Honorific Titles** - Custom character titles
-
-## **Privacy & Security**
-
-- **End-to-end encrypted** - Server never sees your actual mods
-- **Friend-to-friend only** - No central company servers
-- **You control everything** - Your server, your rules, your data
-- **Open source** - All code visible on GitHub
-
-## **Getting Help**
-
-- **GitHub Issues**: Report bugs and request features
-- **Documentation**: Complete guides in the repository
-- **Community**: FFXIV modding Discord servers
-
----
-
-Ready to share mods with friends? Start with the guide above.
+## Help
+- GitHub Issues, docs, Discord. For a walkthrough, see [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md).
