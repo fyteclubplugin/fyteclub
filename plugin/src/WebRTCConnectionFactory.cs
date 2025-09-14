@@ -32,12 +32,12 @@ namespace FyteClub
             if (_nativeAvailable.Value)
             {
                 _pluginLog?.Info("WebRTC: Using LibWebRTCConnection (native)");
-                return new LibWebRTCConnection();
+                return new LibWebRTCConnection(_pluginLog);
             }
             else
             {
-                _pluginLog?.Error("CRITICAL: webrtc_native.dll not found or failed to load. P2P features disabled.");
-                _pluginLog?.Error("Please ensure webrtc_native.dll is present in the plugin directory.");
+                _pluginLog?.Error("CRITICAL: WebRTC native library not available. P2P features disabled.");
+                _pluginLog?.Error("Please ensure a proper WebRTC library is installed.");
                 throw new InvalidOperationException("WebRTC native library not available. P2P features cannot function.");
             }
         }
@@ -46,15 +46,43 @@ namespace FyteClub
         {
             try
             {
-                var testConnection = new LibWebRTCConnection();
-                var result = await testConnection.InitializeAsync();
-                testConnection.Dispose();
-                _pluginLog?.Info($"WebRTC native availability test: {(result ? "SUCCESS" : "FAILED")}");
-                return result;
+                _pluginLog?.Info("Testing Microsoft WebRTC availability (crash-protected)...");
+                
+                // Run test in isolated task with timeout to prevent crashes
+                var testResult = await Task.Run(async () => {
+                    try
+                    {
+                        var testConnection = new LibWebRTCConnection(_pluginLog);
+                        
+                        // Test with timeout to prevent hanging
+                        var initTask = testConnection.InitializeAsync();
+                        var timeoutTask = Task.Delay(10000); // 10 second timeout for safety test
+                        
+                        var completedTask = await Task.WhenAny(initTask, timeoutTask);
+                        if (completedTask == timeoutTask)
+                        {
+                            _pluginLog?.Warning("WebRTC availability test timed out");
+                            testConnection.Dispose();
+                            return false;
+                        }
+                        
+                        var result = await initTask;
+                        testConnection.Dispose();
+                        return result;
+                    }
+                    catch (Exception innerEx)
+                    {
+                        _pluginLog?.Warning($"WebRTC inner test failed: {innerEx.Message}");
+                        return false;
+                    }
+                });
+                
+                _pluginLog?.Info($"WebRTC native availability test: {(testResult ? "SUCCESS" : "FAILED")}");
+                return testResult;
             }
             catch (Exception ex)
             {
-                _pluginLog?.Warning($"WebRTC native availability test failed: {ex.Message}");
+                _pluginLog?.Warning($"WebRTC availability test wrapper failed: {ex.Message}");
                 return false;
             }
         }

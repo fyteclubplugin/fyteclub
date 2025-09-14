@@ -40,6 +40,7 @@ namespace FyteClub
         private readonly ConfigWindow _configWindow;
         private readonly FyteClubModIntegration _modSystemIntegration;
         private readonly FyteClubRedrawCoordinator _redrawCoordinator;
+        private readonly SafeModIntegration _safeModIntegration;
         public readonly SyncshellManager _syncshellManager;
 
         private readonly CancellationTokenSource _cancellationTokenSource = new();
@@ -101,14 +102,11 @@ namespace FyteClub
             _pluginLog = pluginLog;
 
             // Initialize WebRTC factory
-            #if DEBUG
-            WebRTCConnectionFactory.Initialize(pluginLog, testMode: true);
-            #else
             WebRTCConnectionFactory.Initialize(pluginLog, testMode: false);
-            #endif
 
             // Initialize services
             _modSystemIntegration = new FyteClubModIntegration(pluginInterface, pluginLog, objectTable, framework);
+            _safeModIntegration = new SafeModIntegration(pluginInterface, pluginLog);
             _redrawCoordinator = new FyteClubRedrawCoordinator(pluginLog, _mediator, _modSystemIntegration);
             _playerDetection = new PlayerDetectionService(objectTable, _mediator, _pluginLog);
             _syncshellManager = new SyncshellManager(pluginLog);
@@ -303,11 +301,34 @@ namespace FyteClub
         private async Task PerformPeerDiscovery()
         {
             var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive).ToList();
-            _pluginLog.Info($"FyteClub: WebRTC P2P ready for {activeSyncshells.Count} active syncshells");
+            if (activeSyncshells.Count == 0) return;
             
-            foreach (var syncshell in activeSyncshells)
+            // Test WebRTC availability with crash protection
+            try
             {
-                _pluginLog.Info($"  - '{syncshell.Name}' ID: {syncshell.Id} (Use invite codes to connect)");
+                await Task.Run(async () => {
+                    try
+                    {
+                        var testConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
+                        testConnection?.Dispose();
+                        
+                        _pluginLog.Info($"FyteClub: WebRTC P2P ready for {activeSyncshells.Count} active syncshells");
+                        foreach (var syncshell in activeSyncshells)
+                        {
+                            _pluginLog.Info($"  - '{syncshell.Name}' ID: {syncshell.Id} (Use invite codes to connect)");
+                        }
+                    }
+                    catch (Exception innerEx)
+                    {
+                        _pluginLog.Error($"FyteClub: WebRTC initialization failed - {innerEx.Message}");
+                        _pluginLog.Warning($"FyteClub: {activeSyncshells.Count} syncshells configured but P2P connections disabled");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"FyteClub: WebRTC test task failed - {ex.Message}");
+                _pluginLog.Warning($"FyteClub: P2P connections disabled due to WebRTC issues");
             }
         }
 
@@ -336,7 +357,10 @@ namespace FyteClub
                     if (!_loadingStates.ContainsKey(message.PlayerName))
                     {
                         _loadingStates[message.PlayerName] = LoadingState.Requesting;
-                        _ = Task.Run(() => RequestPlayerMods(message.PlayerName));
+                        // Use safe mod integration with rate limiting
+                        _ = Task.Run(async () => {
+                            await RequestPlayerModsSafely(message.PlayerName);
+                        });
                     }
                 }
                 catch
@@ -353,55 +377,76 @@ namespace FyteClub
         
 
 
-        // Fix RequestPlayerMods to call RequestPlayerModsFromSyncshell synchronously
-        private async Task RequestPlayerMods(string playerName)
+        // Safe mod request with rate limiting and reduced logging
+        private async Task RequestPlayerModsSafely(string playerName)
         {
-            if (_clientCache != null)
+            try
             {
-                var cachedMods = await _clientCache.GetCachedPlayerMods(playerName);
-                if (cachedMods != null)
+                if (_clientCache != null)
                 {
-                    _pluginLog.Info($"🎯 Cache HIT for {playerName}");
-                    return;
+                    var cachedMods = await _clientCache.GetCachedPlayerMods(playerName);
+                    if (cachedMods != null)
+                    {
+                        _pluginLog.Debug($"Cache hit for {playerName}");
+                        return;
+                    }
                 }
-                else
+                
+                var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
+                foreach (var syncshell in activeSyncshells)
                 {
-                    _pluginLog.Info($"🌐 Cache MISS for {playerName}");
+                    var success = await RequestPlayerModsFromSyncshellSafely(playerName, syncshell);
+                    if (success)
+                    {
+                        _playerSyncshellAssociations[playerName] = syncshell;
+                        _playerLastSeen[playerName] = DateTime.UtcNow;
+                        break;
+                    }
                 }
             }
-            var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
-            foreach (var syncshell in activeSyncshells)
+            catch (Exception ex)
             {
-                var success = RequestPlayerModsFromSyncshell(playerName, syncshell);
-                if (success)
+                _pluginLog.Warning($"Safe mod request failed for {playerName}: {ex.Message}");
+                _loadingStates[playerName] = LoadingState.Failed;
+            }
+        }
+        
+        private async Task<bool> RequestPlayerModsFromSyncshellSafely(string playerName, SyncshellInfo syncshell)
+        {
+            try
+            {
+                var playerNameOnly = playerName.Split('@')[0];
+                var isInSyncshell = syncshell.Members?.Any(member => 
+                    member.Equals(playerName, StringComparison.OrdinalIgnoreCase) ||
+                    member.Equals(playerNameOnly, StringComparison.OrdinalIgnoreCase)) ?? false;
+                    
+                if (!isInSyncshell) return false;
+                
+                _loadingStates[playerName] = LoadingState.Downloading;
+                
+                // Use safe mod integration for applying mods
+                if (_recentlySyncedUsers.ContainsKey(playerName))
                 {
-                    _playerSyncshellAssociations[playerName] = syncshell;
-                    _playerLastSeen[playerName] = DateTime.UtcNow;
-                    break;
+                    var success = await _safeModIntegration.SafelyApplyModsAsync(playerName, null);
+                    if (success)
+                    {
+                        _pluginLog.Debug($"Applied mods for {playerName} from syncshell {syncshell.Name}");
+                        _loadingStates[playerName] = LoadingState.Complete;
+                        _playerLastSeen[playerName] = DateTime.UtcNow;
+                        return true;
+                    }
                 }
+                
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Safe syncshell request failed: {ex.Message}");
+                return false;
             }
         }
 
-        private bool RequestPlayerModsFromSyncshell(string playerName, SyncshellInfo syncshell)
-        {
-            var playerNameOnly = playerName.Split('@')[0];
-            var isInSyncshell = syncshell.Members?.Any(member => 
-                member.Equals(playerName, StringComparison.OrdinalIgnoreCase) ||
-                member.Equals(playerNameOnly, StringComparison.OrdinalIgnoreCase)) ?? false;
-            if (!isInSyncshell)
-            {
-                return false;
-            }
-            _loadingStates[playerName] = LoadingState.Downloading;
-            if (_recentlySyncedUsers.ContainsKey(playerName))
-            {
-                _pluginLog.Info($"FyteClub: Found {playerName} in syncshell {syncshell.Name} (P2P)");
-                _loadingStates[playerName] = LoadingState.Complete;
-                _playerLastSeen[playerName] = DateTime.UtcNow;
-                return true;
-            }
-            return false;
-        }
+
 
         public async Task<SyncshellInfo> CreateSyncshell(string name)
         {
@@ -1092,6 +1137,10 @@ namespace FyteClub
         private string _newSyncshellName = "";
         private string _inviteCode = "";
         private bool _showBlockList = false;
+        private DateTime _lastCopyTime = DateTime.MinValue;
+        private int _lastCopiedIndex = -1;
+        private bool? _webrtcAvailable = null;
+        private DateTime _lastWebrtcTest = DateTime.MinValue;
 
         public ConfigWindow(FyteClubPlugin plugin) : base("FyteClub - P2P Mod Sharing")
         {
@@ -1164,7 +1213,7 @@ namespace FyteClub
             
             ImGui.Separator();
             ImGui.Text("Join Syncshell:");
-            ImGui.InputText("Invite Code", ref _inviteCode, 500);
+            ImGui.InputText("Invite Code (syncshell://...)", ref _inviteCode, 500);
             
             if (ImGui.Button("Join Syncshell"))
             {
@@ -1177,8 +1226,17 @@ namespace FyteClub
                     {
                         try
                         {
-                            // This would need to be implemented in SyncshellManager
                             _plugin._pluginLog.Info($"Attempting to join via invite code: {capturedCode}");
+                            var success = await _plugin._syncshellManager.JoinSyncshellByInviteCode(capturedCode);
+                            if (success)
+                            {
+                                _plugin._pluginLog.Info("Successfully joined syncshell via invite code");
+                                _plugin.SaveConfiguration();
+                            }
+                            else
+                            {
+                                _plugin._pluginLog.Warning("Failed to join syncshell - invite code may be invalid or expired");
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -1205,11 +1263,62 @@ namespace FyteClub
                 ImGui.Text($"{syncshell.Name} ({syncshell.Members?.Count ?? 0} members)");
                 
                 ImGui.SameLine();
-                if (ImGui.SmallButton($"Share##syncshell_{i}"))
+                
+                // Test WebRTC availability (cached for 30 seconds)
+                if (_webrtcAvailable == null || (DateTime.UtcNow - _lastWebrtcTest).TotalSeconds > 30)
                 {
-                    var shareText = $"{syncshell.Name}:{syncshell.EncryptionKey}";
-                    ImGui.SetClipboardText(shareText);
-                    _plugin._pluginLog.Info($"Copied syncshell info to clipboard: {syncshell.Name}");
+                    try
+                    {
+                        var testConnection = WebRTCConnectionFactory.CreateConnectionAsync().Result;
+                        testConnection.Dispose();
+                        _webrtcAvailable = true;
+                    }
+                    catch
+                    {
+                        _webrtcAvailable = false;
+                    }
+                    _lastWebrtcTest = DateTime.UtcNow;
+                }
+                
+                bool webrtcAvailable = _webrtcAvailable.Value;
+                
+                if (!webrtcAvailable)
+                {
+                    ImGui.BeginDisabled();
+                }
+                
+                if (ImGui.SmallButton($"Copy Invite Code##syncshell_{i}"))
+                {
+                    if (webrtcAvailable)
+                    {
+                        try
+                        {
+                            var inviteCode = _plugin._syncshellManager.GenerateInviteCode(syncshell.Id).Result;
+                            ImGui.SetClipboardText(inviteCode);
+                            _plugin._pluginLog.Info($"Copied invite code to clipboard: {syncshell.Name}");
+                            _lastCopyTime = DateTime.UtcNow;
+                            _lastCopiedIndex = i;
+                        }
+                        catch (Exception ex)
+                        {
+                            _plugin._pluginLog.Error($"Invite code generation failed for {syncshell.Name}: {ex.Message}");
+                        }
+                    }
+                }
+                
+                if (!webrtcAvailable)
+                {
+                    ImGui.EndDisabled();
+                    if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    {
+                        ImGui.SetTooltip("WebRTC not available - P2P connections disabled");
+                    }
+                }
+                
+                if (_lastCopiedIndex == i && (DateTime.UtcNow - _lastCopyTime).TotalSeconds < 2)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(new Vector4(0, 1, 0, 1), "✓ Copied!");
                 }
                 
                 ImGui.SameLine();
