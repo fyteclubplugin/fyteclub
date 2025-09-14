@@ -1,4 +1,4 @@
-# FyteClub v4.2.1 (P2P Development)
+# FyteClub v4.2.2 (P2P Development)
 
 Share FFXIV mods with friends automatically using peer-to-peer technology.
 
@@ -6,13 +6,13 @@ Share FFXIV mods with friends automatically using peer-to-peer technology.
 
 When you're near other players in FFXIV, it syncs your mods directly between players using WebRTC P2P connections. No servers needed - just create or join a syncshell with friends. The plugin detects when you change your mods and shares them automatically.
 
-## New in v4.2.1 (P2P Architecture)
+## New in v4.2.2 (Code Quality & WebRTC Fixes)
 
-- **Peer-to-peer connections**: No servers needed, direct WebRTC between friends
-- **Privacy-first**: Your home IP is never exposed to other players
-- **Syncshells**: Create private friend groups with invite codes
-- **Zero setup**: No port forwarding, no server hosting required
-- **Automatic change detection**: Mods sync when you change them
+- Reduced compiler warnings from 25 to 8
+- Fixed Microsoft.MixedReality.WebRTC integration
+- Consolidated documentation from 40+ files to 9 essential docs
+- Updated build script to include WebRTC dependencies
+- Automated version update process
 
 ## Features
 
@@ -57,10 +57,9 @@ When you're near other players in FFXIV, it syncs your mods directly between pla
 
 ### Plugin (P2P Version)
 1. Install XIVLauncher and Dalamud
-2. Download FyteClub-Plugin.zip from releases
-3. Extract to `%APPDATA%\XIVLauncher\installedPlugins\FyteClub\latest\`
-4. Restart FFXIV
-5. Use `/fyteclub` command in-game
+2. Add experimental repository: `https://raw.githubusercontent.com/fyteclubplugin/fyteclub/main/plugin/repo.json`
+3. Install FyteClub from Dalamud plugin installer
+4. Use `/fyteclub` command in-game
 
 ### No Server Required!
 The P2P version eliminates the need for server setup. Just install the plugin and join syncshells with friends.
@@ -91,29 +90,52 @@ Your mod data is encrypted with AES-256 before being sent anywhere. P2P connecti
 
 ## Development
 
-To build from source:
+### Building from Source
 ```bash
-# Plugin
+# Build plugin
 cd plugin
-dotnet build
+dotnet build -c Release
 
-# Tests
+# Run tests
 cd plugin-tests
 dotnet test
-```
 
-See P2P_ROADMAP.md for development status.
+# Build WebRTC native library (optional)
+build-webrtc-native.bat
 
-## Release
-
-To build P2P release:
-```bash
+# Create release package
 build-p2p-release.bat
 ```
 
+### Project Structure
+- `plugin/` - Main FFXIV plugin (C#)
+- `plugin-tests/` - Unit tests
+- `native/` - WebRTC C++ wrapper
+- `docs/` - Documentation
+- `server/` - Optional server components
+
+### WebRTC Dependencies
+The plugin includes:
+- `Microsoft.MixedReality.WebRTC.dll` - Managed WebRTC library
+- `mrwebrtc.dll` - Native WebRTC runtime
+- `webrtc_native.dll` - Custom native wrapper (optional)
+
+See `docs/` for detailed documentation.
+
+## Documentation
+
+See the `docs/` folder for:
+- Installation guide
+- User guide
+- Architecture overview
+- Build instructions
+- API reference
+- Security details
+- Troubleshooting
+
 ## Support
 
-Check the wiki or open an issue if you run into problems.
+Check the documentation in `docs/` or open an issue if you run into problems.
 
 ## License
 
