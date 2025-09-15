@@ -17,6 +17,9 @@
       "glamourer.api": {
         "type": "Project"
       },
+      "microsoft.mixedreality.webrtc": {
+        "type": "Project"
+      },
       "penumbra.api": {
         "type": "Project"
       }
