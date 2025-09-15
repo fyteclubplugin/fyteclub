@@ -10,6 +10,7 @@ namespace FyteClub
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool SetDllDirectory(string lpPathName);
         private PeerConnection? _peerConnection;
+        private Microsoft.MixedReality.WebRTC.DataChannel? _dataChannel;
         private bool _disposed;
         private bool _isConnected;
         private readonly Dalamud.Plugin.Services.IPluginLog? _pluginLog;
@@ -68,6 +69,19 @@ namespace FyteClub
                 
                 _peerConnection.IceStateChanged += (state) => {
                     _pluginLog?.Debug($"ICE state changed: {state}");
+                    if (state == IceConnectionState.Disconnected || state == IceConnectionState.Failed)
+                    {
+                        _isConnected = false;
+                        OnDisconnected?.Invoke();
+                    }
+                };
+                
+                // Set up data channel for P2P communication
+                _peerConnection.DataChannelAdded += (channel) => {
+                    _dataChannel = channel;
+                    _dataChannel.MessageReceived += (data) => {
+                        OnDataReceived?.Invoke(data);
+                    };
                 };
                 
                 // Initialize peer connection with timeout
@@ -88,44 +102,81 @@ namespace FyteClub
             }
         }
 
-        public Task<string> CreateOfferAsync()
+        public async Task<string> CreateOfferAsync()
         {
             try
             {
-                return Task.FromResult("webrtc-offer-" + Guid.NewGuid().ToString()[..8]);
+                if (_peerConnection == null) return string.Empty;
+                
+                // Create data channel for P2P communication
+                _dataChannel = await _peerConnection.AddDataChannelAsync("data", true, true);
+                _dataChannel.MessageReceived += (data) => {
+                    OnDataReceived?.Invoke(data);
+                };
+                
+                // Use REAL WebRTC offer creation
+                var tcs = new TaskCompletionSource<string>();
+                _peerConnection.LocalSdpReadytoSend += (sdp) => {
+                    if (sdp.Type == SdpMessageType.Offer)
+                    {
+                        tcs.SetResult(sdp.Content);
+                    }
+                };
+                
+                _peerConnection.CreateOffer();
+                return await tcs.Task;
             }
             catch (Exception ex)
             {
                 _pluginLog?.Error($"Create offer failed: {ex.Message}");
-                return Task.FromResult(string.Empty);
+                return string.Empty;
             }
         }
 
-        public Task<string> CreateAnswerAsync(string offerSdp)
+        public async Task<string> CreateAnswerAsync(string offerSdp)
         {
             try
             {
-                return Task.FromResult("webrtc-answer-" + Guid.NewGuid().ToString()[..8]);
+                if (_peerConnection == null) return string.Empty;
+                
+                // Set remote offer first
+                var offer = new SdpMessage { Type = SdpMessageType.Offer, Content = offerSdp };
+                await _peerConnection.SetRemoteDescriptionAsync(offer);
+                
+                // Use REAL WebRTC answer creation
+                var tcs = new TaskCompletionSource<string>();
+                _peerConnection.LocalSdpReadytoSend += (sdp) => {
+                    if (sdp.Type == SdpMessageType.Answer)
+                    {
+                        tcs.SetResult(sdp.Content);
+                    }
+                };
+                
+                _peerConnection.CreateAnswer();
+                return await tcs.Task;
             }
             catch (Exception ex)
             {
                 _pluginLog?.Error($"Create answer failed: {ex.Message}");
-                return Task.FromResult(string.Empty);
+                return string.Empty;
             }
         }
 
-        public Task SetRemoteAnswerAsync(string answerSdp)
+        public async Task SetRemoteAnswerAsync(string answerSdp)
         {
             try
             {
-                _isConnected = true;
-                OnConnected?.Invoke();
-                return Task.CompletedTask;
+                if (_peerConnection == null) return;
+                
+                // Use REAL WebRTC answer processing
+                var answer = new SdpMessage { Type = SdpMessageType.Answer, Content = answerSdp };
+                await _peerConnection.SetRemoteDescriptionAsync(answer);
+                
+                _pluginLog?.Info("WebRTC remote answer set successfully");
             }
             catch (Exception ex)
             {
                 _pluginLog?.Error($"Set remote answer failed: {ex.Message}");
-                return Task.CompletedTask;
             }
         }
 
@@ -133,7 +184,15 @@ namespace FyteClub
         {
             try
             {
-                _pluginLog?.Info($"Sending {data.Length} bytes via WebRTC");
+                if (_dataChannel != null && _isConnected)
+                {
+                    _dataChannel.SendMessage(data);
+                    _pluginLog?.Debug($"Sent {data.Length} bytes via WebRTC data channel");
+                }
+                else
+                {
+                    _pluginLog?.Warning("Cannot send data - no active data channel");
+                }
                 return Task.CompletedTask;
             }
             catch (Exception ex)
@@ -147,6 +206,13 @@ namespace FyteClub
         {
             if (_disposed) return;
 
+            if (_isConnected)
+            {
+                _isConnected = false;
+                OnDisconnected?.Invoke();
+            }
+            
+            _dataChannel = null;
             _peerConnection?.Dispose();
             _disposed = true;
         }
