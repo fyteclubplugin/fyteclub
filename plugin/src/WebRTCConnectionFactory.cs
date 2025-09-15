@@ -1,19 +1,18 @@
 using System;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
+using FyteClub.WebRTC;
 
 namespace FyteClub
 {
     public static class WebRTCConnectionFactory
     {
         private static bool? _nativeAvailable;
-        private static bool _isTestMode;
         private static IPluginLog? _pluginLog;
 
-        public static void Initialize(IPluginLog pluginLog, bool testMode = false)
+        public static void Initialize(IPluginLog pluginLog)
         {
             _pluginLog = pluginLog;
-            _isTestMode = testMode;
         }
 
         public static async Task<IWebRTCConnection> CreateConnectionAsync()
@@ -23,23 +22,32 @@ namespace FyteClub
                 _nativeAvailable = await TestNativeAvailability();
             }
 
-            if (_isTestMode)
+            // Try robust WebRTC first
+            try
             {
-                _pluginLog?.Info("WebRTC: Using MockWebRTCConnection (test mode)");
-                return new MockWebRTCConnection();
+                var robustConnection = new WebRTC.RobustWebRTCConnection(_pluginLog);
+                var robustSuccess = await robustConnection.InitializeAsync();
+                if (robustSuccess)
+                {
+                    _pluginLog?.Info("WebRTC: Using RobustWebRTCConnection with ICE support");
+                    return robustConnection;
+                }
             }
-
+            catch (Exception ex)
+            {
+                _pluginLog?.Warning($"Robust WebRTC failed, falling back: {ex.Message}");
+            }
+            
             if (_nativeAvailable.Value)
             {
-                _pluginLog?.Info("WebRTC: Using LibWebRTCConnection (native)");
+                _pluginLog?.Info("WebRTC: Using LibWebRTCConnection (native fallback)");
                 return new LibWebRTCConnection(_pluginLog);
             }
             else
             {
                 _pluginLog?.Error("CRITICAL: WebRTC native library not available. P2P features disabled.");
                 _pluginLog?.Error("Please ensure Visual C++ Redistributable is installed.");
-                _pluginLog?.Info("WebRTC: Falling back to MockWebRTCConnection (limited functionality)");
-                return new MockWebRTCConnection();
+                throw new InvalidOperationException("WebRTC native library not available. Cannot create P2P connections.");
             }
         }
 

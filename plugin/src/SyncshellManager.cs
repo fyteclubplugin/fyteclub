@@ -209,7 +209,14 @@ namespace FyteClub
                 _webrtcConnections[syncshellId + "_host"] = connection;
                 
                 var offer = await connection.CreateOfferAsync();
-                return $"{syncshell.Name}:{syncshell.EncryptionKey}:{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(offer))}";
+                
+                // Add host info to bootstrap P2P connection
+                var hostInfo = new { host = "Host" }; // Just enough to identify host
+                var hostJson = System.Text.Json.JsonSerializer.Serialize(hostInfo);
+                var hostBytes = System.Text.Encoding.UTF8.GetBytes(hostJson);
+                var encodedHost = Convert.ToBase64String(hostBytes);
+                
+                return $"{syncshell.Name}:{syncshell.EncryptionKey}:{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(offer))}:{encodedHost}";
             }
             catch (Exception ex)
             {
@@ -253,9 +260,7 @@ namespace FyteClub
                 Console.WriteLine($"Initiated P2P connection to {peerAddress} in {syncshellId}");
                 SecureLogger.LogInfo("Initiated P2P connection to peer {0} in syncshell {1}", peerAddress, syncshellId);
                 
-                // Simulate successful connection for testing
-                await Task.Delay(1000);
-                // Connection established - the OnConnected event will be triggered by the WebRTC implementation
+                // Real WebRTC connection will trigger OnConnected when ready
                 
                 return true;
             }
@@ -328,33 +333,61 @@ namespace FyteClub
 
         public async Task SendModData(string syncshellId, string modData)
         {
-            // Send to all connections for this syncshell
-            var sent = false;
             var tasks = new List<Task>();
             
+            Console.WriteLine($"SendModData called for {syncshellId}, checking {_webrtcConnections.Count} connections");
+            
+            // Try exact match first
+            if (_webrtcConnections.TryGetValue(syncshellId, out var exactConnection))
+            {
+                Console.WriteLine($"Found exact connection match: {syncshellId}, IsConnected: {exactConnection.IsConnected}");
+                try
+                {
+                    var data = Encoding.UTF8.GetBytes(modData);
+                    await exactConnection.SendDataAsync(data);
+                    Console.WriteLine($"Successfully sent {data.Length} bytes to exact match {syncshellId}");
+                    return; // Success, no need to check other connections
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to send data to exact match {syncshellId}: {ex.Message}");
+                }
+            }
+            
+            // Fallback to pattern matching
             foreach (var kvp in _webrtcConnections)
             {
-                if (kvp.Key.StartsWith(syncshellId))
+                Console.WriteLine($"Checking connection: {kvp.Key}");
+                if (kvp.Key.StartsWith(syncshellId) || kvp.Key.Contains(syncshellId))
                 {
                     var connection = kvp.Value;
-                    if (connection.IsConnected)
+                    Console.WriteLine($"Found matching connection {kvp.Key}, IsConnected: {connection.IsConnected}");
+                    
+                    try
                     {
                         var data = Encoding.UTF8.GetBytes(modData);
-                        tasks.Add(connection.SendDataAsync(data));
-                        Console.WriteLine($"Sending mod data to {kvp.Key}: {data.Length} bytes");
-                        sent = true;
+                        await connection.SendDataAsync(data);
+                        Console.WriteLine($"Successfully sent {data.Length} bytes to {kvp.Key}");
+                        return; // Success, no need to continue
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to send data to {kvp.Key}: {ex.Message}");
                     }
                 }
             }
             
-            if (tasks.Count > 0)
+            if (_webrtcConnections.Count == 0)
             {
-                await Task.WhenAll(tasks);
-                Console.WriteLine($"Sent mod data to {tasks.Count} P2P connections for syncshell {syncshellId}");
+                Console.WriteLine($"No WebRTC connections available for {syncshellId}");
             }
             else
             {
-                Console.WriteLine($"No active P2P connections found for syncshell {syncshellId}");
+                Console.WriteLine($"No matching connections found for {syncshellId} among {_webrtcConnections.Count} connections");
+                foreach (var key in _webrtcConnections.Keys)
+                {
+                    Console.WriteLine($"  Available connection: {key}");
+                }
             }
         }
 
@@ -390,6 +423,7 @@ namespace FyteClub
             {
                 var modData = Encoding.UTF8.GetString(data);
                 SecureLogger.LogInfo("Received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
+                Console.WriteLine($"HandleModData: Received {data.Length} bytes from {syncshellId}: {modData}");
                 
                 var parsedData = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(modData);
                 if (parsedData != null)
@@ -397,13 +431,36 @@ namespace FyteClub
                     // Handle different message types
                     if (parsedData.TryGetValue("type", out var typeObj) && typeObj?.ToString() == "member_list_request")
                     {
+                        Console.WriteLine($"HandleModData: Processing member_list_request");
                         HandleMemberListRequest(syncshellId, parsedData);
                         return;
                     }
                     
                     if (parsedData.TryGetValue("type", out var typeObj2) && typeObj2?.ToString() == "member_list_response")
                     {
+                        Console.WriteLine($"HandleModData: Processing member_list_response");
                         HandleMemberListResponse(syncshellId, parsedData);
+                        return;
+                    }
+                    
+                    if (parsedData.TryGetValue("type", out var typeObj3) && typeObj3?.ToString() == "phonebook_request")
+                    {
+                        Console.WriteLine($"HandleModData: Processing phonebook_request");
+                        HandlePhonebookRequest(syncshellId, parsedData);
+                        return;
+                    }
+                    
+                    if (parsedData.TryGetValue("type", out var typeObj4) && typeObj4?.ToString() == "mod_sync_request")
+                    {
+                        Console.WriteLine($"HandleModData: Processing mod_sync_request");
+                        HandleModSyncRequest(syncshellId, parsedData);
+                        return;
+                    }
+                    
+                    if (parsedData.TryGetValue("type", out var typeObj5) && typeObj5?.ToString() == "client_ready")
+                    {
+                        Console.WriteLine($"HandleModData: Processing client_ready");
+                        HandleClientReady(syncshellId, parsedData);
                         return;
                     }
                     
@@ -422,6 +479,7 @@ namespace FyteClub
             catch (Exception ex)
             {
                 SecureLogger.LogError("Failed to handle received mod data: {0}", ex.Message);
+                Console.WriteLine($"HandleModData: Error processing data: {ex.Message}");
             }
         }
         
@@ -452,6 +510,7 @@ namespace FyteClub
             try
             {
                 SecureLogger.LogInfo("Host handling member list request for syncshell {0}", syncshellId);
+                Console.WriteLine($"Host: Received member list request for {syncshellId}");
                 
                 var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
                 if (syncshell != null && syncshell.IsOwner)
@@ -459,15 +518,21 @@ namespace FyteClub
                     // Add the requesting member to our list if not already present
                     if (syncshell.Members == null) syncshell.Members = new List<string>();
                     
-                    // Add new member if this is a new connection
-                    var memberCount = syncshell.Members.Count(m => m.StartsWith("Member"));
-                    var newMemberName = "Member" + (memberCount + 1);
-                    
-                    if (!syncshell.Members.Contains(newMemberName))
+                    // Extract actual player name from request if available
+                    var playerName = "Unknown Player";
+                    if (requestData.TryGetValue("playerName", out var playerNameObj))
                     {
-                        syncshell.Members.Add(newMemberName);
-                        SecureLogger.LogInfo("Host added new member {0} to syncshell {1}", newMemberName, syncshellId);
-                        Console.WriteLine($"Host: New member {newMemberName} joined syncshell {syncshellId}");
+                        var fullPlayerName = playerNameObj.ToString() ?? "Unknown Player";
+                        // Extract just the character name (before @)
+                        playerName = fullPlayerName.Split('@')[0];
+                        Console.WriteLine($"Host: Extracted player name: {playerName} from {fullPlayerName}");
+                    }
+                    
+                    if (!syncshell.Members.Contains(playerName) && playerName != "Unknown Player")
+                    {
+                        syncshell.Members.Add(playerName);
+                        SecureLogger.LogInfo("Host added new member {0} to syncshell {1}", playerName, syncshellId);
+                        Console.WriteLine($"Host: New member {playerName} joined syncshell {syncshellId}");
                     }
                     
                     // Send member list response
@@ -480,14 +545,20 @@ namespace FyteClub
                     };
                     
                     var json = System.Text.Json.JsonSerializer.Serialize(responseData);
+                    Console.WriteLine($"Host: Sending member list response: {json}");
                     await SendModData(syncshellId, json);
                     
-                    Console.WriteLine($"Host sent member list response: {syncshell.Members.Count} members");
+                    Console.WriteLine($"Host sent member list response: {syncshell.Members.Count} members - {string.Join(", ", syncshell.Members)}");
+                }
+                else
+                {
+                    Console.WriteLine($"Host: No syncshell found or not owner for {syncshellId}");
                 }
             }
             catch (Exception ex)
             {
                 SecureLogger.LogError("Failed to handle member list request: {0}", ex.Message);
+                Console.WriteLine($"Host: Failed to handle member list request: {ex.Message}");
             }
         }
         
@@ -515,6 +586,7 @@ namespace FyteClub
                             }
                             
                             SecureLogger.LogInfo("Updated member list for syncshell {0}: {1} members", syncshellId, syncshell.Members.Count);
+                            Console.WriteLine($"Client: Received member list with {syncshell.Members.Count} members: {string.Join(", ", syncshell.Members)}");
                         }
                     }
                 }
@@ -531,8 +603,8 @@ namespace FyteClub
         {
             try
             {
-                // Parse invite code format: "name:password" or "name:password:offer"
-                var parts = inviteCode.Split(':', 3);
+                // Parse invite code format: "name:password:offer:members"
+                var parts = inviteCode.Split(':', 4);
                 if (parts.Length < 2)
                 {
                     SecureLogger.LogError("Invalid invite code format");
@@ -542,6 +614,7 @@ namespace FyteClub
                 var name = parts[0];
                 var password = parts[1];
                 var offerBase64 = parts.Length > 2 ? parts[2] : null;
+                var hostBase64 = parts.Length > 3 ? parts[3] : null;
                 
                 // Check if already in this syncshell
                 var identity = new SyncshellIdentity(name, password);
@@ -554,18 +627,56 @@ namespace FyteClub
                 }
                 
                 var success = JoinSyncshell(name, password);
-                if (success && !string.IsNullOrEmpty(offerBase64))
+                if (success)
                 {
-                    // Process WebRTC offer from invite
-                    try
+                    // Process host info from invite to bootstrap P2P
+                    if (!string.IsNullOrEmpty(hostBase64))
                     {
-                        var offer = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(offerBase64));
-                        await ProcessWebRTCOffer(syncshellId, offer);
-                        SecureLogger.LogInfo("Processed WebRTC offer from invite for syncshell {0}", syncshellId);
+                        try
+                        {
+                            var hostJson = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(hostBase64));
+                            var hostData = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(hostJson);
+                            if (hostData?.TryGetValue("host", out var hostObj) == true)
+                            {
+                                // Bootstrap: Add host to member list so proximity detection works
+                                var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+                                if (syncshell != null)
+                                {
+                                    if (syncshell.Members == null) syncshell.Members = new List<string>();
+                                    if (!syncshell.Members.Contains("Host")) syncshell.Members.Add("Host");
+                                    SecureLogger.LogInfo("Added host to member list for P2P bootstrap");
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            SecureLogger.LogError("Failed to process host info from invite: {0}", ex.Message);
+                        }
                     }
-                    catch (Exception ex)
+                    
+                    // Process WebRTC offer from invite
+                    Console.WriteLine($"DEBUG: offerBase64 is null or empty: {string.IsNullOrEmpty(offerBase64)}");
+                    if (!string.IsNullOrEmpty(offerBase64))
                     {
-                        SecureLogger.LogError("Failed to process WebRTC offer: {0}", ex.Message);
+                        try
+                        {
+                            Console.WriteLine($"DEBUG: About to decode offer from invite code");
+                            var offer = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(offerBase64));
+                            Console.WriteLine($"DEBUG: Decoded offer, length: {offer.Length}");
+                            Console.WriteLine($"DEBUG: About to call ProcessWebRTCOffer");
+                            await ProcessWebRTCOffer(syncshellId, offer);
+                            Console.WriteLine($"DEBUG: ProcessWebRTCOffer completed");
+                            SecureLogger.LogInfo("Processed WebRTC offer from invite for syncshell {0}", syncshellId);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"DEBUG: Exception in ProcessWebRTCOffer: {ex.Message}");
+                            SecureLogger.LogError("Failed to process WebRTC offer: {0}", ex.Message);
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"DEBUG: No offer in invite code - skipping ProcessWebRTCOffer");
                     }
                 }
                 
@@ -765,8 +876,7 @@ namespace FyteClub
                     }
                     _syncshellConnectionRegistry[syncshellId].Add(hostConnectionKey);
                     
-                    // Start listening for incoming connections
-                    _ = Task.Run(() => SimulateHostListening(syncshellId, hostConnection));
+                    // Host connection ready for P2P
                     
                     SecureLogger.LogInfo("Syncshell {0} initialized as host with {1} members", syncshellId, syncshell.Members.Count);
                 }
@@ -781,64 +891,8 @@ namespace FyteClub
         {
             try
             {
-                SecureLogger.LogInfo("Establishing initial P2P connection for syncshell {0}", syncshellId);
-                
-                // Create WebRTC connection
-                var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
-                await connection.InitializeAsync();
-                
-                connection.OnDataReceived += data => HandleModData(syncshellId, data);
-                connection.OnConnected += () => {
-                    Console.WriteLine($"P2P connection established for {syncshellId}");
-                    SecureLogger.LogInfo("P2P connection established for syncshell {0}", syncshellId);
-                };
-                connection.OnDisconnected += () => {
-                    Console.WriteLine($"P2P connection lost for {syncshellId}");
-                    _webrtcConnections.Remove(syncshellId + "_client");
-                };
-                
-                // Create WebRTC offer for joining
-                var offer = await connection.CreateOfferAsync();
-                SecureLogger.LogInfo("Created WebRTC offer for syncshell {0}", syncshellId);
-                
-                // Store the connection
-                var connectionKey = syncshellId + "_client";
-                _webrtcConnections[connectionKey] = connection;
-                
-                // Register this connection attempt
-                if (!_syncshellConnectionRegistry.ContainsKey(syncshellId))
-                {
-                    _syncshellConnectionRegistry[syncshellId] = new List<string>();
-                }
-                _syncshellConnectionRegistry[syncshellId].Add(connectionKey);
-                
-                // For proximity-based P2P, we need real SDP exchange
-                // Create offer and wait for host to respond
-                var clientOffer = await connection.CreateOfferAsync();
-                SecureLogger.LogInfo("Client created WebRTC offer for syncshell {0}", syncshellId);
-                
-                // In a real implementation, this would be sent to host via signaling
-                // For now, simulate the exchange by finding host connection
-                var hostConnectionKey = syncshellId + "_host";
-                if (_webrtcConnections.TryGetValue(hostConnectionKey, out var hostConnection))
-                {
-                    try
-                    {
-                        var answer = await hostConnection.CreateAnswerAsync(clientOffer);
-                        await connection.SetRemoteAnswerAsync(answer);
-                        SecureLogger.LogInfo("P2P SDP exchange completed for syncshell {0}", syncshellId);
-                    }
-                    catch (Exception ex)
-                    {
-                        SecureLogger.LogError("P2P SDP exchange failed for syncshell {0}: {1}", syncshellId, ex.Message);
-                    }
-                }
-                else
-                {
-                    SecureLogger.LogWarning("No host connection found for syncshell {0}", syncshellId);
-                }
-                
-                SecureLogger.LogInfo("P2P connection handshake completed for syncshell {0}", syncshellId);
+                SecureLogger.LogInfo("Initial P2P connection will be handled by ProcessWebRTCOffer for syncshell {0}", syncshellId);
+                // Connection will be created in ProcessWebRTCOffer when processing the invite code
                 return true;
             }
             catch (Exception ex)
@@ -848,108 +902,44 @@ namespace FyteClub
             }
         }
         
-        public async Task RequestMemberListSync(string syncshellId)
+        public async Task RequestMemberListSync(string syncshellId, string? playerName = null)
         {
             try
             {
                 SecureLogger.LogInfo("Requesting member list sync for syncshell {0}", syncshellId);
+                Console.WriteLine($"Client: Requesting member list sync for {syncshellId} with player {playerName}");
                 
-                // Send member list request via P2P
+                // Send member list request via P2P with player name
                 var requestData = new
                 {
                     type = "member_list_request",
                     syncshellId = syncshellId,
+                    playerName = playerName ?? "Unknown Player",
                     timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                 };
                 
                 var json = System.Text.Json.JsonSerializer.Serialize(requestData);
+                Console.WriteLine($"Client: Sending member list request: {json}");
                 await SendModData(syncshellId, json);
                 
-                // Simulate receiving member list response after delay
-                _ = Task.Delay(1000).ContinueWith(_ => SimulateMemberListResponse(syncshellId));
+                // Real P2P will handle member list sync
             }
             catch (Exception ex)
             {
                 SecureLogger.LogError("Failed to request member list sync for syncshell {0}: {1}", syncshellId, ex.Message);
+                Console.WriteLine($"Client: Failed to request member list sync: {ex.Message}");
             }
         }
         
-        private Task SimulateMemberListResponse(string syncshellId)
-        {
-            try
-            {
-                var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
-                if (syncshell != null && !syncshell.IsOwner)
-                {
-                    // Only simulate for clients, not hosts
-                    if (syncshell.Members == null) syncshell.Members = new List<string>();
-                    
-                    // Clear and rebuild member list from host response
-                    syncshell.Members.Clear();
-                    syncshell.Members.Add("Host");
-                    syncshell.Members.Add("You");
-                    
-                    SecureLogger.LogInfo("Client received member list for syncshell {0}: {1} members", syncshellId, syncshell.Members.Count);
-                    Console.WriteLine($"Client: Member list sync completed for {syncshellId}: {syncshell.Members.Count} members");
-                }
-            }
-            catch (Exception ex)
-            {
-                SecureLogger.LogError("Failed to simulate member list response: {0}", ex.Message);
-            }
-            return Task.CompletedTask;
-        }
+
         
-        private async Task SimulateHostListening(string syncshellId, IWebRTCConnection hostConnection)
-        {
-            try
-            {
-                SecureLogger.LogInfo("Host listening for P2P connections on syncshell {0}", syncshellId);
-                
-                // Wait for incoming connection attempts
-                await Task.Delay(3000);
-                
-                // Check if there are any client connections to this syncshell
-                var syncshellConnections = _syncshellConnectionRegistry.GetValueOrDefault(syncshellId, new List<string>());
-                var hasClientConnections = syncshellConnections.Any(k => k.Contains("_client"));
-                
-                Console.WriteLine($"Host: Checking for client connections - found {syncshellConnections.Count} total connections, {syncshellConnections.Count(k => k.Contains("_client"))} clients");
-                
-                if (hasClientConnections)
-                {
-                    // Simulate host accepting the connection
-                    var offer = await hostConnection.CreateOfferAsync();
-                    var answer = await hostConnection.CreateAnswerAsync(offer);
-                    
-                    SecureLogger.LogInfo("Host accepted P2P connection for syncshell {0}", syncshellId);
-                    Console.WriteLine($"Host: Accepted P2P connection for {syncshellId}");
-                    
-                    // Update host member list
-                    var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
-                    if (syncshell != null && syncshell.IsOwner)
-                    {
-                        if (!syncshell.Members.Any(m => m.StartsWith("Member")))
-                        {
-                            syncshell.Members.Add("Member1");
-                            Console.WriteLine($"Host: Added Member1 to syncshell {syncshellId}");
-                        }
-                    }
-                }
-                else
-                {
-                    Console.WriteLine($"Host: No client connections detected for {syncshellId}");
-                }
-            }
-            catch (Exception ex)
-            {
-                SecureLogger.LogError("Host listening simulation failed: {0}", ex.Message);
-            }
-        }
+
         
         private async Task ProcessWebRTCOffer(string syncshellId, string offer)
         {
             try
             {
+                Console.WriteLine($"ProcessWebRTCOffer: Creating connection for {syncshellId}");
                 var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                 await connection.InitializeAsync();
                 
@@ -959,21 +949,138 @@ namespace FyteClub
                     SecureLogger.LogInfo("WebRTC connected to host for syncshell {0}", syncshellId);
                 };
                 
+                Console.WriteLine($"ProcessWebRTCOffer: Processing offer for {syncshellId}");
                 var answer = await connection.CreateAnswerAsync(offer);
+                Console.WriteLine($"ProcessWebRTCOffer: Answer created, length: {answer.Length}");
                 
-                // Answer will be manually exchanged back to host
-                Console.WriteLine($"Generated WebRTC answer for {syncshellId} - send back to host manually");
-                
+                // Store connection with multiple keys for easier lookup
                 _webrtcConnections[syncshellId + "_client"] = connection;
+                _webrtcConnections[syncshellId] = connection; // Also store with just syncshell ID
+                Console.WriteLine($"ProcessWebRTC: Stored connection as {syncshellId}_client and {syncshellId}");
                 
-                SecureLogger.LogInfo("Sent WebRTC answer via UDP broadcast for syncshell {0}", syncshellId);
+                // For simplified P2P implementation, automatically send answer back to host
+                Console.WriteLine($"ProcessWebRTCOffer: Looking for host connection to send answer");
+                var hostConnectionKey = syncshellId + "_host";
+                if (_webrtcConnections.TryGetValue(hostConnectionKey, out var hostConnection))
+                {
+                    Console.WriteLine($"ProcessWebRTCOffer: Found host connection, sending answer");
+                    await hostConnection.SetRemoteAnswerAsync(answer);
+                    Console.WriteLine($"ProcessWebRTCOffer: Answer sent to host - handshake should complete");
+                }
+                else
+                {
+                    Console.WriteLine($"ProcessWebRTCOffer: Host connection not found - this is expected for cross-machine P2P");
+                    // In a real P2P system, the answer would be sent through a signaling server
+                }
+                
+                SecureLogger.LogInfo("WebRTC answer created for syncshell {0}", syncshellId);
             }
             catch (Exception ex)
             {
                 SecureLogger.LogError("Failed to process WebRTC offer for syncshell {0}: {1}", syncshellId, ex.Message);
+                Console.WriteLine($"ProcessWebRTCOffer: Error - {ex.Message}");
             }
         }
         
+        public void DisconnectFromPeer(string syncshellId, string peerId)
+        {
+            var connectionKey = $"{syncshellId}_{peerId}";
+            if (_webrtcConnections.TryGetValue(connectionKey, out var connection))
+            {
+                connection.Dispose();
+                _webrtcConnections.Remove(connectionKey);
+                SecureLogger.LogInfo("Disconnected from peer {0} in syncshell {1}", peerId, syncshellId);
+            }
+        }
+        
+        public void DisconnectFromSyncshell(string syncshellId)
+        {
+            var keysToRemove = _webrtcConnections.Keys.Where(k => k.StartsWith(syncshellId)).ToList();
+            foreach (var key in keysToRemove)
+            {
+                _webrtcConnections[key].Dispose();
+                _webrtcConnections.Remove(key);
+            }
+            SecureLogger.LogInfo("Disconnected all peers from syncshell {0}", syncshellId);
+        }
+        
+        private void HandlePhonebookRequest(string syncshellId, Dictionary<string, object> requestData)
+        {
+            try
+            {
+                Console.WriteLine($"Host: Received phonebook request for {syncshellId}");
+                
+                if (_sessions.TryGetValue(syncshellId, out var session) && session.Phonebook != null)
+                {
+                    var phonebookData = new
+                    {
+                        type = "phonebook_response",
+                        syncshellId = syncshellId,
+                        members = new List<object>(), // Simplified phonebook response
+                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    };
+                    
+                    var json = System.Text.Json.JsonSerializer.Serialize(phonebookData);
+                    _ = SendModData(syncshellId, json);
+                    Console.WriteLine($"Host: Sent phonebook response");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Host: Failed to handle phonebook request: {ex.Message}");
+            }
+        }
+        
+        private void HandleModSyncRequest(string syncshellId, Dictionary<string, object> requestData)
+        {
+            try
+            {
+                Console.WriteLine($"Host: Received mod sync request for {syncshellId}");
+                
+                // Send current mod data for all known players
+                foreach (var playerData in _playerModData.Values)
+                {
+                    var modSyncData = new
+                    {
+                        type = "mod_sync_response",
+                        syncshellId = syncshellId,
+                        playerId = playerData.PlayerName,
+                        componentData = playerData.ComponentData,
+                        recipeData = playerData.RecipeData,
+                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    };
+                    
+                    var json = System.Text.Json.JsonSerializer.Serialize(modSyncData);
+                    _ = SendModData(syncshellId, json);
+                }
+                
+                Console.WriteLine($"Host: Sent mod sync response for {_playerModData.Count} players");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Host: Failed to handle mod sync request: {ex.Message}");
+            }
+        }
+        
+        private void HandleClientReady(string syncshellId, Dictionary<string, object> requestData)
+        {
+            try
+            {
+                Console.WriteLine($"Host: Client ready signal received for {syncshellId}");
+                
+                // Client is fully onboarded and ready for mod sharing
+                var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+                if (syncshell != null)
+                {
+                    Console.WriteLine($"Host: Client onboarding complete for {syncshellId}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Host: Failed to handle client ready: {ex.Message}");
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed) return;

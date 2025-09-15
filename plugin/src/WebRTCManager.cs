@@ -109,37 +109,12 @@ namespace FyteClub
 
         public async Task<RTCSessionDescription> CreateOffer()
         {
-            // Simulate WebRTC offer creation like JS sample
-            await Task.Delay(100);
-            
-            var offer = new RTCSessionDescription
-            {
-                Type = "offer",
-                Sdp = GenerateMockSDP("offer")
-            };
-            
-            // Auto set local description like JS sample
-            await SetLocalDescription(offer);
-            return offer;
+            throw new NotImplementedException("WebRTCPeer is deprecated. Use LibWebRTCConnection instead.");
         }
 
         public async Task<RTCSessionDescription> CreateAnswer(RTCSessionDescription offer)
         {
-            // Set remote description first like JS sample
-            await SetRemoteDescription(offer);
-            
-            // Simulate WebRTC answer creation
-            await Task.Delay(100);
-            
-            var answer = new RTCSessionDescription
-            {
-                Type = "answer", 
-                Sdp = GenerateMockSDP("answer")
-            };
-            
-            // Auto set local description like JS sample
-            await SetLocalDescription(answer);
-            return answer;
+            throw new NotImplementedException("WebRTCPeer is deprecated. Use LibWebRTCConnection instead.");
         }
 
         public async Task SetRemoteDescription(RTCSessionDescription description)
@@ -170,10 +145,7 @@ namespace FyteClub
             }
         }
 
-        private string GenerateMockSDP(string type)
-        {
-            return $"v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na={type}\r\n";
-        }
+
 
         public void Dispose()
         {

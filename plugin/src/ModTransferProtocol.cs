@@ -65,24 +65,22 @@ namespace FyteClub
 
         public async Task<bool> CheckProximityAndSync(PlayerInfo player, float maxRange)
         {
-            await Task.Delay(10);
             var distance = _playerPosition.Distance(player.Position);
             return distance <= maxRange;
         }
 
         public async Task<bool> CompareModHashes(ModCollection local, ModCollection remote)
         {
-            await Task.Delay(10);
             return local.Hash != remote.Hash;
         }
 
         public async Task<TransferResult> TransferModData(ModData modData, DataChannel channel)
         {
-            await Task.Delay(10);
             if (channel.State != DataChannelState.Open)
                 return new TransferResult { Success = false };
 
-            var encrypted = new byte[modData.Content.Length + 16]; // Simulate encryption
+            // Real encryption would go here
+            var encrypted = modData.Content; // Placeholder - real encryption needed
             return new TransferResult { Success = true, EncryptedData = encrypted };
         }
 
@@ -94,7 +92,6 @@ namespace FyteClub
 
         public async Task<RateLimitResult> RequestTransfer(string peerId, string modId)
         {
-            await Task.Delay(10);
             var now = DateTime.Now;
             
             var requests = _rateLimits.Count(kvp => kvp.Key.StartsWith(peerId) && 
@@ -120,14 +117,12 @@ namespace FyteClub
 
         public async Task SimulateFileChange(string filePath)
         {
-            await Task.Delay(10);
             if (_watchedFiles.Contains(filePath))
                 _pendingChanges.Add(filePath);
         }
 
         public async Task<List<string>> GetPendingChanges()
         {
-            await Task.Delay(10);
             return new List<string>(_pendingChanges);
         }
     }
@@ -136,7 +131,6 @@ namespace FyteClub
     {
         public async Task<ModData> ResolveConflict(ModData local, ModData remote)
         {
-            await Task.Delay(10);
             
             if (remote.Version > local.Version)
                 return remote;

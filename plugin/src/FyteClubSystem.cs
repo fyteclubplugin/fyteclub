@@ -94,10 +94,7 @@ namespace FyteClub
             return shell;
         }
 
-        public void SimulatePlayerProximity(string playerName, Vector3 position)
-        {
-            // Simulate player within 50m range
-        }
+
 
         public async Task<bool> CheckAndSync()
         {
@@ -106,10 +103,7 @@ namespace FyteClub
             return await _modTransfer.CheckProximityAndSync(nearbyPlayer, 50.0f);
         }
 
-        public void SimulateNetworkFailure()
-        {
-            _networkFailure = true;
-        }
+
 
         public async Task<bool> AttemptRecovery()
         {
@@ -136,10 +130,7 @@ namespace FyteClub
             return _ui;
         }
 
-        public void SimulateTokenExpiry(string syncshellId)
-        {
-            _expiredTokens[syncshellId] = true;
-        }
+
 
         public async Task<bool> AttemptReconnect(string syncshellId)
         {
@@ -147,11 +138,7 @@ namespace FyteClub
             return !_expiredTokens.ContainsKey(syncshellId);
         }
 
-        public async Task SimulateActivity(string syncshellId, int durationMs)
-        {
-            await Task.Delay(10);
-            await _performanceMonitor.RecordLatency("peer1", durationMs);
-        }
+
 
         public async Task<PerformanceMetrics> GetPerformanceMetrics()
         {

@@ -80,7 +80,7 @@ namespace FyteClub
             // For now, return success to test the pipeline
             
             pluginLog.Information($"FyteClub: Would apply mod via Penumbra");
-            await Task.Delay(100); // Simulate processing time
+            // Real Penumbra integration would go here
             return true;
         }
 

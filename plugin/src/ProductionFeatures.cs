@@ -15,7 +15,7 @@ namespace FyteClub
     {
         public async Task<ErrorRecoveryResult> HandleConnectionError(Exception exception)
         {
-            await Task.Delay(10); // Simulate recovery time
+            // Real error recovery would go here
             return new ErrorRecoveryResult { Recovered = true, Message = "Connection restored" };
         }
     }
@@ -100,7 +100,7 @@ namespace FyteClub
     {
         public async Task<bool> AttemptRecovery(WebRTCConnection connection)
         {
-            await Task.Delay(10); // Simulate recovery attempt
+            // Real recovery attempt would go here
             return true;
         }
     }

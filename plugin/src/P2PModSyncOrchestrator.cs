@@ -238,8 +238,7 @@ namespace FyteClub
 
                 // TODO: Implement P2P component request protocol
                 // This would use the WebRTC data channel to request specific components
-                // For now, simulate the request
-                await Task.Delay(100);
+                // TODO: Implement real P2P component request protocol
 
                 session.Status = SyncSessionStatus.Transferring;
                 _pluginLog.Debug($"[P2PModSync] Component transfer started for session {session.SessionId}");

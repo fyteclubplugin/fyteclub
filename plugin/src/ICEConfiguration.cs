@@ -47,7 +47,7 @@ namespace FyteClub
         private readonly ICEConfiguration _iceConfig;
         private ConnectionState _connectionState = ConnectionState.New;
         private TimeSpan _connectionTimeout = TimeSpan.FromSeconds(30);
-        private bool _stunFailureSimulated = false;
+
 
         public WebRTCConnection() : this(new ICEConfiguration()) { }
 
@@ -99,12 +99,9 @@ namespace FyteClub
             await Task.Delay(50);
             var candidates = new List<ICECandidate>();
             
-            if (!_stunFailureSimulated)
-            {
-                candidates.Add(new ICECandidate { Type = CandidateType.ServerReflexive });
-            }
+            candidates.Add(new ICECandidate { Type = CandidateType.ServerReflexive });
             
-            if (_iceConfig.EnableTURNFallback || _stunFailureSimulated)
+            if (_iceConfig.EnableTURNFallback)
             {
                 candidates.Add(new ICECandidate { Type = CandidateType.Relay });
             }
@@ -112,10 +109,7 @@ namespace FyteClub
             return candidates;
         }
 
-        public void SimulateSTUNFailure()
-        {
-            _stunFailureSimulated = true;
-        }
+
 
         public void SetConnectionTimeout(TimeSpan timeout)
         {
@@ -174,8 +168,7 @@ namespace FyteClub
     public class NATTraversal
     {
         private readonly ICEConfiguration _config;
-        public bool SimulateSTUNFailure { get; set; }
-        public bool SimulateTURNFailure { get; set; }
+
 
         public NATTraversal(ICEConfiguration config)
         {
@@ -186,12 +179,12 @@ namespace FyteClub
         {
             await Task.Delay(10);
             
-            if (!SimulateSTUNFailure)
+            if (_config.STUNServers.Count > 0)
             {
                 return new NATTraversalResult { Success = true, Method = NATTraversalMethod.STUN };
             }
             
-            if (_config.TURNServers.Count > 0 && !SimulateTURNFailure)
+            if (_config.TURNServers.Count > 0)
             {
                 return new NATTraversalResult { Success = true, Method = NATTraversalMethod.TURN };
             }

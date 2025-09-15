@@ -38,8 +38,8 @@ namespace FyteClub
                 
                 _pluginLog.Information($"FyteClub: Requesting redraw for {playerId} - {reason}");
                 
-                // Simulate redraw coordination
-                await Task.Delay(50); // Small delay to batch redraws
+                // Batch redraws with small delay
+                await Task.Delay(50);
                 
                 _mediator.Publish(new RedrawRequestedMessage 
                 { 

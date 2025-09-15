@@ -67,23 +67,8 @@ namespace FyteClub
                 var json = File.ReadAllText(filePath);
                 var phonebook = JsonSerializer.Deserialize<SignedPhonebook>(json);
                 
-                if (phonebook != null)
-                {
-                    // Clean up expired entries (24 hour TTL)
-                    var cutoff = DateTime.UtcNow.AddHours(-24);
-                    var expiredMembers = phonebook.Members.Where(kvp => kvp.Value.LastSeen < cutoff).ToList();
-                    
-                    foreach (var expired in expiredMembers)
-                    {
-                        phonebook.Members.Remove(expired.Key);
-                    }
-                    
-                    if (expiredMembers.Count > 0)
-                    {
-                        SecureLogger.LogInfo("Cleaned up {0} expired phonebook entries", expiredMembers.Count);
-                        SavePhonebook(syncshellId, phonebook); // Save cleaned phonebook
-                    }
-                }
+                // Phonebook entries persist until explicitly deleted by inviters/owners
+                // No automatic expiration - deletion requires signed authorization
                 
                 return phonebook;
             }

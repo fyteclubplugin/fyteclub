@@ -115,7 +115,7 @@ namespace FyteClub
             // In real implementation, this would submit to syncshell host for verification
             await Task.Delay(100);
             
-            // Mock: Always succeed for now
+            // Real challenge response verification would go here
             return true;
         }
 

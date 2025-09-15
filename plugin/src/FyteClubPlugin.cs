@@ -41,6 +41,7 @@ namespace FyteClub
         private readonly FyteClubModIntegration _modSystemIntegration;
         private readonly FyteClubRedrawCoordinator _redrawCoordinator;
         private readonly SafeModIntegration _safeModIntegration;
+        private readonly P2PModSyncOrchestrator _modSyncOrchestrator;
         public readonly SyncshellManager _syncshellManager;
 
         private readonly CancellationTokenSource _cancellationTokenSource = new();
@@ -103,7 +104,7 @@ namespace FyteClub
 
             // Initialize WebRTC factory
             LibWebRTCConnection.PluginDirectory = pluginInterface.AssemblyLocation.Directory?.FullName;
-            WebRTCConnectionFactory.Initialize(pluginLog, testMode: false);
+            WebRTCConnectionFactory.Initialize(pluginLog);
 
             // Initialize services
             _modSystemIntegration = new FyteClubModIntegration(pluginInterface, pluginLog, objectTable, framework);
@@ -111,6 +112,11 @@ namespace FyteClub
             _redrawCoordinator = new FyteClubRedrawCoordinator(pluginLog, _mediator, _modSystemIntegration);
             _playerDetection = new PlayerDetectionService(objectTable, _mediator, _pluginLog);
             _syncshellManager = new SyncshellManager(pluginLog);
+            
+            // Initialize orchestrator after cache initialization
+            var networkLogger = new P2PNetworkLogger(pluginLog);
+            PhonebookModStateManager? stateManager = null; // Will be set after cache init
+            var modApplication = new EnhancedModApplicationService(pluginLog, _modSystemIntegration);
 
             _windowSystem = new WindowSystem("FyteClub");
             _configWindow = new ConfigWindow(this);
@@ -159,6 +165,12 @@ namespace FyteClub
             LoadConfiguration();
             InitializeClientCache();
             InitializeComponentCache();
+            
+            // Initialize orchestrator after caches are ready
+            stateManager = new PhonebookModStateManager(pluginLog, _componentCache!, _clientCache!);
+            _modSyncOrchestrator = new P2PModSyncOrchestrator(
+                pluginLog, networkLogger, stateManager, 
+                _componentCache!, _clientCache!, modApplication);
             
 
             
@@ -370,24 +382,34 @@ namespace FyteClub
                         });
                     }
                     
-                    // Check if this player is in our phonebook (authoritative member list)
-                    var phonebookEntry = _syncshellManager.GetPhonebookEntry(message.PlayerName);
-                    if (phonebookEntry != null)
+                    // Check if this player is in our member lists (proximity-based P2P)
+                    var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
+                    var isKnownMember = activeSyncshells.Any(s => s.Members?.Contains(message.PlayerName) == true);
+                    
+                    if (isKnownMember)
                     {
+                        _pluginLog.Info($"FyteClub: Detected known member {message.PlayerName} nearby - establishing P2P connection");
                         _ = Task.Run(async () => {
                             await TryEstablishP2PConnectionToKnownPlayer(message.PlayerName);
                         });
                     }
                     else
                     {
-                        // Check if they're in member list but not phonebook (need to re-sync)
-                        var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
-                        var isKnownMember = activeSyncshells.Any(s => s.Members?.Contains(message.PlayerName) == true);
-                        if (isKnownMember)
+                        // Check phonebook as fallback
+                        var phonebookEntry = _syncshellManager.GetPhonebookEntry(message.PlayerName);
+                        if (phonebookEntry != null)
                         {
-                            _pluginLog.Info($"FyteClub: Known member {message.PlayerName} not in phonebook - attempting reconnection");
+                            _pluginLog.Info($"FyteClub: Found {message.PlayerName} in phonebook - establishing P2P connection");
                             _ = Task.Run(async () => {
                                 await TryEstablishP2PConnectionToKnownPlayer(message.PlayerName);
+                            });
+                        }
+                        else if (activeSyncshells.Any())
+                        {
+                            // Proximity-based discovery: try to discover if this player is in any of our syncshells
+                            _pluginLog.Info($"FyteClub: Unknown player {message.PlayerName} nearby - attempting syncshell discovery");
+                            _ = Task.Run(async () => {
+                                await TryDiscoverPlayerSyncshells(message.PlayerName);
                             });
                         }
                     }
@@ -411,30 +433,68 @@ namespace FyteClub
                 var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
                 foreach (var syncshell in activeSyncshells)
                 {
-                    // Check if player is already a member of this syncshell
+                    // Check if player is a member of this syncshell
                     if (syncshell.Members?.Contains(playerName) == true)
                     {
-                        _pluginLog.Info($"FyteClub: Attempting P2P reconnection to known member {playerName} in syncshell '{syncshell.Name}'");
+                        _pluginLog.Info($"FyteClub: Attempting P2P connection to known member {playerName} in syncshell '{syncshell.Name}'");
                         
-                        var inviteCode = await _syncshellManager.GenerateInviteCode(syncshell.Id);
-                        if (!string.IsNullOrEmpty(inviteCode))
+                        var success = await _syncshellManager.ConnectToPeer(syncshell.Id, playerName, "");
+                        if (success)
                         {
-                            var success = await _syncshellManager.ConnectToPeer(syncshell.Id, playerName, inviteCode);
-                            if (success)
-                            {
-                                _pluginLog.Info($"FyteClub: P2P reconnection established with known member {playerName}");
-                                
-                                // Add to phonebook after successful reconnection
-                                _syncshellManager.AddToPhonebook(playerName, syncshell.Id);
-                                return;
-                            }
+                            _pluginLog.Info($"FyteClub: P2P connection established with known member {playerName}");
+                            
+                            // Add to phonebook after successful connection
+                            _syncshellManager.AddToPhonebook(playerName, syncshell.Id);
+                            return;
+                        }
+                        else
+                        {
+                            _pluginLog.Warning($"FyteClub: Failed to connect to known member {playerName}");
                         }
                     }
                 }
+                
+                _pluginLog.Info($"FyteClub: Player {playerName} not found in any active syncshell member lists");
             }
             catch (Exception ex)
             {
                 _pluginLog.Warning($"FyteClub: Failed to establish P2P connection with known player {playerName}: {ex.Message}");
+            }
+        }
+        
+        private async Task TryDiscoverPlayerSyncshells(string playerName)
+        {
+            try
+            {
+                var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
+                foreach (var syncshell in activeSyncshells)
+                {
+                    _pluginLog.Info($"FyteClub: Attempting syncshell discovery with {playerName} for '{syncshell.Name}'");
+                    
+                    // Try to establish P2P connection to discover if they're in this syncshell
+                    var success = await _syncshellManager.ConnectToPeer(syncshell.Id, playerName, "");
+                    if (success)
+                    {
+                        _pluginLog.Info($"FyteClub: Discovered {playerName} is in syncshell '{syncshell.Name}'");
+                        
+                        // Add to member list and phonebook
+                        if (syncshell.Members == null) syncshell.Members = new List<string>();
+                        if (!syncshell.Members.Contains(playerName))
+                        {
+                            syncshell.Members.Add(playerName);
+                            SaveConfiguration();
+                        }
+                        
+                        _syncshellManager.AddToPhonebook(playerName, syncshell.Id);
+                        return;
+                    }
+                }
+                
+                _pluginLog.Debug($"FyteClub: Player {playerName} not found in any active syncshells");
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"FyteClub: Failed to discover syncshells for {playerName}: {ex.Message}");
             }
         }
         
@@ -498,8 +558,15 @@ namespace FyteClub
                         _componentCache.UpdateComponentForPlayer(playerName, modData.ComponentData);
                     }
                     
-                    // Apply mods from cache
-                    var success = await _safeModIntegration.SafelyApplyModsAsync(playerName, modData.ComponentData ?? new object());
+                    // Apply mods using full integration system
+                    var reconstructedPlayerInfo = new AdvancedPlayerInfo
+                    {
+                        PlayerName = playerName,
+                        Mods = modData.ComponentData as List<string> ?? new List<string>(),
+                        GlamourerDesign = modData.RecipeData?.ToString()
+                    };
+                    
+                    var success = await _modSystemIntegration.ApplyPlayerMods(reconstructedPlayerInfo, playerName);
                     if (success)
                     {
                         _pluginLog.Debug($"Applied P2P mods for {playerName} from syncshell {syncshell.Name}");
@@ -510,16 +577,24 @@ namespace FyteClub
                     }
                 }
                 
-                // Use safe mod integration for applying mods
+                // Apply cached mods using full integration
                 if (_recentlySyncedUsers.ContainsKey(playerName))
                 {
-                    var success = await _safeModIntegration.SafelyApplyModsAsync(playerName, new object());
-                    if (success)
+                    var cachedMods = await _clientCache?.GetCachedPlayerMods(playerName);
+                    if (cachedMods?.RecipeData != null)
                     {
-                        _pluginLog.Debug($"Applied cached mods for {playerName} from syncshell {syncshell.Name}");
-                        _loadingStates[playerName] = LoadingState.Complete;
-                        _playerLastSeen[playerName] = DateTime.UtcNow;
-                        return true;
+                        var playerInfo = cachedMods.RecipeData as AdvancedPlayerInfo;
+                        if (playerInfo != null)
+                        {
+                            var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, playerName);
+                            if (success)
+                            {
+                                _pluginLog.Debug($"Applied cached mods for {playerName} from syncshell {syncshell.Name}");
+                                _loadingStates[playerName] = LoadingState.Complete;
+                                _playerLastSeen[playerName] = DateTime.UtcNow;
+                                return true;
+                            }
+                        }
                     }
                 }
                 
@@ -717,18 +792,17 @@ namespace FyteClub
         {
             try
             {
-                _pluginLog.Info("FyteClub: Establishing initial P2P connection with host...");
+                _pluginLog.Info("FyteClub: P2P connection already established via JoinSyncshellByInviteCode");
                 
-                // Parse invite code to get syncshell info
-                var parts = inviteCode.Split(':', 2);
-                if (parts.Length != 2)
+                // Parse invite code to get syncshell name for member sync
+                var parts = inviteCode.Split(':', 4);
+                if (parts.Length < 1)
                 {
-                    _pluginLog.Error("Invalid invite code format for P2P connection");
+                    _pluginLog.Error("Invalid invite code format for member sync");
                     return;
                 }
                 
                 var syncshellName = parts[0];
-                var password = parts[1];
                 
                 // Find the syncshell we just joined
                 var syncshell = _syncshellManager.GetSyncshells().FirstOrDefault(s => s.Name == syncshellName);
@@ -738,34 +812,39 @@ namespace FyteClub
                     return;
                 }
                 
-                // Establish P2P connection with host
-                var success = await _syncshellManager.EstablishInitialConnection(syncshell.Id, inviteCode);
-                if (success)
+                // Capture player name on framework thread before async operations
+                string? capturedPlayerName = null;
+                string? capturedWorldName = null;
+                
+                await _framework.RunOnFrameworkThread(() =>
                 {
-                    _pluginLog.Info($"FyteClub: Initial P2P connection established with host of '{syncshellName}'");
-                    
-                    // Request member list sync
-                    await _syncshellManager.RequestMemberListSync(syncshell.Id);
-                    
-                    // Share our appearance immediately
-                    _framework.RunOnFrameworkThread(() =>
-                    {
-                        var localPlayer = _clientState.LocalPlayer;
-                        if (localPlayer?.Name?.TextValue != null)
-                        {
-                            var playerName = localPlayer.Name.TextValue;
-                            _ = Task.Run(() => SharePlayerModsToSyncshells(playerName));
-                        }
-                    });
+                    var localPlayer = _clientState.LocalPlayer;
+                    capturedPlayerName = localPlayer?.Name?.TextValue;
+                    capturedWorldName = localPlayer?.HomeWorld.Value.Name.ToString();
+                });
+                
+                // Request member list sync with captured player name
+                if (!string.IsNullOrEmpty(capturedPlayerName) && !string.IsNullOrEmpty(capturedWorldName))
+                {
+                    var fullPlayerName = $"{capturedPlayerName}@{capturedWorldName}";
+                    _pluginLog.Info($"FyteClub: About to request member list sync with player name: {fullPlayerName}");
+                    await _syncshellManager.RequestMemberListSync(syncshell.Id, fullPlayerName);
+                    _pluginLog.Info($"FyteClub: Member list sync request completed");
                 }
                 else
                 {
-                    _pluginLog.Warning($"FyteClub: Failed to establish initial P2P connection with host of '{syncshellName}'");
+                    _pluginLog.Warning($"FyteClub: Cannot request member list sync - missing player info: name={capturedPlayerName}, world={capturedWorldName}");
+                }
+                
+                // Share our appearance immediately
+                if (!string.IsNullOrEmpty(capturedPlayerName))
+                {
+                    _ = Task.Run(() => SharePlayerModsToSyncshells(capturedPlayerName));
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"FyteClub: Error establishing initial P2P connection: {ex.Message}");
+                _pluginLog.Error($"FyteClub: Error in post-join member sync: {ex.Message}");
             }
         }
 
@@ -854,10 +933,19 @@ namespace FyteClub
                     _ = Task.Run(async () =>
                     {
                         await Task.Delay(1000); // Brief delay for changes to apply
+                        
+                        // Update cache with new mod data
+                        var updatedMods = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
+                        if (updatedMods != null && _componentCache != null)
+                        {
+                            var newHash = CalculateModDataHash(updatedMods);
+                            await _componentCache.StoreAppearanceRecipe(playerName, newHash, updatedMods);
+                        }
+                        
                         await SharePlayerModsToSyncshells(playerName);
                         
                         // Share companion mods on main thread
-                        _framework.RunOnFrameworkThread(() => ShareCompanionMods(playerName));
+                        await _framework.RunOnFrameworkThread(() => ShareCompanionMods(playerName));
                         
                         _pluginLog.Debug($"Auto-shared appearance and companion mods after change");
                     });
@@ -1035,6 +1123,7 @@ namespace FyteClub
             
             _clientCache?.Dispose();
             _componentCache?.Dispose();
+            _modSyncOrchestrator?.Dispose();
             _syncshellManager.Dispose();
             
             _httpClient.Dispose();
