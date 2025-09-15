@@ -5,7 +5,7 @@
     "Punchline": "Share your mods with friends",
     "Description": "Sync mods between players using Penumbra, Glamourer, and other plugins",
     "InternalName": "FyteClub",
-  "AssemblyVersion": "4.2.6",
+  "AssemblyVersion": "4.2.7",
     "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
     "ApplicableVersion": "any",
     "Tags": [
