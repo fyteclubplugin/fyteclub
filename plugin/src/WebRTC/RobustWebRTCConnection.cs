@@ -36,17 +36,19 @@ namespace FyteClub.WebRTC
                     _currentPeer = peer;
                     peer.OnDataReceived = (data) => OnDataReceived?.Invoke(data);
                     
-                    // Explicit bootstrapping when data channel is ready
+                    // Only trigger OnConnected when data channel is actually open
                     if (peer.DataChannel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
                     {
                         TriggerBootstrap();
+                        OnConnected?.Invoke();
                     }
                     else
                     {
-                        peer.OnDataChannelReady += () => TriggerBootstrap();
+                        peer.OnDataChannelReady += () => {
+                            TriggerBootstrap();
+                            OnConnected?.Invoke();
+                        };
                     }
-                    
-                    OnConnected?.Invoke();
                 };
 
                 _webrtcManager.OnPeerDisconnected += (peer) => {

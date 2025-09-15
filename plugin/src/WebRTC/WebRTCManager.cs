@@ -17,6 +17,7 @@ namespace FyteClub.WebRTC
         private readonly ISignalingChannel _signalingChannel;
         private readonly PeerConnectionConfiguration _config;
         private readonly IPluginLog? _pluginLog;
+        private bool _disposed = false;
 
         public WebRTCManager(ISignalingChannel signalingChannel, IPluginLog? pluginLog = null)
         {
@@ -112,18 +113,31 @@ namespace FyteClub.WebRTC
 
             // Connection state monitoring
             peerConnection.IceStateChanged += (state) => {
-                _pluginLog?.Info($"[WebRTC] ICE state for {peerId}: {state}");
-                peer.IceState = state;
-                
-                if (state == IceConnectionState.Connected)
+                try
                 {
-                    _pluginLog?.Info($"[WebRTC] ICE Connected for {peerId}, DataChannel: {peer.DataChannel?.State}");
-                    OnPeerConnected?.Invoke(peer);
+                    if (_disposed) return;
+                    
+                    _pluginLog?.Info($"[WebRTC] ICE state for {peerId}: {state}");
+                    peer.IceState = state;
+                    
+                    if (state == IceConnectionState.Connected && peer.DataChannel != null)
+                    {
+                        _pluginLog?.Info($"[WebRTC] ICE Connected for {peerId}, DataChannel: {peer.DataChannel?.State}");
+                        // Only trigger if data channel is ready, otherwise wait for data channel ready event
+                        if (peer.DataChannel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open && OnPeerConnected != null)
+                        {
+                            OnPeerConnected?.Invoke(peer);
+                        }
+                    }
+                    else if (state == IceConnectionState.Disconnected || state == IceConnectionState.Failed)
+                    {
+                        _pluginLog?.Warning($"[WebRTC] ICE {state} for {peerId}");
+                        OnPeerDisconnected?.Invoke(peer);
+                    }
                 }
-                else if (state == IceConnectionState.Disconnected || state == IceConnectionState.Failed)
+                catch (Exception ex)
                 {
-                    _pluginLog?.Warning($"[WebRTC] ICE {state} for {peerId}");
-                    OnPeerDisconnected?.Invoke(peer);
+                    _pluginLog?.Error($"[WebRTC] Error in ICE state handler: {ex.Message}");
                 }
             };
 
@@ -136,17 +150,41 @@ namespace FyteClub.WebRTC
             if (peer.DataChannel == null) return;
 
             peer.DataChannel.StateChanged += () => {
-                _pluginLog?.Info($"[WebRTC] Data channel for {peer.PeerId}: {peer.DataChannel.State}");
-                
-                if (peer.DataChannel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+                try
                 {
-                    _pluginLog?.Info($"[WebRTC] Data channel OPEN for {peer.PeerId} - triggering ready event");
-                    peer.OnDataChannelReady?.Invoke();
+                    if (_disposed || peer.DataChannel == null) return;
+                    
+                    _pluginLog?.Info($"[WebRTC] Data channel for {peer.PeerId}: {peer.DataChannel.State}");
+                    
+                    if (peer.DataChannel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+                    {
+                        _pluginLog?.Info($"[WebRTC] Data channel OPEN for {peer.PeerId} - triggering ready event");
+                        peer.OnDataChannelReady?.Invoke();
+                        
+                        // If ICE is already connected, trigger OnPeerConnected now
+                        if (peer.IceState == IceConnectionState.Connected && OnPeerConnected != null)
+                        {
+                            _pluginLog?.Info($"[WebRTC] Both ICE and DataChannel ready for {peer.PeerId} - triggering OnPeerConnected");
+                            OnPeerConnected?.Invoke(peer);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog?.Error($"[WebRTC] Error in data channel state handler: {ex.Message}");
                 }
             };
 
             peer.DataChannel.MessageReceived += (data) => {
-                peer.OnDataReceived?.Invoke(data);
+                try
+                {
+                    if (_disposed) return;
+                    peer.OnDataReceived?.Invoke(data);
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog?.Error($"[WebRTC] Error in data channel message handler: {ex.Message}");
+                }
             };
         }
 
@@ -199,9 +237,23 @@ namespace FyteClub.WebRTC
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
+            
+            // Clear event handlers to prevent callbacks during disposal
+            OnPeerConnected = null;
+            OnPeerDisconnected = null;
+            
             foreach (var peer in _peers.Values)
             {
-                peer.Dispose();
+                try
+                {
+                    peer.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog?.Error($"[WebRTC] Error disposing peer {peer.PeerId}: {ex.Message}");
+                }
             }
             _peers.Clear();
         }
