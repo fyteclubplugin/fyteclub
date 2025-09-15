@@ -14,6 +14,9 @@ if %errorlevel% neq 0 (
 )
 
 cd ..
+update-version.bat %1
+build-p2p-release.bat
+
 git add .
 git commit -m "Release v%1 - P2P architecture with phonebook deltas and mod cache"
 git tag v%1

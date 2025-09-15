@@ -117,7 +117,7 @@ namespace FyteClub
                 // Use REAL WebRTC offer creation
                 var tcs = new TaskCompletionSource<string>();
                 _peerConnection.LocalSdpReadytoSend += (sdp) => {
-                    if (sdp.Type == SdpMessageType.Offer)
+                    if (sdp.Type == SdpMessageType.Offer && !tcs.Task.IsCompleted)
                     {
                         tcs.SetResult(sdp.Content);
                     }
@@ -146,7 +146,7 @@ namespace FyteClub
                 // Use REAL WebRTC answer creation
                 var tcs = new TaskCompletionSource<string>();
                 _peerConnection.LocalSdpReadytoSend += (sdp) => {
-                    if (sdp.Type == SdpMessageType.Answer)
+                    if (sdp.Type == SdpMessageType.Answer && !tcs.Task.IsCompleted)
                     {
                         tcs.SetResult(sdp.Content);
                     }

@@ -1375,7 +1375,7 @@ namespace FyteClub
             
             ImGui.Separator();
             ImGui.Text("Join Syncshell:");
-            ImGui.InputText("Invite Code (syncshell://...)", ref _inviteCode, 500);
+            ImGui.InputText("Invite Code (syncshell://...)", ref _inviteCode, 2000);
             
             if (ImGui.Button("Join Syncshell"))
             {

@@ -1,6 +1,6 @@
 {
   "name": "fyteclub-server",
-  "version": "4.2.8",
+  "version": "v4.2.11",
   "description": "Self-hosted FyteClub server with complete mod system support",
   "main": "src/server.js",
   "bin": {
