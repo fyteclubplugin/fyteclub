@@ -1,6 +1,6 @@
 {
   "name": "fyteclub-client",
-  "version": "4.3.1",
+  "version": "4.4.0",
   "description": "FyteClub client for FFXIV mod synchronization",
   "main": "src/daemon.js",
   "bin": {
