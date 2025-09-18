@@ -1,0 +1,15 @@
+c:\Users\Me\git\fyteclub\test-hole\bin\Debug\net8.0\test-hole.exe
+c:\Users\Me\git\fyteclub\test-hole\bin\Debug\net8.0\test-hole.deps.json
+c:\Users\Me\git\fyteclub\test-hole\bin\Debug\net8.0\test-hole.runtimeconfig.json
+c:\Users\Me\git\fyteclub\test-hole\bin\Debug\net8.0\test-hole.dll
+c:\Users\Me\git\fyteclub\test-hole\bin\Debug\net8.0\test-hole.pdb
+c:\Users\Me\git\fyteclub\test-hole\obj\Debug\net8.0\test-hole.GeneratedMSBuildEditorConfig.editorconfig
+c:\Users\Me\git\fyteclub\test-hole\obj\Debug\net8.0\test-hole.AssemblyInfoInputs.cache
+c:\Users\Me\git\fyteclub\test-hole\obj\Debug\net8.0\test-hole.AssemblyInfo.cs
+c:\Users\Me\git\fyteclub\test-hole\obj\Debug\net8.0\test-hole.csproj.CoreCompileInputs.cache
+c:\Users\Me\git\fyteclub\test-hole\obj\Debug\net8.0\test-hole.sourcelink.json
+c:\Users\Me\git\fyteclub\test-hole\obj\Debug\net8.0\test-hole.dll
+c:\Users\Me\git\fyteclub\test-hole\obj\Debug\net8.0\refint\test-hole.dll
+c:\Users\Me\git\fyteclub\test-hole\obj\Debug\net8.0\test-hole.pdb
+c:\Users\Me\git\fyteclub\test-hole\obj\Debug\net8.0\test-hole.genruntimeconfig.cache
+c:\Users\Me\git\fyteclub\test-hole\obj\Debug\net8.0\ref\test-hole.dll

@@ -1,0 +1,15 @@
+c:\Users\Me\git\fyteclub\test-integration\bin\Debug\net8.0\test-integration.exe
+c:\Users\Me\git\fyteclub\test-integration\bin\Debug\net8.0\test-integration.deps.json
+c:\Users\Me\git\fyteclub\test-integration\bin\Debug\net8.0\test-integration.runtimeconfig.json
+c:\Users\Me\git\fyteclub\test-integration\bin\Debug\net8.0\test-integration.dll
+c:\Users\Me\git\fyteclub\test-integration\bin\Debug\net8.0\test-integration.pdb
+c:\Users\Me\git\fyteclub\test-integration\obj\Debug\net8.0\test-integration.GeneratedMSBuildEditorConfig.editorconfig
+c:\Users\Me\git\fyteclub\test-integration\obj\Debug\net8.0\test-integration.AssemblyInfoInputs.cache
+c:\Users\Me\git\fyteclub\test-integration\obj\Debug\net8.0\test-integration.AssemblyInfo.cs
+c:\Users\Me\git\fyteclub\test-integration\obj\Debug\net8.0\test-integration.csproj.CoreCompileInputs.cache
+c:\Users\Me\git\fyteclub\test-integration\obj\Debug\net8.0\test-integration.sourcelink.json
+c:\Users\Me\git\fyteclub\test-integration\obj\Debug\net8.0\test-integration.dll
+c:\Users\Me\git\fyteclub\test-integration\obj\Debug\net8.0\refint\test-integration.dll
+c:\Users\Me\git\fyteclub\test-integration\obj\Debug\net8.0\test-integration.pdb
+c:\Users\Me\git\fyteclub\test-integration\obj\Debug\net8.0\test-integration.genruntimeconfig.cache
+c:\Users\Me\git\fyteclub\test-integration\obj\Debug\net8.0\ref\test-integration.dll

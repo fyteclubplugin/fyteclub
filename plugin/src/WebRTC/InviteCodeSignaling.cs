@@ -32,6 +32,9 @@ namespace FyteClub.WebRTC
         {
             // Store answer for invite code response
             _pluginLog?.Info($"Answer ready for {peerId}");
+            
+            // Don't generate answer code here - wait for Interactive Connectivity Establishment collection in CreateAnswerAsync
+            
             return Task.CompletedTask;
         }
 
@@ -41,7 +44,7 @@ namespace FyteClub.WebRTC
                 _pendingCandidates[peerId] = new List<IceCandidate>();
             
             _pendingCandidates[peerId].Add(candidate);
-            _pluginLog?.Debug($"[WebRTC] ICE candidate collected for {peerId}: {candidate.Content}");
+            _pluginLog?.Debug($"[WebRTC] Interactive Connectivity Establishment candidate collected for {peerId}: {candidate.Content}");
             return Task.CompletedTask;
         }
         
@@ -77,23 +80,28 @@ namespace FyteClub.WebRTC
                 
                 OnOfferReceived?.Invoke(peerId, offerSdp);
 
-                // Process ICE candidates
-                if (inviteData.TryGetProperty("candidates", out var candidatesElement))
-                {
-                    var candidateCount = 0;
-                    foreach (var candidateElement in candidatesElement.EnumerateArray())
+                // Delay ICE candidate processing to ensure peer is created first
+                _ = Task.Run(async () => {
+                    await Task.Delay(100); // Small delay to ensure peer creation completes
+                    
+                    // Process Interactive Connectivity Establishment candidates
+                    if (inviteData.TryGetProperty("candidates", out var candidatesElement))
                     {
-                        var candidate = new IceCandidate
+                        var candidateCount = 0;
+                        foreach (var candidateElement in candidatesElement.EnumerateArray())
                         {
-                            SdpMid = candidateElement.GetProperty("sdpMid").GetString() ?? "",
-                            SdpMlineIndex = candidateElement.GetProperty("sdpMLineIndex").GetInt32(),
-                            Content = candidateElement.GetProperty("candidate").GetString() ?? ""
-                        };
-                        OnIceCandidateReceived?.Invoke(peerId, candidate);
-                        candidateCount++;
+                            var candidate = new IceCandidate
+                            {
+                                SdpMid = candidateElement.GetProperty("sdpMid").GetString() ?? "",
+                                SdpMlineIndex = candidateElement.GetProperty("sdpMLineIndex").GetInt32(),
+                                Content = candidateElement.GetProperty("candidate").GetString() ?? ""
+                            };
+                            OnIceCandidateReceived?.Invoke(peerId, candidate);
+                            candidateCount++;
+                        }
+                        _pluginLog?.Info($"[WebRTC] Processed {candidateCount} Interactive Connectivity Establishment candidates from invite (delayed)");
                     }
-                    _pluginLog?.Info($"[WebRTC] Processed {candidateCount} ICE candidates from invite");
-                }
+                });
             }
             catch (Exception ex)
             {
@@ -126,23 +134,28 @@ namespace FyteClub.WebRTC
                 
                 OnAnswerReceived?.Invoke(peerId, answerSdp);
 
-                // Process ICE candidates
-                if (answerData.TryGetProperty("candidates", out var candidatesElement))
-                {
-                    var candidateCount = 0;
-                    foreach (var candidateElement in candidatesElement.EnumerateArray())
+                // Delay ICE candidate processing to ensure answer is set first
+                _ = Task.Run(async () => {
+                    await Task.Delay(100); // Small delay to ensure answer processing completes
+                    
+                    // Process Interactive Connectivity Establishment candidates
+                    if (answerData.TryGetProperty("candidates", out var candidatesElement))
                     {
-                        var candidate = new IceCandidate
+                        var candidateCount = 0;
+                        foreach (var candidateElement in candidatesElement.EnumerateArray())
                         {
-                            SdpMid = candidateElement.GetProperty("sdpMid").GetString() ?? "",
-                            SdpMlineIndex = candidateElement.GetProperty("sdpMLineIndex").GetInt32(),
-                            Content = candidateElement.GetProperty("candidate").GetString() ?? ""
-                        };
-                        OnIceCandidateReceived?.Invoke(peerId, candidate);
-                        candidateCount++;
+                            var candidate = new IceCandidate
+                            {
+                                SdpMid = candidateElement.GetProperty("sdpMid").GetString() ?? "",
+                                SdpMlineIndex = candidateElement.GetProperty("sdpMLineIndex").GetInt32(),
+                                Content = candidateElement.GetProperty("candidate").GetString() ?? ""
+                            };
+                            OnIceCandidateReceived?.Invoke(peerId, candidate);
+                            candidateCount++;
+                        }
+                        _pluginLog?.Info($"[WebRTC] Processed {candidateCount} Interactive Connectivity Establishment candidates from answer (delayed)");
                     }
-                    _pluginLog?.Info($"[WebRTC] Processed {candidateCount} ICE candidates from answer");
-                }
+                });
             }
             catch (Exception ex)
             {

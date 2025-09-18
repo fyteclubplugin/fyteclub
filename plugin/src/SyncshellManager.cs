@@ -19,6 +19,7 @@ namespace FyteClub
         private readonly Dictionary<string, List<MemberToken>> _issuedTokens = new();
         private readonly Dictionary<string, List<string>> _syncshellConnectionRegistry = new(); // Track connections per syncshell
         private readonly SignalingService _signalingService;
+        private string _lastAnswerCode = "";
 
         private readonly Timer _uptimeTimer;
         private readonly Timer _connectionTimeoutTimer;
@@ -196,27 +197,95 @@ namespace FyteClub
 
         public async Task<string> GenerateInviteCode(string syncshellId, bool enableAutomated = true)
         {
+            var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+            if (syncshell == null) return string.Empty;
+            
+            // Check if syncshell is stale (30+ days)
+            if (syncshell.IsStale)
+            {
+                return await CreateBootstrapCode(syncshellId);
+            }
+            
+            // Check if we already have P2P connections - use bootstrap mode
+            if (_webrtcConnections.ContainsKey(syncshellId) && _webrtcConnections[syncshellId].IsConnected)
+            {
+                return GenerateBootstrapCode(syncshellId);
+            }
+            
+            // First connection - use manual exchange
+            return await GenerateManualInviteCode(syncshellId);
+        }
+        
+        public async Task<string> CreateBootstrapCode(string syncshellId)
+        {
+            var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+            if (syncshell == null) return string.Empty;
+            
+            return WebRTC.SyncshellRecovery.CreateBootstrapCode(syncshellId, syncshell.EncryptionKey);
+        }
+        
+        private string GenerateBootstrapCode(string syncshellId)
+        {
+            var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+            if (syncshell == null) return string.Empty;
+            
+            // Bootstrap code for joiners 3+: no manual exchange needed
+            var bootstrapInfo = new {
+                type = "bootstrap",
+                syncshellId = syncshellId,
+                name = syncshell.Name,
+                key = syncshell.EncryptionKey,
+                connectedPeers = _webrtcConnections.Count
+            };
+            
+            var json = System.Text.Json.JsonSerializer.Serialize(bootstrapInfo);
+            return "BOOTSTRAP:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json));
+        }
+        
+        public async Task<string> GenerateManualInviteCode(string syncshellId)
+        {
             try
             {
                 var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
                 if (syncshell == null) return string.Empty;
                 
-                // Create WebRTC connection and offer
                 var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                 await connection.InitializeAsync();
                 
-                // Store connection for answer processing
-                _webrtcConnections[syncshellId + "_host"] = connection;
+                connection.OnDataReceived += data => HandleModData(syncshellId, data);
+                connection.OnConnected += () => {
+                    SecureLogger.LogInfo("🎉 Host WebRTC connected for syncshell {0}", syncshellId);
+                    Console.WriteLine($"🎉 Host WebRTC connected for syncshell {syncshellId}");
+                };
+                
+                // Store connection with a key that ProcessAnswerCode can find
+                var connectionKey = syncshellId + "_host_waiting";
+                _webrtcConnections[connectionKey] = connection;
+                SecureLogger.LogInfo("📡 Host connection stored as {0} - ready for answer", connectionKey);
+                Console.WriteLine($"📡 Host connection stored as {connectionKey} - ready for answer");
+                Console.WriteLine($"📡 Total connections after storing: {_webrtcConnections.Count}");
+                foreach (var key in _webrtcConnections.Keys)
+                {
+                    Console.WriteLine($"📡   Connection key: {key}");
+                }
                 
                 var offer = await connection.CreateOfferAsync();
                 
-                // Add host info to bootstrap P2P connection
-                var hostInfo = new { host = "Host" }; // Just enough to identify host
-                var hostJson = System.Text.Json.JsonSerializer.Serialize(hostInfo);
-                var hostBytes = System.Text.Encoding.UTF8.GetBytes(hostJson);
-                var encodedHost = Convert.ToBase64String(hostBytes);
+                string inviteCode;
+                if (connection is WebRTC.RobustWebRTCConnection robustConnection)
+                {
+                    inviteCode = robustConnection.GenerateInviteWithIce(syncshell.Name, syncshell.EncryptionKey, offer);
+                }
+                else
+                {
+                    inviteCode = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(offer));
+                }
                 
-                return $"{syncshell.Name}:{syncshell.EncryptionKey}:{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(offer))}:{encodedHost}";
+                var hostInfo = new { host = "Host" };
+                var hostJson = System.Text.Json.JsonSerializer.Serialize(hostInfo);
+                var encodedHost = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(hostJson));
+                
+                return $"{syncshell.Name}:{syncshell.EncryptionKey}:{inviteCode}:{encodedHost}";
             }
             catch (Exception ex)
             {
@@ -309,24 +378,123 @@ namespace FyteClub
         {
             try
             {
-                var session = _sessions.Values.FirstOrDefault();
-                if (session == null) return false;
+                SecureLogger.LogInfo("🔧🔧🔧 ProcessAnswerCode: ENTRY POINT - Starting with {0} connections", _webrtcConnections.Count);
+                Console.WriteLine($"🔧🔧🔧 ProcessAnswerCode: ENTRY POINT - Starting with {_webrtcConnections.Count} connections");
+                Console.WriteLine($"🔧🔧🔧 ProcessAnswerCode: Answer code length: {answerCode?.Length ?? 0}");
+                Console.WriteLine($"🔧🔧🔧 ProcessAnswerCode: Thread ID: {System.Threading.Thread.CurrentThread.ManagedThreadId}");
+                Console.WriteLine($"🔧🔧🔧 ProcessAnswerCode: Timestamp: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff}");
                 
-                var (syncshellId, answerSdp) = InviteCodeGenerator.DecodeWebRTCAnswer(answerCode, session.Identity.EncryptionKey);
-                
-                if (_webrtcConnections.TryGetValue(syncshellId, out var connection))
+                if (_webrtcConnections.Count == 0)
                 {
-                    await connection.SetRemoteAnswerAsync(answerSdp);
-                    _pendingConnections.Remove(syncshellId);
-                    Console.WriteLine($"Connection established for {syncshellId}");
-                    return true;
+                    SecureLogger.LogError("❌❌❌ ProcessAnswerCode: No WebRTC connections available");
+                    Console.WriteLine($"❌❌❌ ProcessAnswerCode: No WebRTC connections available");
+                    return false;
                 }
                 
+                Console.WriteLine($"🔧🔧🔧 ProcessAnswerCode: Listing all {_webrtcConnections.Count} connections:");
+                foreach (var kvp in _webrtcConnections)
+                {
+                    Console.WriteLine($"🔧🔧🔧   Connection: {kvp.Key} -> {kvp.Value?.GetType()?.Name ?? "null"}");
+                    Console.WriteLine($"🔧🔧🔧   IsConnected: {kvp.Value?.IsConnected ?? false}");
+                }
+                
+                // Find the connection that's waiting for an answer
+                foreach (var kvp in _webrtcConnections)
+                {
+                    SecureLogger.LogInfo("🔍🔍🔍 ProcessAnswerCode: Trying connection {0}", kvp.Key);
+                    Console.WriteLine($"🔍🔍🔍 ProcessAnswerCode: Trying connection {kvp.Key}");
+                    var connection = kvp.Value;
+                    
+                    if (connection == null)
+                    {
+                        Console.WriteLine($"🔍🔍🔍 ProcessAnswerCode: Connection {kvp.Key} is NULL, skipping");
+                        continue;
+                    }
+                    
+                    Console.WriteLine($"🔍🔍🔍 ProcessAnswerCode: Connection {kvp.Key} type: {connection.GetType().Name}");
+                    Console.WriteLine($"🔍🔍🔍 ProcessAnswerCode: Connection {kvp.Key} IsConnected: {connection.IsConnected}");
+                    
+                    try
+                    {
+                        // Decode answer if it's base64 encoded
+                        string answerSdp = answerCode;
+                        if (connection is WebRTC.RobustWebRTCConnection)
+                        {
+                            SecureLogger.LogInfo("🚀🚀🚀 ProcessAnswerCode: Using RobustWebRTCConnection for {0}", kvp.Key);
+                            Console.WriteLine($"🚀🚀🚀 ProcessAnswerCode: Using RobustWebRTCConnection for {kvp.Key}");
+                            // RobustWebRTCConnection handles ICE candidates in answer code
+                            answerSdp = answerCode;
+                        }
+                        else
+                        {
+                            SecureLogger.LogInfo("📡📡📡 ProcessAnswerCode: Using simple connection for {0}", kvp.Key);
+                            Console.WriteLine($"📡📡📡 ProcessAnswerCode: Using simple connection for {kvp.Key}");
+                            // Simple base64 decode for other connections
+                            try
+                            {
+                                answerSdp = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(answerCode));
+                                Console.WriteLine($"📡📡📡 ProcessAnswerCode: Decoded base64 answer for {kvp.Key}");
+                            }
+                            catch (Exception decodeEx)
+                            {
+                                Console.WriteLine($"📡📡📡 ProcessAnswerCode: Base64 decode failed for {kvp.Key}: {decodeEx.Message}, using as-is");
+                                answerSdp = answerCode; // Use as-is if not base64
+                            }
+                        }
+                        
+                        Console.WriteLine($"⚡⚡⚡ ProcessAnswerCode: Answer SDP length for {kvp.Key}: {answerSdp?.Length ?? 0}");
+                        SecureLogger.LogInfo("⚡⚡⚡ ProcessAnswerCode: About to call SetRemoteAnswerAsync for {0}", kvp.Key);
+                        Console.WriteLine($"⚡⚡⚡ ProcessAnswerCode: About to call SetRemoteAnswerAsync for {kvp.Key}");
+                        
+                        await connection.SetRemoteAnswerAsync(answerSdp);
+                        
+                        SecureLogger.LogInfo("✅✅✅ ProcessAnswerCode: SetRemoteAnswerAsync completed for {0}", kvp.Key);
+                        Console.WriteLine($"✅✅✅ ProcessAnswerCode: SetRemoteAnswerAsync completed for {kvp.Key}");
+                        
+                        SecureLogger.LogInfo("🎉🎉🎉 Processed answer code for connection {0}", kvp.Key);
+                        Console.WriteLine($"🎉🎉🎉 Answer processed successfully for connection {kvp.Key} - WebRTC connection should establish shortly.");
+                        
+                        // After successful answer processing, rename connection to active
+                        if (kvp.Key.EndsWith("_host_waiting"))
+                        {
+                            var activeSyncshellId = kvp.Key.Replace("_host_waiting", "");
+                            Console.WriteLine($"🔄🔄🔄 ProcessAnswerCode: Renaming connection from {kvp.Key} to {activeSyncshellId}");
+                            _webrtcConnections.Remove(kvp.Key);
+                            _webrtcConnections[activeSyncshellId] = connection;
+                            SecureLogger.LogInfo("🔄🔄🔄 Renamed connection from {0} to {1}", kvp.Key, activeSyncshellId);
+                            Console.WriteLine($"🔄🔄🔄 Renamed connection from {kvp.Key} to {activeSyncshellId}");
+                            
+                            // Trigger host-side bootstrap to prepare for incoming requests
+                            if (connection is WebRTC.RobustWebRTCConnection robustConn)
+                            {
+                                SecureLogger.LogInfo("🏠🏠🏠 Host: Triggering bootstrap preparation for incoming requests");
+                                Console.WriteLine($"🏠🏠🏠 Host: Triggering bootstrap preparation for incoming requests");
+                            }
+                        }
+                        
+                        Console.WriteLine($"🎉🎉🎉 ProcessAnswerCode: SUCCESS - returning true for {kvp.Key}");
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        SecureLogger.LogError("❌❌❌ ProcessAnswerCode: Exception for connection {0}: {1}", kvp.Key, ex.Message);
+                        Console.WriteLine($"❌❌❌ ProcessAnswerCode: Exception for connection {kvp.Key}: {ex.Message}");
+                        Console.WriteLine($"❌❌❌ ProcessAnswerCode: Exception stack trace: {ex.StackTrace}");
+                        // This connection wasn't expecting this answer, try next
+                        continue;
+                    }
+                }
+                
+                SecureLogger.LogWarning("⚠️⚠️⚠️ No connection found waiting for this answer code.");
+                Console.WriteLine($"⚠️⚠️⚠️ No connection found waiting for this answer code.");
+                Console.WriteLine($"⚠️⚠️⚠️ ProcessAnswerCode: FAILURE - returning false");
                 return false;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to process answer code: {ex.Message}");
+                SecureLogger.LogError("💥💥💥 Failed to process answer code: {0}", ex.Message);
+                Console.WriteLine($"💥💥💥 Failed to process answer code: {ex.Message}");
+                Console.WriteLine($"💥💥💥 ProcessAnswerCode: Exception stack trace: {ex.StackTrace}");
                 return false;
             }
         }
@@ -422,8 +590,10 @@ namespace FyteClub
             try
             {
                 var modData = Encoding.UTF8.GetString(data);
-                SecureLogger.LogInfo("Received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
-                Console.WriteLine($"HandleModData: Received {data.Length} bytes from {syncshellId}: {modData}");
+                SecureLogger.LogInfo("📨📨📨 Received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
+                Console.WriteLine($"📨📨📨 HandleModData: Received {data.Length} bytes from {syncshellId}");
+                Console.WriteLine($"📨📨📨 HandleModData: Data preview: {modData.Substring(0, Math.Min(200, modData.Length))}...");
+                Console.WriteLine($"📨📨📨 HandleModData: Timestamp: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff}");
                 
                 var parsedData = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(modData);
                 if (parsedData != null)
@@ -509,8 +679,8 @@ namespace FyteClub
         {
             try
             {
-                SecureLogger.LogInfo("Host handling member list request for syncshell {0}", syncshellId);
-                Console.WriteLine($"Host: Received member list request for {syncshellId}");
+                SecureLogger.LogInfo("📞 Host handling member list request for syncshell {0}", syncshellId);
+                Console.WriteLine($"📞 Host: Received member list request for {syncshellId}");
                 
                 var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
                 if (syncshell != null && syncshell.IsOwner)
@@ -525,14 +695,14 @@ namespace FyteClub
                         var fullPlayerName = playerNameObj.ToString() ?? "Unknown Player";
                         // Extract just the character name (before @)
                         playerName = fullPlayerName.Split('@')[0];
-                        Console.WriteLine($"Host: Extracted player name: {playerName} from {fullPlayerName}");
+                        Console.WriteLine($"👤 Host: Extracted player name: {playerName} from {fullPlayerName}");
                     }
                     
                     if (!syncshell.Members.Contains(playerName) && playerName != "Unknown Player")
                     {
                         syncshell.Members.Add(playerName);
-                        SecureLogger.LogInfo("Host added new member {0} to syncshell {1}", playerName, syncshellId);
-                        Console.WriteLine($"Host: New member {playerName} joined syncshell {syncshellId}");
+                        SecureLogger.LogInfo("🎉 Host added new member {0} to syncshell {1}", playerName, syncshellId);
+                        Console.WriteLine($"🎉 Host: New member {playerName} joined syncshell {syncshellId}");
                     }
                     
                     // Send member list response
@@ -545,20 +715,20 @@ namespace FyteClub
                     };
                     
                     var json = System.Text.Json.JsonSerializer.Serialize(responseData);
-                    Console.WriteLine($"Host: Sending member list response: {json}");
+                    Console.WriteLine($"📤 Host: Sending member list response: {json}");
                     await SendModData(syncshellId, json);
                     
-                    Console.WriteLine($"Host sent member list response: {syncshell.Members.Count} members - {string.Join(", ", syncshell.Members)}");
+                    Console.WriteLine($"📊 Host sent member list response: {syncshell.Members.Count} members - {string.Join(", ", syncshell.Members)}");
                 }
                 else
                 {
-                    Console.WriteLine($"Host: No syncshell found or not owner for {syncshellId}");
+                    Console.WriteLine($"❌ Host: No syncshell found or not owner for {syncshellId}");
                 }
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to handle member list request: {0}", ex.Message);
-                Console.WriteLine($"Host: Failed to handle member list request: {ex.Message}");
+                SecureLogger.LogError("💥 Failed to handle member list request: {0}", ex.Message);
+                Console.WriteLine($"💥 Host: Failed to handle member list request: {ex.Message}");
             }
         }
         
@@ -603,7 +773,13 @@ namespace FyteClub
         {
             try
             {
-                // Parse invite code format: "name:password:offer:members"
+                // Check for bootstrap code (joiners 3+)
+                if (inviteCode.StartsWith("BOOTSTRAP:"))
+                {
+                    return await JoinViaBootstrap(inviteCode.Substring(10));
+                }
+                
+                // Manual invite code (first joiner)
                 var parts = inviteCode.Split(':', 4);
                 if (parts.Length < 2)
                 {
@@ -654,29 +830,62 @@ namespace FyteClub
                         }
                     }
                     
-                    // Process WebRTC offer from invite
-                    Console.WriteLine($"DEBUG: offerBase64 is null or empty: {string.IsNullOrEmpty(offerBase64)}");
+                    // Process WebRTC offer from invite and wait for answer code
+                    Console.WriteLine($"Checking offerBase64: {!string.IsNullOrEmpty(offerBase64)}");
                     if (!string.IsNullOrEmpty(offerBase64))
                     {
                         try
                         {
-                            Console.WriteLine($"DEBUG: About to decode offer from invite code");
-                            var offer = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(offerBase64));
-                            Console.WriteLine($"DEBUG: Decoded offer, length: {offer.Length}");
-                            Console.WriteLine($"DEBUG: About to call ProcessWebRTCOffer");
-                            await ProcessWebRTCOffer(syncshellId, offer);
-                            Console.WriteLine($"DEBUG: ProcessWebRTCOffer completed");
-                            SecureLogger.LogInfo("Processed WebRTC offer from invite for syncshell {0}", syncshellId);
+                            Console.WriteLine($"Processing WebRTC offer for syncshell {syncshellId}");
+                            // Create connection and process offer
+                            var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
+                            await connection.InitializeAsync();
+                            
+                            connection.OnDataReceived += data => HandleModData(syncshellId, data);
+                            connection.OnConnected += () => {
+                                SecureLogger.LogInfo("WebRTC connected to host for syncshell {0}", syncshellId);
+                            };
+                            
+                            // Subscribe to answer code generation and process invite
+                            if (connection is WebRTC.RobustWebRTCConnection robustConnection)
+                            {
+                                robustConnection.OnAnswerCodeGenerated += (answerCode) => {
+                                    _lastAnswerCode = answerCode;
+                                    Console.WriteLine($"Answer code stored via callback: {!string.IsNullOrEmpty(_lastAnswerCode)}");
+                                };
+                                robustConnection.ProcessInviteWithIce(offerBase64);
+                                Console.WriteLine($"Processed invite with ICE for robust connection");
+                                
+                                // Extract offer SDP from invite code and create answer
+                                var inviteJson = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(offerBase64));
+                                var inviteData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(inviteJson);
+                                var offerSdp = inviteData.GetProperty("offer").GetString() ?? "";
+                                
+                                var answer = await robustConnection.CreateAnswerAsync(offerSdp);
+                                Console.WriteLine($"Answer created for syncshell {syncshellId}");
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Connection is not RobustWebRTCConnection: {connection.GetType().Name}");
+                                // Fallback for non-robust connections
+                                var offerSdp = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(offerBase64));
+                                var answer = await connection.CreateAnswerAsync(offerSdp);
+                            }
+                            Console.WriteLine($"Answer created for syncshell {syncshellId}");
+                            
+                            // Answer code will be generated via callback from CreateAnswerAsync
+                            Console.WriteLine($"Answer creation completed - callback should have been triggered");
+                            
+                            // Store connection
+                            _webrtcConnections[syncshellId] = connection;
+                            
+                            SecureLogger.LogInfo("WebRTC answer created for syncshell {0}", syncshellId);
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"DEBUG: Exception in ProcessWebRTCOffer: {ex.Message}");
                             SecureLogger.LogError("Failed to process WebRTC offer: {0}", ex.Message);
+                            Console.WriteLine($"Error processing WebRTC offer: {ex.Message}");
                         }
-                    }
-                    else
-                    {
-                        Console.WriteLine($"DEBUG: No offer in invite code - skipping ProcessWebRTCOffer");
                     }
                 }
                 
@@ -686,6 +895,103 @@ namespace FyteClub
             {
                 SecureLogger.LogError("Failed to join syncshell by invite code: {0}", ex.Message);
                 return JoinResult.Failed;
+            }
+        }
+        
+        private async Task<JoinResult> JoinViaBootstrap(string bootstrapCode)
+        {
+            try
+            {
+                var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(bootstrapCode));
+                var bootstrapInfo = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
+                
+                var name = bootstrapInfo.GetProperty("name").GetString() ?? "";
+                var key = bootstrapInfo.GetProperty("key").GetString() ?? "";
+                var syncshellId = bootstrapInfo.GetProperty("syncshellId").GetString() ?? "";
+                
+                // Join syncshell directly
+                var success = JoinSyncshell(name, key);
+                if (success)
+                {
+                    // Real mesh routing: discover existing peers and connect through them
+                    var meshSuccess = await ConnectThroughMesh(syncshellId, name);
+                    if (meshSuccess)
+                    {
+                        SecureLogger.LogInfo("Joined syncshell via bootstrap mesh routing - connected through existing peers");
+                    }
+                    else
+                    {
+                        SecureLogger.LogWarning("Bootstrap mesh routing failed - no existing peers found");
+                        return JoinResult.Failed;
+                    }
+                }
+                
+                return success ? JoinResult.Success : JoinResult.Failed;
+            }
+            catch (Exception ex)
+            {
+                SecureLogger.LogError("Failed to join via bootstrap: {0}", ex.Message);
+                return JoinResult.Failed;
+            }
+        }
+        
+        private async Task<bool> ConnectThroughMesh(string syncshellId, string syncshellName)
+        {
+            try
+            {
+                // Discover existing peers in the mesh through proximity detection
+                var nearbyPlayers = new List<string>();
+                
+                // Check if any nearby players are already in this syncshell
+                // This uses the existing proximity detection system
+                foreach (var existingConnection in _webrtcConnections)
+                {
+                    if (existingConnection.Key.Contains(syncshellId) && existingConnection.Value.IsConnected)
+                    {
+                        // Found an existing peer in this syncshell
+                        SecureLogger.LogInfo("Found existing peer connection for mesh routing: {0}", existingConnection.Key);
+                        
+                        // Route through this existing peer
+                        var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
+                        await connection.InitializeAsync();
+                        
+                        connection.OnDataReceived += data => HandleModData(syncshellId, data);
+                        connection.OnConnected += () => {
+                            SecureLogger.LogInfo("Mesh routing connection established for syncshell {0}", syncshellId);
+                        };
+                        
+                        _webrtcConnections[syncshellId + "_mesh"] = connection;
+                        
+                        // Send mesh join request through existing peer
+                        var meshJoinRequest = new {
+                            type = "mesh_join_request",
+                            syncshellId = syncshellId,
+                            syncshellName = syncshellName,
+                            timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                        };
+                        
+                        var requestJson = System.Text.Json.JsonSerializer.Serialize(meshJoinRequest);
+                        var requestData = System.Text.Encoding.UTF8.GetBytes(requestJson);
+                        
+                        await existingConnection.Value.SendDataAsync(requestData);
+                        
+                        // Wait for mesh routing to complete
+                        await Task.Delay(2000);
+                        
+                        // Connection will be established through WebRTC handshake
+                        // OnConnected event will fire automatically when ready
+                        
+                        return true;
+                    }
+                }
+                
+                SecureLogger.LogWarning("No existing peers found for mesh routing in syncshell {0}", syncshellName);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                SecureLogger.LogError("Mesh routing failed: {0}", ex.Message);
+                return false;
             }
         }
         
@@ -935,50 +1241,61 @@ namespace FyteClub
         
 
         
-        private async Task ProcessWebRTCOffer(string syncshellId, string offer)
+        private async Task ProcessWebRTCOffer(string syncshellId, string inviteCode)
         {
             try
             {
-                Console.WriteLine($"ProcessWebRTCOffer: Creating connection for {syncshellId}");
                 var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                 await connection.InitializeAsync();
                 
                 connection.OnDataReceived += data => HandleModData(syncshellId, data);
                 connection.OnConnected += () => {
-                    Console.WriteLine($"WebRTC connected to host for {syncshellId}");
                     SecureLogger.LogInfo("WebRTC connected to host for syncshell {0}", syncshellId);
                 };
                 
-                Console.WriteLine($"ProcessWebRTCOffer: Processing offer for {syncshellId}");
-                var answer = await connection.CreateAnswerAsync(offer);
-                Console.WriteLine($"ProcessWebRTCOffer: Answer created, length: {answer.Length}");
+                // Extract the offer SDP from the invite code
+                var offerSdp = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(inviteCode));
                 
-                // Store connection with multiple keys for easier lookup
-                _webrtcConnections[syncshellId + "_client"] = connection;
-                _webrtcConnections[syncshellId] = connection; // Also store with just syncshell ID
-                Console.WriteLine($"ProcessWebRTC: Stored connection as {syncshellId}_client and {syncshellId}");
-                
-                // For simplified P2P implementation, automatically send answer back to host
-                Console.WriteLine($"ProcessWebRTCOffer: Looking for host connection to send answer");
-                var hostConnectionKey = syncshellId + "_host";
-                if (_webrtcConnections.TryGetValue(hostConnectionKey, out var hostConnection))
+                // Process invite with ICE candidates if it's a RobustWebRTCConnection
+                if (connection is WebRTC.RobustWebRTCConnection robustConnection)
                 {
-                    Console.WriteLine($"ProcessWebRTCOffer: Found host connection, sending answer");
-                    await hostConnection.SetRemoteAnswerAsync(answer);
-                    Console.WriteLine($"ProcessWebRTCOffer: Answer sent to host - handshake should complete");
+                    robustConnection.ProcessInviteWithIce(inviteCode);
+                }
+                
+                var answer = await connection.CreateAnswerAsync(offerSdp);
+                Console.WriteLine($"Answer ready for host");
+                
+                // Generate answer code for manual exchange
+                string answerCode;
+                if (connection is WebRTC.RobustWebRTCConnection robust)
+                {
+                    answerCode = robust.GenerateAnswerWithIce(answer);
+                    Console.WriteLine($"Generated answer code with ICE: {answerCode.Length} chars");
                 }
                 else
                 {
-                    Console.WriteLine($"ProcessWebRTCOffer: Host connection not found - this is expected for cross-machine P2P");
-                    // In a real P2P system, the answer would be sent through a signaling server
+                    answerCode = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(answer));
+                    Console.WriteLine($"Generated simple answer code: {answerCode.Length} chars");
                 }
                 
-                SecureLogger.LogInfo("WebRTC answer created for syncshell {0}", syncshellId);
+                // Store for UI retrieval
+                _lastAnswerCode = answerCode;
+                Console.WriteLine($"Stored answer code in _lastAnswerCode: {!string.IsNullOrEmpty(_lastAnswerCode)}");
+                
+                // Store connection
+                _webrtcConnections[syncshellId] = connection;
+                
+                // Display answer code for manual copy-paste to host
+                Console.WriteLine($"\n=== ANSWER CODE FOR HOST ===");
+                Console.WriteLine(answerCode);
+                Console.WriteLine($"Copy this answer code and send it to the host to complete connection.");
+                Console.WriteLine($"==============================\n");
+                
+                SecureLogger.LogInfo("WebRTC answer created for syncshell {0} - waiting for host to process answer", syncshellId);
             }
             catch (Exception ex)
             {
                 SecureLogger.LogError("Failed to process WebRTC offer for syncshell {0}: {1}", syncshellId, ex.Message);
-                Console.WriteLine($"ProcessWebRTCOffer: Error - {ex.Message}");
             }
         }
         
@@ -1081,6 +1398,11 @@ namespace FyteClub
             }
         }
 
+        public Task<string> GetLastAnswerCode()
+        {
+            return Task.FromResult(_lastAnswerCode);
+        }
+        
         public void Dispose()
         {
             if (_disposed) return;

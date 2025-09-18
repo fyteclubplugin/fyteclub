@@ -476,15 +476,7 @@ namespace FyteClub
                     if (success)
                     {
                         _pluginLog.Info($"FyteClub: Discovered {playerName} is in syncshell '{syncshell.Name}'");
-                        
-                        // Add to member list and phonebook
-                        if (syncshell.Members == null) syncshell.Members = new List<string>();
-                        if (!syncshell.Members.Contains(playerName))
-                        {
-                            syncshell.Members.Add(playerName);
-                            SaveConfiguration();
-                        }
-                        
+                        // Only add to phonebook, not member list (member list updated via P2P messages)
                         _syncshellManager.AddToPhonebook(playerName, syncshell.Id);
                         return;
                     }
@@ -823,18 +815,8 @@ namespace FyteClub
                     capturedWorldName = localPlayer?.HomeWorld.Value.Name.ToString();
                 });
                 
-                // Request member list sync with captured player name
-                if (!string.IsNullOrEmpty(capturedPlayerName) && !string.IsNullOrEmpty(capturedWorldName))
-                {
-                    var fullPlayerName = $"{capturedPlayerName}@{capturedWorldName}";
-                    _pluginLog.Info($"FyteClub: About to request member list sync with player name: {fullPlayerName}");
-                    await _syncshellManager.RequestMemberListSync(syncshell.Id, fullPlayerName);
-                    _pluginLog.Info($"FyteClub: Member list sync request completed");
-                }
-                else
-                {
-                    _pluginLog.Warning($"FyteClub: Cannot request member list sync - missing player info: name={capturedPlayerName}, world={capturedWorldName}");
-                }
+                // Member list sync will be handled automatically by the bootstrap logic when WebRTC data channel opens
+                _pluginLog.Info($"FyteClub: Member list sync will be handled by bootstrap when WebRTC connection is ready");
                 
                 // Share our appearance immediately
                 if (!string.IsNullOrEmpty(capturedPlayerName))
@@ -1386,6 +1368,9 @@ namespace FyteClub
         private readonly FyteClubPlugin _plugin;
         private string _newSyncshellName = "";
         private string _inviteCode = "";
+        private string _answerCode = "";
+        private bool _showAnswerInput = false;
+        private string _answerCodeToSend = "";
 
         private DateTime _lastCopyTime = DateTime.MinValue;
         private int _lastCopiedIndex = -1;
@@ -1437,6 +1422,13 @@ namespace FyteClub
             ImGui.TextColored(activeSyncshells > 0 ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
                 $"Active Syncshells: {activeSyncshells}/{syncshells.Count}");
             
+            // Check for stale syncshells
+            var staleSyncshells = syncshells.Where(s => s.IsStale).ToList();
+            if (staleSyncshells.Count > 0)
+            {
+                ImGui.TextColored(new Vector4(1, 0.5f, 0, 1), $"⚠️ {staleSyncshells.Count} syncshells need bootstrap (30+ days old)");
+            }
+            
             ImGui.Separator();
             ImGui.Text("Create New Syncshell:");
             ImGui.InputText("Syncshell Name##create", ref _newSyncshellName, 50);
@@ -1464,7 +1456,8 @@ namespace FyteClub
             
             ImGui.Separator();
             ImGui.Text("Join Syncshell:");
-            ImGui.InputText("Invite Code (syncshell://...)", ref _inviteCode, 2000);
+            ImGui.InputText("Invite Code", ref _inviteCode, 2000);
+            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Supports: syncshell:password:wormhole, bootstrap:code:syncshell");
             
             if (ImGui.Button("Join Syncshell"))
             {
@@ -1484,6 +1477,21 @@ namespace FyteClub
                                 case JoinResult.Success:
                                     _plugin._pluginLog.Info("Successfully joined syncshell via invite code");
                                     _plugin.SaveConfiguration();
+                                    
+                                    // Wait a moment for WebRTC processing to complete
+                                    await Task.Delay(1000);
+                                    
+                                    // Store answer code for button display
+                                    var answerCode = await _plugin._syncshellManager.GetLastAnswerCode();
+                                    if (!string.IsNullOrEmpty(answerCode))
+                                    {
+                                        _answerCodeToSend = answerCode;
+                                        _plugin._pluginLog.Info("Answer code ready - button will appear in UI");
+                                    }
+                                    else
+                                    {
+                                        _plugin._pluginLog.Warning("No answer code generated - this may be a bootstrap invite");
+                                    }
                                     
                                     // Establish initial P2P connection with host
                                     _plugin._pluginLog.Info($"About to establish P2P connection with code: {capturedCode}");
@@ -1509,6 +1517,22 @@ namespace FyteClub
                 }
             }
             
+            // Show answer code button after joining
+            if (!string.IsNullOrEmpty(_answerCodeToSend))
+            {
+                ImGui.Separator();
+                if (ImGui.Button("Copy Answer Code for Host"))
+                {
+                    ImGui.SetClipboardText(_answerCodeToSend);
+                    _plugin._pluginLog.Info("Answer code copied to clipboard - send to host");
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Clear"))
+                {
+                    _answerCodeToSend = "";
+                }
+            }
+            
             ImGui.Separator();
             ImGui.Text("Your Syncshells:");
             for (int i = 0; i < syncshells.Count; i++)
@@ -1523,7 +1547,9 @@ namespace FyteClub
                 }
                 
                 ImGui.SameLine();
-                ImGui.Text($"{syncshell.Name} ({syncshell.Members?.Count ?? 0} members)");
+                var statusColor = syncshell.IsStale ? new Vector4(1, 0.5f, 0, 1) : new Vector4(1, 1, 1, 1);
+                var statusText = syncshell.IsStale ? " [STALE]" : "";
+                ImGui.TextColored(statusColor, $"{syncshell.Name} ({syncshell.Members?.Count ?? 0} members){statusText}");
                 
                 ImGui.SameLine();
                 
@@ -1550,6 +1576,35 @@ namespace FyteClub
                     ImGui.BeginDisabled();
                 }
                 
+                // Check if we have existing connections for this syncshell
+                var hasConnections = _plugin._syncshellManager.GetSyncshells()
+                    .Any(s => s.Id == syncshell.Id && s.Members?.Count > 1);
+                
+                // Show bootstrap button for stale syncshells
+                if (syncshell.IsStale)
+                {
+                    if (ImGui.SmallButton($"Bootstrap##bootstrap_{i}"))
+                    {
+                        try
+                        {
+                            _ = Task.Run(async () => {
+                                var bootstrapCode = await _plugin._syncshellManager.CreateBootstrapCode(syncshell.Id);
+                                ImGui.SetClipboardText(bootstrapCode);
+                                _plugin._pluginLog.Info($"Copied bootstrap code for stale syncshell: {syncshell.Name}");
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            _plugin._pluginLog.Error($"Bootstrap code generation failed: {ex.Message}");
+                        }
+                    }
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip("Last sync was 30+ days ago. Share this code with friends to rebuild connections.");
+                    }
+                    ImGui.SameLine();
+                }
+                
                 if (ImGui.SmallButton($"Copy Invite Code##syncshell_{i}"))
                 {
                     try
@@ -1557,7 +1612,16 @@ namespace FyteClub
                         _ = Task.Run(async () => {
                             var inviteCode = await _plugin._syncshellManager.GenerateInviteCode(syncshell.Id);
                             ImGui.SetClipboardText(inviteCode);
-                            _plugin._pluginLog.Info($"Copied invite code to clipboard: {syncshell.Name}");
+                            
+                            if (inviteCode.StartsWith("BOOTSTRAP:"))
+                            {
+                                _plugin._pluginLog.Info($"Copied bootstrap invite (easy join): {syncshell.Name}");
+                            }
+                            else
+                            {
+                                _plugin._pluginLog.Info($"Copied manual invite (requires answer exchange): {syncshell.Name}");
+                                _showAnswerInput = true; // Show answer input after generating manual invite
+                            }
                         });
                         _lastCopyTime = DateTime.UtcNow;
                         _lastCopiedIndex = i;
@@ -1565,6 +1629,31 @@ namespace FyteClub
                     catch (Exception ex)
                     {
                         _plugin._pluginLog.Error($"Invite code generation failed for {syncshell.Name}: {ex.Message}");
+                    }
+                }
+                
+                // Show manual invite option if we have connections (as fallback)
+                if (hasConnections)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton($"Manual Invite##manual_{i}"))
+                    {
+                        try
+                        {
+                            _ = Task.Run(async () => {
+                                var manualCode = await _plugin._syncshellManager.GenerateManualInviteCode(syncshell.Id);
+                                ImGui.SetClipboardText(manualCode);
+                                _plugin._pluginLog.Info($"Copied manual invite (requires answer exchange): {syncshell.Name}");
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            _plugin._pluginLog.Error($"Manual invite generation failed: {ex.Message}");
+                        }
+                    }
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip("Fallback method if bootstrap fails");
                     }
                 }
                 
@@ -1594,6 +1683,67 @@ namespace FyteClub
             if (syncshells.Count == 0)
             {
                 ImGui.Text("No syncshells yet. Create one to share mods with friends!");
+            }
+            
+            // Show answer input only after host generates manual invite
+            if (_showAnswerInput)
+            {
+                ImGui.Separator();
+                ImGui.Text("Complete P2P Connection:");
+            ImGui.InputText("Answer Code (from joiner)", ref _answerCode, 10000);
+            
+            if (ImGui.Button("Process Answer"))
+            {
+                if (!string.IsNullOrEmpty(_answerCode))
+                {
+                    var capturedAnswer = _answerCode;
+                    _answerCode = "";
+                    
+                    _plugin._pluginLog.Info($"🔘🔘🔘 UI: Process Answer button clicked with {capturedAnswer.Length} chars");
+                    Console.WriteLine($"🔘🔘🔘 UI: Process Answer button clicked with {capturedAnswer.Length} chars");
+                    Console.WriteLine($"🔘🔘🔘 UI: Answer code preview: {capturedAnswer.Substring(0, Math.Min(100, capturedAnswer.Length))}...");
+                    Console.WriteLine($"🔘🔘🔘 UI: Thread ID: {System.Threading.Thread.CurrentThread.ManagedThreadId}");
+                    
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            _plugin._pluginLog.Info($"🎯🎯🎯 UI: About to call ProcessAnswerCode on thread {System.Threading.Thread.CurrentThread.ManagedThreadId}");
+                            Console.WriteLine($"🎯🎯🎯 UI: About to call ProcessAnswerCode on thread {System.Threading.Thread.CurrentThread.ManagedThreadId}");
+                            Console.WriteLine($"🎯🎯🎯 UI: Timestamp before call: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff}");
+                            
+                            var success = await _plugin._syncshellManager.ProcessAnswerCode(capturedAnswer);
+                            
+                            _plugin._pluginLog.Info($"🎯🎯🎯 UI: ProcessAnswerCode returned: {success}");
+                            Console.WriteLine($"🎯🎯🎯 UI: ProcessAnswerCode returned: {success}");
+                            Console.WriteLine($"🎯🎯🎯 UI: Timestamp after call: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff}");
+                            
+                            if (success)
+                            {
+                                _plugin._pluginLog.Info("🎉🎉🎉 Answer processed successfully - P2P connection established");
+                                Console.WriteLine($"🎉🎉🎉 Answer processed successfully - P2P connection established");
+                                _showAnswerInput = false; // Hide after successful processing
+                            }
+                            else
+                            {
+                                _plugin._pluginLog.Warning("❌❌❌ Failed to process answer code");
+                                Console.WriteLine($"❌❌❌ Failed to process answer code");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _plugin._pluginLog.Error($"💥💥💥 Error processing answer: {ex.Message}");
+                            Console.WriteLine($"💥💥💥 Error processing answer: {ex.Message}");
+                            Console.WriteLine($"💥💥💥 Error stack trace: {ex.StackTrace}");
+                        }
+                    });
+                }
+                else
+                {
+                    _plugin._pluginLog.Warning("⚠️⚠️⚠️ UI: Process Answer clicked but answer code is empty");
+                    Console.WriteLine($"⚠️⚠️⚠️ UI: Process Answer clicked but answer code is empty");
+                }
+            }
             }
             
             ImGui.Separator();

@@ -18,9 +18,11 @@ namespace FyteClub
         public int MemberCount { get; set; }
         public List<string> Members { get; set; } = new();
         public string Status { get; set; } = "";
+        public DateTime LastConnected { get; set; } = DateTime.UtcNow;
         
         // Helper property for invite permissions
         public bool CanShare => IsOwner || CanInvite || Members.Count < 10;
+        public bool IsStale => DateTime.UtcNow - LastConnected > TimeSpan.FromDays(30);
         
         public SyncshellInfo() { }
         
@@ -32,6 +34,7 @@ namespace FyteClub
             IsHost = isHost;
             IsOwner = isHost;
             CanInvite = true;
+            LastConnected = DateTime.UtcNow;
         }
     }
 }
