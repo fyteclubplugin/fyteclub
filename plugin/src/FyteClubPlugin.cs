@@ -856,7 +856,7 @@ namespace FyteClub
                 // Share our appearance immediately
                 if (!string.IsNullOrEmpty(capturedPlayerName))
                 {
-                    _ = Task.Run(() => SharePlayerModsToSyncshells(capturedPlayerName));
+                    _ = Task.Run(async () => await SharePlayerModsToSyncshells(capturedPlayerName));
                 }
             }
             catch (Exception ex)
@@ -962,7 +962,7 @@ namespace FyteClub
                         await SharePlayerModsToSyncshells(playerName);
                         
                         // Share companion mods on main thread
-                        await _framework.RunOnFrameworkThread(() => ShareCompanionMods(playerName));
+                        _framework.RunOnFrameworkThread(() => ShareCompanionMods(playerName));
                         
                         _pluginLog.Debug($"Auto-shared appearance and companion mods after change");
                     });
@@ -1492,7 +1492,6 @@ namespace FyteClub
             ImGui.Separator();
             ImGui.Text("Join Syncshell:");
             ImGui.InputText("Invite Code", ref _inviteCode, 2000);
-            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Supports: syncshell:password:wormhole, bootstrap:code:syncshell");
             
             if (ImGui.Button("Join Syncshell"))
             {

@@ -63,25 +63,25 @@ namespace FyteClub
         private int _maxRequests = 10;
         private TimeSpan _rateLimitWindow = TimeSpan.FromMinutes(1);
 
-        public async Task<bool> CheckProximityAndSync(PlayerInfo player, float maxRange)
+        public Task<bool> CheckProximityAndSync(PlayerInfo player, float maxRange)
         {
             var distance = _playerPosition.Distance(player.Position);
-            return distance <= maxRange;
+            return Task.FromResult(distance <= maxRange);
         }
 
-        public async Task<bool> CompareModHashes(ModCollection local, ModCollection remote)
+        public Task<bool> CompareModHashes(ModCollection local, ModCollection remote)
         {
-            return local.Hash != remote.Hash;
+            return Task.FromResult(local.Hash != remote.Hash);
         }
 
-        public async Task<TransferResult> TransferModData(ModData modData, DataChannel channel)
+        public Task<TransferResult> TransferModData(ModData modData, DataChannel channel)
         {
             if (channel.State != DataChannelState.Open)
-                return new TransferResult { Success = false };
+                return Task.FromResult(new TransferResult { Success = false });
 
             // Real encryption would go here
             var encrypted = modData.Content; // Placeholder - real encryption needed
-            return new TransferResult { Success = true, EncryptedData = encrypted };
+            return Task.FromResult(new TransferResult { Success = true, EncryptedData = encrypted });
         }
 
         public void SetRateLimit(int maxRequests, TimeSpan window)
@@ -90,18 +90,18 @@ namespace FyteClub
             _rateLimitWindow = window;
         }
 
-        public async Task<RateLimitResult> RequestTransfer(string peerId, string modId)
+        public Task<RateLimitResult> RequestTransfer(string peerId, string modId)
         {
             var now = DateTime.Now;
             
             var requests = _rateLimits.Count(kvp => kvp.Key.StartsWith(peerId) && 
                 now - kvp.Value < _rateLimitWindow);
             if (requests >= _maxRequests)
-                return new RateLimitResult { Allowed = false };
+                return Task.FromResult(new RateLimitResult { Allowed = false });
             
             var key = $"{peerId}:{modId}";
             _rateLimits[key] = now;
-            return new RateLimitResult { Allowed = true };
+            return Task.FromResult(new RateLimitResult { Allowed = true });
         }
     }
 
@@ -115,29 +115,29 @@ namespace FyteClub
             _watchedFiles.Add(filePath);
         }
 
-        public async Task SimulateFileChange(string filePath)
+        public Task SimulateFileChange(string filePath)
         {
             if (_watchedFiles.Contains(filePath))
                 _pendingChanges.Add(filePath);
+            return Task.CompletedTask;
         }
 
-        public async Task<List<string>> GetPendingChanges()
+        public Task<List<string>> GetPendingChanges()
         {
-            return new List<string>(_pendingChanges);
+            return Task.FromResult(new List<string>(_pendingChanges));
         }
     }
 
     public class ModConflictResolver
     {
-        public async Task<ModData> ResolveConflict(ModData local, ModData remote)
+        public Task<ModData> ResolveConflict(ModData local, ModData remote)
         {
-            
             if (remote.Version > local.Version)
-                return remote;
+                return Task.FromResult(remote);
             if (local.Version > remote.Version)
-                return local;
+                return Task.FromResult(local);
                 
-            return remote.LastModified > local.LastModified ? remote : local;
+            return Task.FromResult(remote.LastModified > local.LastModified ? remote : local);
         }
     }
 }

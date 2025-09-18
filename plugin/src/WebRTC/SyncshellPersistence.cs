@@ -150,7 +150,7 @@ namespace FyteClub.WebRTC
         public string SyncshellId { get; set; } = string.Empty;
         public string Password { get; set; } = string.Empty;
         public List<string> KnownPeers { get; set; } = new();
-        public DateTime LastConnected { get; set; };
+        public DateTime LastConnected { get; set; }
         public string MyPeerId { get; set; } = string.Empty;
         public bool IsStale => DateTime.UtcNow - LastConnected > TimeSpan.FromDays(30);
     }
