@@ -18,6 +18,7 @@ using System.Text;
 using System.Security.Cryptography;
 using Dalamud.Plugin.Ipc;
 using System.Text.Json;
+using FyteClub.WebRTC;
 
 namespace FyteClub
 {
@@ -304,15 +305,49 @@ namespace FyteClub
             });
         }
 
-        private Task AttemptPeerReconnections()
+        private async Task AttemptPeerReconnections()
         {
-            // Peer reconnection logic without duplicate announcements
+            // Peer reconnection logic using wormhole bootstrap system
             var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive).ToList();
-            if (activeSyncshells.Count == 0) return Task.CompletedTask;
+            if (activeSyncshells.Count == 0) return;
             
+            Console.WriteLine($"🔄 [FyteClubPlugin] Starting peer reconnections for {activeSyncshells.Count} active syncshells");
             _pluginLog.Info($"FyteClub: Attempting peer reconnections for {activeSyncshells.Count} active syncshells...");
-            // Actual reconnection logic would go here
-            return Task.CompletedTask;
+            
+            foreach (var syncshell in activeSyncshells)
+            {
+                try
+                {
+                    Console.WriteLine($"🔄 [FyteClubPlugin] Attempting reconnection for syncshell: {syncshell.Name}");
+                    
+                    // Use phonebook reconnection for each syncshell
+                    var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
+                    await connection.InitializeAsync();
+                    
+                    // Try to reconnect using stored peer list
+                    var knownPeers = syncshell.Members ?? new List<string>();
+                    var myPeerId = "local_player"; // Could be made more sophisticated
+                    
+                    var success = await FyteClub.WebRTC.PhonebookReconnection.TryReconnectToPhonebook(
+                        syncshell.Id, syncshell.EncryptionKey, myPeerId, knownPeers, connection);
+                    
+                    if (success)
+                    {
+                        Console.WriteLine($"✅ [FyteClubPlugin] Successfully reconnected to syncshell: {syncshell.Name}");
+                        _pluginLog.Info($"Successfully reconnected to syncshell: {syncshell.Name}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"❌ [FyteClubPlugin] Failed to reconnect to syncshell: {syncshell.Name}");
+                        _pluginLog.Warning($"Failed to reconnect to syncshell: {syncshell.Name}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"❌ [FyteClubPlugin] Exception during reconnection for {syncshell.Name}: {ex.Message}");
+                    _pluginLog.Error($"Exception during reconnection for {syncshell.Name}: {ex.Message}");
+                }
+            }
         }
 
         private async Task PerformPeerDiscovery()

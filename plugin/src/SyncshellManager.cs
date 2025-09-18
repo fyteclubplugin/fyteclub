@@ -218,10 +218,21 @@ namespace FyteClub
         
         public async Task<string> CreateBootstrapCode(string syncshellId)
         {
-            var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
-            if (syncshell == null) return string.Empty;
+            Console.WriteLine($"🚀 [SyncshellManager] Creating bootstrap code for syncshell: {syncshellId}");
             
-            return WebRTC.SyncshellRecovery.CreateBootstrapCode(syncshellId, syncshell.EncryptionKey);
+            var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+            if (syncshell == null) 
+            {
+                Console.WriteLine($"❌ [SyncshellManager] Syncshell {syncshellId} not found for bootstrap");
+                return string.Empty;
+            }
+            
+            Console.WriteLine($"🚀 [SyncshellManager] Found syncshell: {syncshell.Name}, IsStale: {syncshell.IsStale}");
+            
+            var bootstrapCode = WebRTC.SyncshellRecovery.CreateBootstrapCode(syncshellId, syncshell.EncryptionKey);
+            Console.WriteLine($"✅ [SyncshellManager] Bootstrap code created: {bootstrapCode}");
+            
+            return bootstrapCode;
         }
         
         private string GenerateBootstrapCode(string syncshellId)
