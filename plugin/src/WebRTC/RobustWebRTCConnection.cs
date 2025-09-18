@@ -79,16 +79,23 @@ namespace FyteClub.WebRTC
                 _webrtcManager.OnPeerDisconnected += (peer) => {
                     if (_currentPeer == peer)
                     {
+                        Console.WriteLine($"🔌 [RobustWebRTCConnection] Peer disconnected: {peer.PeerId}");
                         _currentPeer = null;
                         OnDisconnected?.Invoke();
                         
                         // Attempt automatic reconnection after 5 seconds
                         if (!string.IsNullOrEmpty(_currentSyncshellId))
                         {
+                            Console.WriteLine($"🔄 [RobustWebRTCConnection] Scheduling automatic reconnection for {_currentSyncshellId} in 5 seconds");
                             _ = Task.Run(async () => {
                                 await Task.Delay(5000);
+                                Console.WriteLine($"🚀 [RobustWebRTCConnection] Starting automatic reconnection for {_currentSyncshellId}");
                                 await _reconnectionManager?.AttemptReconnection(_currentSyncshellId);
                             });
+                        }
+                        else
+                        {
+                            Console.WriteLine($"❌ [RobustWebRTCConnection] No syncshell ID available for reconnection");
                         }
                     }
                 };
@@ -115,24 +122,34 @@ namespace FyteClub.WebRTC
         
         public void SetSyncshellInfo(string syncshellId, string password)
         {
+            Console.WriteLine($"📝 [RobustWebRTCConnection] Setting syncshell info: {syncshellId}");
+            
             _currentSyncshellId = syncshellId;
             _currentPassword = password;
             
             // Save to persistence for reconnection
-            _persistence?.SaveSyncshell(syncshellId, password, new List<string>());
+            Console.WriteLine($"💾 [RobustWebRTCConnection] Saving syncshell to persistence");
+            _persistence?.SaveSyncshell(syncshellId, password, new List<string>(), "local_peer");
+            
+            Console.WriteLine($"✅ [RobustWebRTCConnection] Syncshell info set and saved");
         }
         
         private async Task<IWebRTCConnection> ReconnectToSyncshell(string syncshellId, string password)
         {
+            Console.WriteLine($"🔄 [RobustWebRTCConnection] Creating new connection for syncshell {syncshellId}");
+            
             // Create new wormhole for reconnection
             var newConnection = new RobustWebRTCConnection(_pluginLog);
             await newConnection.InitializeAsync();
             
+            Console.WriteLine($"🔄 [RobustWebRTCConnection] Generating wormhole code for reconnection");
             // Generate new wormhole code for reconnection
             var wormholeCode = await newConnection.CreateOfferAsync();
+            Console.WriteLine($"🔄 [RobustWebRTCConnection] Wormhole code generated: {wormholeCode}");
             
             // In a real implementation, this would need to coordinate with other peers
             // For now, return the connection for manual coordination
+            Console.WriteLine($"✅ [RobustWebRTCConnection] Reconnection connection ready (manual coordination required)");
             return newConnection;
         }
 

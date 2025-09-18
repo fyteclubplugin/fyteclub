@@ -25,6 +25,10 @@ namespace FyteClub.WebRTC
 
         public void SaveSyncshell(string syncshellId, string password, List<string> knownPeers, string myPeerId)
         {
+            Console.WriteLine($"💾 [SyncshellPersistence] Saving syncshell {syncshellId} with {knownPeers.Count} known peers");
+            Console.WriteLine($"💾 [SyncshellPersistence] My peer ID: {myPeerId}");
+            Console.WriteLine($"💾 [SyncshellPersistence] Known peers: {string.Join(", ", knownPeers)}");
+            
             _config.Syncshells[syncshellId] = new SyncshellInfo
             {
                 SyncshellId = syncshellId,
@@ -33,7 +37,9 @@ namespace FyteClub.WebRTC
                 LastConnected = DateTime.UtcNow,
                 MyPeerId = myPeerId
             };
+            
             SaveConfig();
+            Console.WriteLine($"✅ [SyncshellPersistence] Syncshell {syncshellId} saved successfully");
         }
 
         public SyncshellInfo? GetSyncshell(string syncshellId)
@@ -48,11 +54,21 @@ namespace FyteClub.WebRTC
 
         public void UpdatePeerList(string syncshellId, List<string> peers)
         {
+            Console.WriteLine($"🔄 [SyncshellPersistence] Updating peer list for syncshell {syncshellId}");
+            Console.WriteLine($"🔄 [SyncshellPersistence] New peer list: {string.Join(", ", peers)}");
+            
             if (_config.Syncshells.TryGetValue(syncshellId, out var info))
             {
+                var oldPeers = info.KnownPeers;
                 info.KnownPeers = peers;
                 info.LastConnected = DateTime.UtcNow;
                 SaveConfig();
+                
+                Console.WriteLine($"✅ [SyncshellPersistence] Peer list updated: {oldPeers.Count} -> {peers.Count} peers");
+            }
+            else
+            {
+                Console.WriteLine($"❌ [SyncshellPersistence] Syncshell {syncshellId} not found for peer list update");
             }
         }
 
@@ -77,14 +93,29 @@ namespace FyteClub.WebRTC
         {
             try
             {
+                Console.WriteLine($"📁 [SyncshellPersistence] Loading config from: {_configPath}");
+                
                 if (File.Exists(_configPath))
                 {
                     var json = File.ReadAllText(_configPath);
                     _config = JsonSerializer.Deserialize<SyncshellConfig>(json) ?? new();
+                    
+                    Console.WriteLine($"✅ [SyncshellPersistence] Config loaded successfully: {_config.Syncshells.Count} syncshells");
+                    foreach (var syncshell in _config.Syncshells.Values)
+                    {
+                        var daysSinceLastConnection = (DateTime.UtcNow - syncshell.LastConnected).TotalDays;
+                        Console.WriteLine($"📁 [SyncshellPersistence] - {syncshell.SyncshellId}: {syncshell.KnownPeers.Count} peers, last connected {daysSinceLastConnection:F1} days ago");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"📁 [SyncshellPersistence] Config file not found, creating new config");
+                    _config = new();
                 }
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"❌ [SyncshellPersistence] Failed to load config: {ex.Message}");
                 _pluginLog?.Error($"Failed to load syncshell config: {ex.Message}");
                 _config = new();
             }
@@ -94,11 +125,16 @@ namespace FyteClub.WebRTC
         {
             try
             {
+                Console.WriteLine($"💾 [SyncshellPersistence] Saving config to: {_configPath}");
+                
                 var json = JsonSerializer.Serialize(_config, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(_configPath, json);
+                
+                Console.WriteLine($"✅ [SyncshellPersistence] Config saved successfully: {_config.Syncshells.Count} syncshells");
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"❌ [SyncshellPersistence] Failed to save config: {ex.Message}");
                 _pluginLog?.Error($"Failed to save syncshell config: {ex.Message}");
             }
         }

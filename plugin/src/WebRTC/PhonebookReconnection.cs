@@ -39,16 +39,32 @@ namespace FyteClub.WebRTC
             List<string> knownPeerIds, 
             IWebRTCConnection connection)
         {
+            Console.WriteLine($"📞 [PhonebookReconnection] Starting phonebook reconnection for {myPeerId} in syncshell {syncshellId}");
+            Console.WriteLine($"📞 [PhonebookReconnection] Known peers in phonebook: {knownPeerIds.Count} - {string.Join(", ", knownPeerIds)}");
+            
             foreach (var peerId in knownPeerIds)
             {
-                if (peerId == myPeerId) continue;
+                if (peerId == myPeerId) 
+                {
+                    Console.WriteLine($"📞 [PhonebookReconnection] Skipping self peer: {peerId}");
+                    continue;
+                }
+                
+                Console.WriteLine($"📞 [PhonebookReconnection] Attempting connection to peer: {peerId}");
                 
                 // Try current and next time slot for this peer
                 if (await TryConnectToPeer(syncshellId, password, myPeerId, peerId, connection))
                 {
+                    Console.WriteLine($"🎉 [PhonebookReconnection] Successfully reconnected to peer {peerId}");
                     return true;
                 }
+                else
+                {
+                    Console.WriteLine($"❌ [PhonebookReconnection] Failed to connect to peer {peerId}");
+                }
             }
+            
+            Console.WriteLine($"❌ [PhonebookReconnection] Failed to reconnect to any peer in phonebook ({knownPeerIds.Count} peers tried)");
             return false;
         }
 
@@ -85,15 +101,30 @@ namespace FyteClub.WebRTC
             string targetPeerId, 
             IWebRTCConnection connection)
         {
+            Console.WriteLine($"🔗 [PhonebookReconnection] Trying to connect {myPeerId} -> {targetPeerId}");
+            
             // Try current time slot
             var currentWormhole = GetPeerWormhole(syncshellId, password, myPeerId, targetPeerId);
-            if (await TryJoinWormhole(connection, currentWormhole)) return true;
+            Console.WriteLine($"🔗 [PhonebookReconnection] Current time slot wormhole: {currentWormhole}");
+            
+            if (await TryJoinWormhole(connection, currentWormhole)) 
+            {
+                Console.WriteLine($"✅ [PhonebookReconnection] Connected using current time slot wormhole");
+                return true;
+            }
             
             // Try next time slot (clock skew protection)
             var nextTime = DateTime.UtcNow.AddMinutes(5);
             var nextWormhole = GetPeerWormhole(syncshellId, password, myPeerId, targetPeerId);
-            if (await TryJoinWormhole(connection, nextWormhole)) return true;
+            Console.WriteLine($"🔗 [PhonebookReconnection] Next time slot wormhole: {nextWormhole}");
             
+            if (await TryJoinWormhole(connection, nextWormhole)) 
+            {
+                Console.WriteLine($"✅ [PhonebookReconnection] Connected using next time slot wormhole (clock skew)");
+                return true;
+            }
+            
+            Console.WriteLine($"❌ [PhonebookReconnection] Both time slots failed for {myPeerId} -> {targetPeerId}");
             return false;
         }
 
@@ -101,11 +132,14 @@ namespace FyteClub.WebRTC
         {
             try
             {
+                Console.WriteLine($"🍳 [PhonebookReconnection] Attempting to join wormhole: {wormholeCode}");
                 await connection.CreateAnswerAsync(wormholeCode);
+                Console.WriteLine($"✅ [PhonebookReconnection] Successfully joined wormhole: {wormholeCode}");
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"❌ [PhonebookReconnection] Failed to join wormhole {wormholeCode}: {ex.Message}");
                 return false;
             }
         }

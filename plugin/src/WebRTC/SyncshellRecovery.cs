@@ -20,16 +20,27 @@ namespace FyteClub.WebRTC
             List<string> knownPeers,
             IWebRTCConnection connection)
         {
+            Console.WriteLine($"🔄 [SyncshellRecovery] Starting single user reconnection for {myPeerId} in syncshell {syncshellId}");
+            Console.WriteLine($"🔄 [SyncshellRecovery] Attempting to reconnect to {knownPeers.Count} known peers: {string.Join(", ", knownPeers)}");
+            
             // Try each peer until one responds
             foreach (var peerId in knownPeers)
             {
-                if (peerId == myPeerId) continue;
+                if (peerId == myPeerId) 
+                {
+                    Console.WriteLine($"🔄 [SyncshellRecovery] Skipping self peer: {peerId}");
+                    continue;
+                }
                 
+                Console.WriteLine($"🔄 [SyncshellRecovery] Trying to reconnect to peer: {peerId}");
                 var wormholeCode = GeneratePeerWormhole(syncshellId, password, myPeerId, peerId);
+                Console.WriteLine($"🔄 [SyncshellRecovery] Generated wormhole code for {peerId}: {wormholeCode}");
                 
                 try
                 {
+                    Console.WriteLine($"🔄 [SyncshellRecovery] Attempting WebRTC connection to {peerId}...");
                     await connection.CreateAnswerAsync(wormholeCode);
+                    Console.WriteLine($"✅ [SyncshellRecovery] WebRTC connection established with {peerId}");
                     
                     // Send identity proof message
                     var proofMessage = JsonSerializer.Serialize(new {
@@ -39,14 +50,19 @@ namespace FyteClub.WebRTC
                         message = "I'm back with new IP, please update phonebook"
                     });
                     
+                    Console.WriteLine($"🔄 [SyncshellRecovery] Sending identity proof to {peerId}: {proofMessage}");
                     await connection.SendDataAsync(System.Text.Encoding.UTF8.GetBytes(proofMessage));
+                    Console.WriteLine($"🎉 [SyncshellRecovery] Successfully reconnected to {peerId} and sent identity proof");
                     return true;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Console.WriteLine($"❌ [SyncshellRecovery] Failed to connect to {peerId}: {ex.Message}");
                     continue; // Try next peer
                 }
             }
+            
+            Console.WriteLine($"❌ [SyncshellRecovery] Failed to reconnect to any of {knownPeers.Count} known peers");
             return false;
         }
 
@@ -63,12 +79,20 @@ namespace FyteClub.WebRTC
         /// </summary>
         public static string CreateBootstrapCode(string syncshellId, string password)
         {
+            Console.WriteLine($"🚀 [SyncshellRecovery] Creating bootstrap code for stale syncshell {syncshellId}");
+            
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var bootstrapData = $"{syncshellId}:{password}:{timestamp}";
+            Console.WriteLine($"🚀 [SyncshellRecovery] Bootstrap data: {bootstrapData}");
+            
             var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(bootstrapData));
             var shortCode = Convert.ToHexString(hash)[..8];
+            Console.WriteLine($"🚀 [SyncshellRecovery] Generated short code: {shortCode}");
             
-            return $"bootstrap:{shortCode}:{syncshellId}";
+            var bootstrapCode = $"bootstrap:{shortCode}:{syncshellId}";
+            Console.WriteLine($"🚀 [SyncshellRecovery] Final bootstrap code: {bootstrapCode}");
+            
+            return bootstrapCode;
         }
 
         /// <summary>
@@ -76,13 +100,27 @@ namespace FyteClub.WebRTC
         /// </summary>
         public static async Task<string> ProcessBootstrapCode(string bootstrapCode, IWebRTCConnection connection)
         {
+            Console.WriteLine($"🔧 [SyncshellRecovery] Processing bootstrap code: {bootstrapCode}");
+            
             var parts = bootstrapCode.Split(':');
-            if (parts.Length != 3 || parts[0] != "bootstrap") return string.Empty;
+            if (parts.Length != 3 || parts[0] != "bootstrap")
+            {
+                Console.WriteLine($"❌ [SyncshellRecovery] Invalid bootstrap code format. Expected 3 parts with 'bootstrap' prefix, got {parts.Length} parts");
+                return string.Empty;
+            }
             
+            var shortCode = parts[1];
             var syncshellId = parts[2];
-            var wormholeCode = await connection.CreateOfferAsync();
+            Console.WriteLine($"🔧 [SyncshellRecovery] Parsed bootstrap - Short code: {shortCode}, Syncshell ID: {syncshellId}");
             
-            return $"rejoin:{syncshellId}:{wormholeCode}";
+            Console.WriteLine($"🔧 [SyncshellRecovery] Creating WebRTC offer for rejoin...");
+            var wormholeCode = await connection.CreateOfferAsync();
+            Console.WriteLine($"🔧 [SyncshellRecovery] WebRTC offer created: {wormholeCode}");
+            
+            var rejoinCode = $"rejoin:{syncshellId}:{wormholeCode}";
+            Console.WriteLine($"🔧 [SyncshellRecovery] Generated rejoin code: {rejoinCode}");
+            
+            return rejoinCode;
         }
 
         private static string GeneratePeerWormhole(string syncshellId, string password, string peer1, string peer2)
