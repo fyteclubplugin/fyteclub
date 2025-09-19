@@ -50,7 +50,7 @@ namespace FyteClub.Tests
             var joinerShell = await system.JoinSyncshell(inviteCode);
             
             // Simulate proximity
-            system.SimulatePlayerProximity("TestPlayer", new Vector3(10, 0, 10));
+            system.SimulatePlayerProximity("TestPlayer", true);
             var syncTriggered = await system.CheckAndSync();
             
             Assert.True(syncTriggered);
@@ -63,7 +63,7 @@ namespace FyteClub.Tests
             await system.Initialize();
             
             var shell = await system.CreateSyncshell("ErrorTest");
-            system.SimulateNetworkFailure();
+            system.SimulateNetworkFailure(true);
             
             var recovered = await system.AttemptRecovery();
             
@@ -122,7 +122,7 @@ namespace FyteClub.Tests
             await system.Initialize();
             
             var shell = await system.CreateSyncshell("PerfTest");
-            await system.SimulateActivity(shell.Id, 100); // 100ms activity
+            await system.SimulateActivity("performance_test"); // activity simulation
             
             var metrics = await system.GetPerformanceMetrics();
             

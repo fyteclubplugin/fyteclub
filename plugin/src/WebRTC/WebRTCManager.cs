@@ -13,9 +13,12 @@ namespace FyteClub.WebRTC
         public IReadOnlyDictionary<string, Peer> Peers => _peers;
         public Action<Peer>? OnPeerConnected;
         public Action<Peer>? OnPeerDisconnected;
+        
+        public bool HasPeer(string peerId) => _peers.ContainsKey(peerId);
 
         private readonly ConcurrentDictionary<string, Peer> _peers = new();
-        private readonly ISignalingChannel _signalingChannel;
+        private readonly ConcurrentDictionary<string, Queue<IceCandidate>> _pendingIceCandidates = new();
+        private ISignalingChannel _signalingChannel;
         private readonly PeerConnectionConfiguration _config;
         private readonly IPluginLog? _pluginLog;
         private bool _disposed = false;
@@ -24,7 +27,7 @@ namespace FyteClub.WebRTC
         {
             _signalingChannel = signalingChannel;
             _pluginLog = pluginLog;
-            _pluginLog?.Info("[WebRTC] Using WebWormhole signaling for reliable P2P connections");
+            _pluginLog?.Info($"[WebRTC] Using {signalingChannel.GetType().Name} for P2P connections");
             
             _config = new PeerConnectionConfiguration
             {
@@ -38,36 +41,40 @@ namespace FyteClub.WebRTC
                 }
             };
 
+            RegisterSignalingHandlers();
+        }
+        
+        public void SetSignalingChannel(ISignalingChannel signalingChannel)
+        {
+            // Unregister old handlers if needed
+            if (_signalingChannel != null)
+            {
+                _signalingChannel.OnOfferReceived -= HandleOffer;
+                _signalingChannel.OnAnswerReceived -= HandleAnswer;
+                _signalingChannel.OnIceCandidateReceived -= HandleIceCandidate;
+            }
+            
+            _signalingChannel = signalingChannel;
+            RegisterSignalingHandlers();
+        }
+        
+        private void RegisterSignalingHandlers()
+        {
+            _pluginLog?.Info($"[WebRTC] Registering signaling event handlers");
             _signalingChannel.OnOfferReceived += HandleOffer;
             _signalingChannel.OnAnswerReceived += HandleAnswer;
             _signalingChannel.OnIceCandidateReceived += HandleIceCandidate;
+            _pluginLog?.Info($"[WebRTC] ✅ All signaling event handlers registered");
         }
 
-        public async Task<string> CreateWormholeAsync(string peerId)
-        {
-            if (_signalingChannel is WormholeSignaling wormhole)
-            {
-                var peer = await CreatePeer(peerId, isOfferer: true);
-                peer.Polite = false;
-                
-                var wormholeCode = await wormhole.CreateWormhole();
-                _pluginLog?.Info($"[WebRTC] Created wormhole: {wormholeCode}");
-                
-                // Start WebRTC offer creation after wormhole is ready
-                peer.PeerConnection.CreateOffer();
-                return wormholeCode;
-            }
-            throw new InvalidOperationException("WormholeSignaling required");
-        }
 
         public async Task<string> CreateOfferAsync(string peerId)
         {
+            // Only support direct offer/answer exchange (NostrSignaling)
             var peer = await CreatePeer(peerId, isOfferer: true);
-            
-            // Set as impolite peer (creates offers)
             peer.Polite = false;
             peer.MakingOffer = true;
-            
+
             var tcs = new TaskCompletionSource<string>();
             peer.PeerConnection.LocalSdpReadytoSend += (sdp) => {
                 if (sdp.Type == SdpMessageType.Offer && !tcs.Task.IsCompleted)
@@ -81,24 +88,22 @@ namespace FyteClub.WebRTC
             return await tcs.Task;
         }
 
-        public async Task JoinWormholeAsync(string wormholeCode, string peerId)
-        {
-            if (_signalingChannel is WormholeSignaling wormhole)
-            {
-                await wormhole.JoinWormhole(wormholeCode);
-                var peer = await CreatePeer(peerId, isOfferer: false);
-                peer.Polite = true;
-                _pluginLog?.Info($"[WebRTC] Joined wormhole: {wormholeCode}");
-            }
-            else
-            {
-                throw new InvalidOperationException("WormholeSignaling required");
-            }
-        }
+        // Legacy wormhole join removed. Only NostrSignaling supported.
 
         public async Task<string> CreateAnswerAsync(string peerId, string offerSdp)
         {
-            var peer = await CreatePeer(peerId, isOfferer: false);
+            // Check if peer already exists (might have been created by HandleOffer)
+            Peer peer;
+            if (_peers.ContainsKey(peerId))
+            {
+                _pluginLog?.Info($"[WebRTC] Using existing peer {peerId} for CreateAnswerAsync");
+                peer = _peers[peerId];
+            }
+            else
+            {
+                _pluginLog?.Info($"[WebRTC] Creating new peer {peerId} for CreateAnswerAsync");
+                peer = await CreatePeer(peerId, isOfferer: false);
+            }
             
             // Set as polite peer (responds to offers)
             peer.Polite = true;
@@ -127,13 +132,21 @@ namespace FyteClub.WebRTC
             return answer;
         }
 
+    public string ProcessOffer(string offerUrl, string peerId)
+        {
+            throw new NotSupportedException("Legacy PersistentSignaling is no longer supported.");
+        }
+
         private async Task<Peer> CreatePeer(string peerId, bool isOfferer)
         {
-            // Prevent duplicate peer creation
-            if (_peers.ContainsKey(peerId))
+            // Prevent duplicate peer creation - use lock for thread safety
+            lock (_peers)
             {
-                _pluginLog?.Warning($"[WebRTC] ⚠️ Peer {peerId} already exists, returning existing peer");
-                return _peers[peerId];
+                if (_peers.ContainsKey(peerId))
+                {
+                    _pluginLog?.Warning($"[WebRTC] ⚠️ Peer {peerId} already exists, returning existing peer");
+                    return _peers[peerId];
+                }
             }
             
             _pluginLog?.Info($"[WebRTC] 🏗️ Creating peer {peerId}, isOfferer: {isOfferer}");
@@ -197,6 +210,24 @@ namespace FyteClub.WebRTC
                 _pluginLog?.Info($"[WebRTC] ⏳ Answerer {peerId} waiting for data channel from remote");
             }
 
+            // SDP ready event handling - CRITICAL for offer/answer exchange
+            peerConnection.LocalSdpReadytoSend += async (sdp) => {
+                try {
+                    _pluginLog?.Info($"[WebRTC] SDP ready for {peerId}: {sdp.Type}, Content: {sdp.Content.Length} chars");
+                    if (sdp.Type == SdpMessageType.Offer) {
+                        _pluginLog?.Info($"[WebRTC] Sending offer via signaling for {peerId}");
+                        await _signalingChannel.SendOffer(peerId, sdp.Content);
+                        _pluginLog?.Info($"[WebRTC] Offer sent successfully for {peerId}");
+                    } else if (sdp.Type == SdpMessageType.Answer) {
+                        _pluginLog?.Info($"[WebRTC] Sending answer via signaling for {peerId}");
+                        await _signalingChannel.SendAnswer(peerId, sdp.Content);
+                        _pluginLog?.Info($"[WebRTC] Answer sent successfully for {peerId}");
+                    }
+                } catch (Exception ex) {
+                    _pluginLog?.Error($"[WebRTC] Failed to send SDP for {peerId}: {ex.Message}");
+                }
+            };
+
             // Interactive Connectivity Establishment candidate handling
             peerConnection.IceCandidateReadytoSend += (candidate) => {
                 _pluginLog?.Debug($"[WebRTC] Interactive Connectivity Establishment candidate ready for {peerId}: {candidate.Content}");
@@ -234,6 +265,12 @@ namespace FyteClub.WebRTC
             };
 
             _peers[peerId] = peer;
+            
+            // Process any queued ICE candidates now that peer is ready
+            _ = Task.Run(async () => {
+                await Task.Delay(100); // Small delay to ensure peer is fully ready
+                await ProcessPendingIceCandidates(peerId);
+            });
             
             // WORKAROUND: Start periodic state checking since events don't fire reliably
             _ = Task.Run(async () => {
@@ -354,47 +391,160 @@ namespace FyteClub.WebRTC
         {
             try
             {
-                _pluginLog?.Info($"[WebRTC] 📨 HandleOffer called for {peerId} (Thread: {System.Threading.Thread.CurrentThread.ManagedThreadId})");
+                _pluginLog?.Info($"[WebRTC] 🔥 HANDLE OFFER EVENT TRIGGERED for {peerId}, SDP: {offerSdp.Length} chars");
+                _pluginLog?.Info($"[WebRTC] 🔥 Current peers count: {_peers.Count}");
+                _pluginLog?.Info($"[WebRTC] 🔥 Peer exists check: {_peers.ContainsKey(peerId)}");
                 
                 // Check if peer already exists to prevent duplicates
                 if (_peers.ContainsKey(peerId))
                 {
-                    _pluginLog?.Warning($"[WebRTC] ⚠️ HandleOffer: Peer {peerId} already exists, skipping duplicate offer");
+                    _pluginLog?.Info($"[WebRTC] 🔄 Using existing peer {peerId} for offer");
+                    var existingPeer = _peers[peerId];
+                    
+                    // Set remote description on existing peer
+                    _pluginLog?.Info($"[WebRTC] 📨 JOINER: Received offer, setting remote description for {peerId}");
+                    await existingPeer.PeerConnection.SetRemoteDescriptionAsync(new SdpMessage
+                    {
+                        Type = SdpMessageType.Offer,
+                        Content = offerSdp
+                    });
+                    _pluginLog?.Info($"[WebRTC] ✅ JOINER: SetRemoteDescription COMPLETED for {peerId}");
+                    
+                    // Create answer - this will trigger LocalSdpReadytoSend event
+                    _pluginLog?.Info($"[WebRTC] 📤 JOINER: Sending answer for {peerId}");
+                    existingPeer.PeerConnection.CreateAnswer();
+                    _pluginLog?.Info($"[WebRTC] ✅ JOINER: CreateAnswer() CALLED - answer will be sent via LocalSdpReadytoSend");
                     return;
                 }
                 
+                // Create new peer and handle offer
+                _pluginLog?.Info($"[WebRTC] 🆕 Creating new peer for offer from {peerId}");
                 var answer = await CreateAnswerAsync(peerId, offerSdp);
-                await _signalingChannel.SendAnswer(peerId, answer);
-                _pluginLog?.Info($"[WebRTC] ✅ HandleOffer completed for {peerId}");
+                _pluginLog?.Info($"[WebRTC] ✅ HANDLE OFFER COMPLETED for {peerId}, answer: {answer.Length} chars");
             }
             catch (Exception ex)
             {
-                _pluginLog?.Error($"[WebRTC] ❌ Failed to handle offer from {peerId}: {ex.Message}\n{ex.StackTrace}");
+                _pluginLog?.Error($"[WebRTC] 💥 HANDLE OFFER FAILED for {peerId}: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
-        private async void HandleAnswer(string peerId, string answerSdp)
+        public async void HandleAnswer(string peerId, string answerSdp)
         {
             try
             {
+                _pluginLog?.Info($"[WebRTC] 🔥 HANDLE ANSWER EVENT TRIGGERED for {peerId}, SDP: {answerSdp.Length} chars");
+                _pluginLog?.Info($"[WebRTC] 🔥 Current peers count: {_peers.Count}");
+                _pluginLog?.Info($"[WebRTC] 🔥 Peer exists check: {_peers.ContainsKey(peerId)}");
+
                 if (_peers.TryGetValue(peerId, out var peer))
                 {
-                    _pluginLog?.Info($"[WebRTC] 📨 Setting remote answer for {peerId}");
-                    await peer.PeerConnection.SetRemoteDescriptionAsync(new SdpMessage
+                    _pluginLog?.Info($"[WebRTC] 🔄 Found peer {peerId}, validating peer connection");
+
+                    if (peer == null || peer.PeerConnection == null)
                     {
-                        Type = SdpMessageType.Answer,
-                        Content = answerSdp
-                    });
-                    _pluginLog?.Info($"[WebRTC] ✅ Remote answer set for {peerId}");
+                        _pluginLog?.Error($"[WebRTC] 💥 Peer or PeerConnection is null for {peerId}, recreating");
+                        try
+                        {
+                            var newPeer = await CreatePeer(peerId, isOfferer: false);
+                            _peers[peerId] = newPeer;
+                            peer = newPeer;
+                            _pluginLog?.Info($"[WebRTC] ✅ Recreated peer connection for {peerId}");
+                        }
+                        catch (Exception recreateEx)
+                        {
+                            _pluginLog?.Error($"[WebRTC] 💥 Failed to recreate peer connection for {peerId}: {recreateEx.Message}");
+                            return;
+                        }
+                    }
+
+                    bool isValidConnection = await ValidatePeerConnection(peer, peerId);
+                    if (!isValidConnection)
+                    {
+                        _pluginLog?.Error($"[WebRTC] 💥 Peer connection validation failed for {peerId}, recreating");
+                        try
+                        {
+                            _peers.TryRemove(peerId, out var oldPeer);
+                            oldPeer?.Dispose();
+                            var newPeer = await CreatePeer(peerId, isOfferer: false);
+                            _pluginLog?.Info($"[WebRTC] ⏳ Waiting 400ms for peer initialization for {peerId}");
+                            await Task.Delay(400);
+                            bool isNewPeerValid = await ValidatePeerConnection(newPeer, peerId);
+                            if (!isNewPeerValid)
+                            {
+                                _pluginLog?.Error($"[WebRTC] 💥 New peer connection also invalid for {peerId}");
+                                return;
+                            }
+                            peer = newPeer;
+                            _pluginLog?.Info($"[WebRTC] ✅ Successfully recreated and validated peer connection for {peerId}");
+                        }
+                        catch (Exception recreateEx)
+                        {
+                            _pluginLog?.Error($"[WebRTC] 💥 Failed to recreate peer connection for {peerId}: {recreateEx.Message}");
+                            return;
+                        }
+                    }
+
+                    _pluginLog?.Info($"[WebRTC] 🔄 Setting remote answer for {peerId}");
+                    try
+                    {
+                        _pluginLog?.Info($"[WebRTC] ⏳ Waiting 300ms before SetRemoteDescriptionAsync for {peerId}");
+                        await Task.Delay(300);
+                        await peer.PeerConnection.SetRemoteDescriptionAsync(new SdpMessage
+                        {
+                            Type = SdpMessageType.Answer,
+                            Content = answerSdp
+                        });
+                        _pluginLog?.Info($"[WebRTC] ✅ REMOTE ANSWER SET for {peerId}");
+                    }
+                    catch (InvalidOperationException ioEx) when (ioEx.Message.Contains("Object not initialized"))
+                    {
+                        _pluginLog?.Error($"[WebRTC] 💥 SetRemoteDescriptionAsync failed - Object not initialized for {peerId}");
+                        _pluginLog?.Info($"[WebRTC] 🔄 Attempting to recreate and retry for {peerId}");
+                        try
+                        {
+                            _peers.TryRemove(peerId, out _);
+                            var newPeer = await CreatePeer(peerId, isOfferer: false);
+                            _pluginLog?.Info($"[WebRTC] ⏳ Waiting 500ms for peer initialization for {peerId}");
+                            await Task.Delay(500);
+                            _pluginLog?.Info($"[WebRTC] 🔍 New peer connection created, attempting SetRemoteDescriptionAsync");
+                            await newPeer.PeerConnection.SetRemoteDescriptionAsync(new SdpMessage
+                            {
+                                Type = SdpMessageType.Answer,
+                                Content = answerSdp
+                            });
+                            _pluginLog?.Info($"[WebRTC] ✅ REMOTE ANSWER SET after recreation for {peerId}");
+                        }
+                        catch (Exception retryEx)
+                        {
+                            _pluginLog?.Error($"[WebRTC] 💥 Failed to recreate and retry for {peerId}: {retryEx.Message}");
+                        }
+                    }
                 }
                 else
                 {
-                    _pluginLog?.Warning($"[WebRTC] ⚠️ No peer found for answer from {peerId}");
+                    _pluginLog?.Error($"[WebRTC] 💥 NO PEER FOUND for answer from {peerId}");
+                    _pluginLog?.Info($"[WebRTC] 🔄 Creating new peer for late answer from {peerId}");
+                    try
+                    {
+                        var newPeer = await CreatePeer(peerId, isOfferer: false);
+                        _pluginLog?.Info($"[WebRTC] ⏳ Waiting 400ms for peer initialization for {peerId}");
+                        await Task.Delay(400);
+                        await newPeer.PeerConnection.SetRemoteDescriptionAsync(new SdpMessage
+                        {
+                            Type = SdpMessageType.Answer,
+                            Content = answerSdp
+                        });
+                        _pluginLog?.Info($"[WebRTC] ✅ Created new peer and set remote answer for {peerId}");
+                    }
+                    catch (Exception createEx)
+                    {
+                        _pluginLog?.Error($"[WebRTC] 💥 Failed to create new peer for late answer from {peerId}: {createEx.Message}");
+                    }
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog?.Error($"[WebRTC] ❌ Failed to handle answer from {peerId}: {ex.Message}");
+                _pluginLog?.Error($"[WebRTC] 💥 HANDLE ANSWER FAILED for {peerId}: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
@@ -402,23 +552,102 @@ namespace FyteClub.WebRTC
         {
             try
             {
-                if (_peers.TryGetValue(peerId, out var peer))
+                _pluginLog?.Info($"[WebRTC] 🔥 HANDLE ICE CANDIDATE EVENT TRIGGERED for {peerId}: {candidate.Content}");
+                _pluginLog?.Info($"[WebRTC] 🔥 Current peers count: {_peers.Count}");
+                _pluginLog?.Info($"[WebRTC] 🔥 Peer exists check: {_peers.ContainsKey(peerId)}");
+                
+                if (_peers.TryGetValue(peerId, out var peer) && peer.PeerConnection != null)
                 {
-                    _pluginLog?.Debug($"[WebRTC] 🧊 Adding ICE candidate for {peerId}: {candidate.Content}");
-                    peer.PeerConnection.AddIceCandidate(candidate);
-                    _pluginLog?.Debug($"[WebRTC] ✅ ICE candidate added for {peerId}");
+                    try
+                    {
+                        _pluginLog?.Info($"[WebRTC] 🧊 Adding ICE candidate for {peerId}: {candidate.Content}");
+                        peer.PeerConnection.AddIceCandidate(candidate);
+                        _pluginLog?.Info($"[WebRTC] ✅ ICE candidate added for {peerId}");
+                    }
+                    catch (InvalidOperationException ex) when (ex.Message.Contains("Object not initialized"))
+                    {
+                        _pluginLog?.Warning($"[WebRTC] ⏳ Peer not ready, queuing ICE candidate for {peerId}");
+                        QueueIceCandidate(peerId, candidate);
+                    }
                 }
                 else
                 {
-                    _pluginLog?.Warning($"[WebRTC] ⚠️ No peer found for ICE candidate from {peerId}");
+                    _pluginLog?.Warning($"[WebRTC] ⏳ No peer found, queuing ICE candidate for {peerId}");
+                    QueueIceCandidate(peerId, candidate);
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog?.Error($"[WebRTC] ❌ Failed to handle Interactive Connectivity Establishment candidate from {peerId}: {ex.Message}");
+                _pluginLog?.Error($"[WebRTC] 💥 Failed to handle ICE candidate from {peerId}: {ex.Message}");
+            }
+        }
+        
+        private void QueueIceCandidate(string peerId, IceCandidate candidate)
+        {
+            _pendingIceCandidates.AddOrUpdate(peerId, 
+                new Queue<IceCandidate>(new[] { candidate }),
+                (key, queue) => { queue.Enqueue(candidate); return queue; });
+            _pluginLog?.Info($"[WebRTC] 📦 Queued ICE candidate for {peerId}");
+        }
+        
+        private async Task ProcessPendingIceCandidates(string peerId)
+        {
+            if (_pendingIceCandidates.TryRemove(peerId, out var candidates) && _peers.TryGetValue(peerId, out var peer))
+            {
+                _pluginLog?.Info($"[WebRTC] 📦 Processing {candidates.Count} pending ICE candidates for {peerId}");
+                while (candidates.Count > 0)
+                {
+                    try
+                    {
+                        var candidate = candidates.Dequeue();
+                        peer.PeerConnection.AddIceCandidate(candidate);
+                        await Task.Delay(50); // Small delay between candidates
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog?.Error($"[WebRTC] Failed to process pending ICE candidate for {peerId}: {ex.Message}");
+                    }
+                }
+                _pluginLog?.Info($"[WebRTC] ✅ Processed all pending ICE candidates for {peerId}");
             }
         }
 
+        private async Task<bool> ValidatePeerConnection(Peer peer, string peerId)
+        {
+            try
+            {
+                _pluginLog?.Info($"[WebRTC] 🔍 Validating peer connection for {peerId}");
+                
+                // Check if peer and connection exist
+                if (peer?.PeerConnection == null)
+                {
+                    _pluginLog?.Error($"[WebRTC] 💥 Peer or PeerConnection is null for {peerId}");
+                    return false;
+                }
+                
+                // Try to access basic properties to test if the connection is initialized
+                try
+                {
+                    var hash = peer.PeerConnection.GetHashCode();
+                    _pluginLog?.Info($"[WebRTC] 🔍 Basic validation passed for {peerId} (hash: {hash})");
+                }
+                catch (Exception basicEx)
+                {
+                    _pluginLog?.Error($"[WebRTC] 💥 Basic validation failed for {peerId}: {basicEx.Message}");
+                    return false;
+                }
+                
+                // Simple validation - just check if the connection exists and is accessible
+                _pluginLog?.Info($"[WebRTC] 🔍 Peer connection validation passed for {peerId}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog?.Error($"[WebRTC] 💥 Peer validation exception for {peerId}: {ex.Message}");
+                return false;
+            }
+        }
+        
         public void Dispose()
         {
             if (_disposed) return;

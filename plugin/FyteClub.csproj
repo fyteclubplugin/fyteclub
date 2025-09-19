@@ -2,7 +2,7 @@
 <Project Sdk="Dalamud.NET.Sdk/13.1.0">
   <PropertyGroup>
     <AssemblyName>FyteClub</AssemblyName>
-    <Version>4.4.0</Version>
+    <Version>4.5.0</Version>
     <PackageProjectUrl>https://github.com/fyteclubplugin/fyteclub</PackageProjectUrl>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
@@ -26,6 +26,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.MixedReality.WebRTC\Microsoft.MixedReality.WebRTC.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Nostr.Client" Version="2.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="7.0.1" />
   </ItemGroup>
 
   <ItemGroup>

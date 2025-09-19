@@ -8,11 +8,11 @@ namespace FyteClub.WebRTC
     public class RobustWebRTCConnection : IWebRTCConnection
     {
         private WebRTCManager? _webrtcManager;
-        private WormholeSignaling? _signaling;
         private Peer? _currentPeer;
         private readonly IPluginLog? _pluginLog;
         private readonly SyncshellPersistence? _persistence;
         private readonly ReconnectionManager? _reconnectionManager;
+        private NostrSignaling? _hostNostrSignaling;
         private string _currentSyncshellId = string.Empty;
         private string _currentPassword = string.Empty;
 
@@ -43,8 +43,17 @@ namespace FyteClub.WebRTC
         {
             try
             {
-                _signaling = new WormholeSignaling(_pluginLog);
-                _webrtcManager = new WebRTCManager(_signaling, _pluginLog);
+                // Use NostrSignaling for P2P connections with most reliable relays
+                var relays = new[] { 
+                    "wss://relay.damus.io", 
+                    "wss://nos.lol", 
+                    "wss://nostr-pub.wellorder.net",
+                    "wss://relay.snort.social",
+                    "wss://nostr.wine"
+                };
+                var (priv, pub) = NostrUtil.GenerateEphemeralKeys();
+                var nostrSignaling = new NostrSignaling(relays, priv, pub, _pluginLog);
+                _webrtcManager = new WebRTCManager(nostrSignaling, _pluginLog);
 
                 _webrtcManager.OnPeerConnected += (peer) => {
                     _pluginLog?.Info($"🔗 [WebRTC] Peer connected: {peer.PeerId}, DataChannel: {peer.DataChannel?.State}");
@@ -91,7 +100,10 @@ namespace FyteClub.WebRTC
                             _ = Task.Run(async () => {
                                 await Task.Delay(5000);
                                 Console.WriteLine($"🚀 [RobustWebRTCConnection] Starting automatic reconnection for {_currentSyncshellId}");
-                                await _reconnectionManager?.AttemptReconnection(_currentSyncshellId);
+                                if (_reconnectionManager != null)
+                                {
+                                    await _reconnectionManager.AttemptReconnection(_currentSyncshellId);
+                                }
                             });
                         }
                         else
@@ -112,13 +124,110 @@ namespace FyteClub.WebRTC
 
         public async Task<string> CreateOfferAsync()
         {
-            if (_webrtcManager == null || _signaling == null) return string.Empty;
+            if (_webrtcManager == null) 
+            {
+                _pluginLog?.Error($"[WebRTC] CreateOfferAsync failed: _webrtcManager is null");
+                return string.Empty;
+            }
 
-            var peerId = "client";
-            var wormholeCode = await _webrtcManager.CreateWormholeAsync(peerId);
-            _pluginLog?.Info($"[WebRTC] Created wormhole for offer: {wormholeCode}");
-            
-            return wormholeCode;
+            try
+            {
+                // Create offer SDP directly
+                var peerId = "host";
+                _pluginLog?.Info($"[WebRTC] Creating offer SDP for peerId: {peerId}");
+                var offerSdp = await _webrtcManager.CreateOfferAsync(peerId);
+                _pluginLog?.Info($"[WebRTC] Created offer SDP (len={offerSdp.Length})");
+
+                if (string.IsNullOrEmpty(offerSdp))
+                {
+                    _pluginLog?.Error($"[WebRTC] CreateOfferAsync returned empty SDP");
+                    return string.Empty;
+                }
+
+                // Build nostr:// invite URI (uuid + default relays)
+                var uuid = Guid.NewGuid().ToString("N")[..8];
+                var relays = new[] { 
+                    "wss://relay.damus.io", 
+                    "wss://nos.lol", 
+                    "wss://nostr-pub.wellorder.net",
+                    "wss://relay.snort.social",
+                    "wss://nostr.wine"
+                };
+                _pluginLog?.Info($"[WebRTC] Generated UUID: {uuid}, using {relays.Length} relays");
+
+                // Test Nostr publishing with detailed logging
+                _pluginLog?.Info($"[WebRTC] Starting Nostr publishing test...");
+                var (priv, pub) = NostrUtil.GenerateEphemeralKeys();
+                _pluginLog?.Info($"[WebRTC] Generated keys - priv: {priv[..8]}..., pub: {pub[..8]}...");
+                
+                _hostNostrSignaling = new NostrSignaling(relays, priv, pub, _pluginLog);
+                _hostNostrSignaling.SetCurrentUuid(uuid); // Set UUID before peer creation
+                _pluginLog?.Info($"[WebRTC] NostrSignaling created with UUID {uuid}, attempting to publish offer...");
+                
+                // Set the signaling channel in WebRTC manager to use the UUID
+                _webrtcManager.SetSignalingChannel(_hostNostrSignaling);
+                
+                // Publish the original offer first to avoid crashes
+                await _hostNostrSignaling.PublishOfferAsync(uuid, offerSdp);
+                _pluginLog?.Info($"[WebRTC] Published original offer, WebRTC manager will handle ICE candidates with UUID");
+                _pluginLog?.Info($"[WebRTC] ✅ Offer published to Nostr successfully for UUID: {uuid}");
+
+                // Host subscribes to the same UUID to receive the answer
+                await _hostNostrSignaling.SubscribeAsync(uuid);
+                var answerReceived = false;
+                _hostNostrSignaling.OnAnswerReceived += async (evtUuid, answerSdp) =>
+                {
+                    if (evtUuid == uuid)
+                    {
+                        _pluginLog?.Info($"[WebRTC] HOST: Received answer SDP for UUID {uuid}, length={answerSdp?.Length ?? 0}");
+                        answerReceived = true; // Stop re-publishing
+                        if (_webrtcManager != null && !string.IsNullOrEmpty(answerSdp))
+                        {
+                            _webrtcManager.HandleAnswer("host", answerSdp);
+                            _pluginLog?.Info($"[WebRTC] HOST: Set remote answer successfully");
+                        }
+                    }
+                };
+                
+                // Periodically re-publish offer until answer is received
+                _ = Task.Run(async () =>
+                {
+                    var republishCount = 0;
+                    while (!answerReceived && republishCount < 12) // Re-publish for up to 2 minutes (12 * 10s)
+                    {
+                        await Task.Delay(10000); // Wait 10 seconds
+                        if (!answerReceived)
+                        {
+                            republishCount++;
+                            _pluginLog?.Info($"[WebRTC] HOST: Re-publishing offer #{republishCount} for UUID {uuid}");
+                            try
+                            {
+                                await _hostNostrSignaling.PublishOfferAsync(uuid, offerSdp);
+                                _pluginLog?.Info($"[WebRTC] HOST: Offer re-published #{republishCount} successfully");
+                            }
+                            catch (Exception ex)
+                            {
+                                _pluginLog?.Warning($"[WebRTC] HOST: Failed to re-publish offer #{republishCount}: {ex.Message}");
+                            }
+                        }
+                    }
+                    if (!answerReceived)
+                    {
+                        _pluginLog?.Warning($"[WebRTC] HOST: No answer received after {republishCount} re-publishes for UUID {uuid}");
+                    }
+                });
+
+                var relayParam = string.Join(',', relays);
+                var inviteUrl = $"nostr://offer?uuid={uuid}&relays={Uri.EscapeDataString(relayParam)}";
+                _pluginLog?.Info($"[WebRTC] ✅ Nostr invite generated: {inviteUrl}");
+                return inviteUrl;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog?.Error($"[WebRTC] ❌ Failed to create offer: {ex.Message}");
+                _pluginLog?.Error($"[WebRTC] ❌ Stack trace: {ex.StackTrace}");
+                return string.Empty;
+            }
         }
         
         public void SetSyncshellInfo(string syncshellId, string password)
@@ -139,14 +248,14 @@ namespace FyteClub.WebRTC
         {
             Console.WriteLine($"🔄 [RobustWebRTCConnection] Creating new connection for syncshell {syncshellId}");
             
-            // Create new wormhole for reconnection
+            // Create new persistent offer for reconnection
             var newConnection = new RobustWebRTCConnection(_pluginLog);
             await newConnection.InitializeAsync();
             
-            Console.WriteLine($"🔄 [RobustWebRTCConnection] Generating wormhole code for reconnection");
-            // Generate new wormhole code for reconnection
-            var wormholeCode = await newConnection.CreateOfferAsync();
-            Console.WriteLine($"🔄 [RobustWebRTCConnection] Wormhole code generated: {wormholeCode}");
+            Console.WriteLine($"🔄 [RobustWebRTCConnection] Generating persistent offer for reconnection");
+            // Generate new persistent offer for reconnection
+            var offerUrl = await newConnection.CreateOfferAsync();
+            Console.WriteLine($"🔄 [RobustWebRTCConnection] Persistent offer generated: {offerUrl}");
             
             // In a real implementation, this would need to coordinate with other peers
             // For now, return the connection for manual coordination
@@ -154,15 +263,153 @@ namespace FyteClub.WebRTC
             return newConnection;
         }
 
-        public async Task<string> CreateAnswerAsync(string wormholeCode)
+        public async Task<string> CreateAnswerAsync(string offerUrl)
         {
-            if (_webrtcManager == null || _signaling == null) return string.Empty;
+            return await CreateAnswerAsync(offerUrl, null);
+        }
+        
+        public async Task<string> CreateAnswerAsync(string offerUrl, string? answerUuid)
+        {
+            try
+            {
+                _pluginLog?.Info($"[WebRTC] JOINER: CreateAnswerAsync called with offerUrl: {offerUrl}");
+                Console.WriteLine($"[JOINER] CreateAnswerAsync called with offerUrl: {offerUrl}");
 
-            var peerId = "host";
-            await _webrtcManager.JoinWormholeAsync(wormholeCode, peerId);
-            _pluginLog?.Info($"[WebRTC] Joined wormhole: {wormholeCode}");
-            
-            return "connected";
+                if (_webrtcManager == null) {
+                    _pluginLog?.Error($"[WebRTC] CreateAnswerAsync failed: _webrtcManager is null");
+                    Console.WriteLine($"[JOINER] _webrtcManager is null");
+                    return string.Empty;
+                }
+
+                // Prevent duplicate connections
+                if (_currentPeer != null)
+                {
+                    _pluginLog?.Info($"[WebRTC] Already connected to a peer, skipping offer processing");
+                    Console.WriteLine($"[JOINER] Already connected to a peer, skipping offer processing");
+                    return "already_connected";
+                }
+
+                // Prevent duplicate peer creation for same UUID
+                var (testUuid, _) = NostrUtil.ParseNostrOfferUri(offerUrl);
+                if (_webrtcManager.Peers.ContainsKey(testUuid))
+                {
+                    _pluginLog?.Info($"[WebRTC] Peer {testUuid} already exists, skipping duplicate creation");
+                    Console.WriteLine($"[JOINER] Peer {testUuid} already exists, skipping duplicate creation");
+                    return "peer_exists";
+                }
+
+                _pluginLog?.Info($"[WebRTC] JOINER: Checking if URL starts with nostr://");
+                Console.WriteLine($"[JOINER] Checking if offerUrl starts with nostr://");
+                if (offerUrl.StartsWith("nostr://", StringComparison.OrdinalIgnoreCase))
+                {
+                    _pluginLog?.Info($"[WebRTC] JOINER: Parsing Nostr offer URI");
+                    Console.WriteLine($"[JOINER] Parsing Nostr offer URI");
+                    // Parse nostr offer URI and subscribe for offer
+                    var (uuid, relays) = NostrUtil.ParseNostrOfferUri(offerUrl);
+                    _pluginLog?.Info($"[WebRTC] JOINER: Using Nostr relays: {string.Join(",", relays)} for uuid {uuid}");
+                    Console.WriteLine($"[JOINER] Using Nostr relays: {string.Join(",", relays)} for uuid {uuid}");
+
+                    _pluginLog?.Info($"[WebRTC] JOINER: Generating ephemeral keys");
+                    Console.WriteLine($"[JOINER] Generating ephemeral keys");
+                    var (priv, pub) = NostrUtil.GenerateEphemeralKeys();
+                    _pluginLog?.Info($"[WebRTC] JOINER: Creating NostrSignaling instance");
+                    Console.WriteLine($"[JOINER] Creating NostrSignaling instance");
+                    var nostr = new NostrSignaling(relays.Length > 0 ? relays : new[] { "wss://relay.damus.io", "wss://nos.lol", "wss://nostr-pub.wellorder.net" }, priv, pub, _pluginLog);
+                    
+                    // CRITICAL: Set UUID and signaling channel BEFORE any peer operations
+                    nostr.SetCurrentUuid(uuid);
+                    _webrtcManager.SetSignalingChannel(nostr);
+                    _pluginLog?.Info($"[WebRTC] JOINER: UUID {uuid} set in signaling before peer creation");
+
+                    _pluginLog?.Info($"[WebRTC] JOINER: Setting up TaskCompletionSource and event handler");
+                    Console.WriteLine($"[JOINER] Setting up TaskCompletionSource and event handler");
+                    var tcs = new TaskCompletionSource<string>();
+                    void Handler(string evtUuid, string? sdp)
+                    {
+                        _pluginLog?.Debug($"[WebRTC] JOINER: OnOfferReceived fired for uuid={evtUuid}, expected={uuid}, sdpLen={sdp?.Length ?? 0}");
+                        Console.WriteLine($"[JOINER] OnOfferReceived fired for uuid={evtUuid}, expected={uuid}, sdpLen={sdp?.Length ?? 0}");
+                        if (evtUuid == uuid && !tcs.Task.IsCompleted)
+                        {
+                            _pluginLog?.Info($"[WebRTC] JOINER: Matched offer uuid, setting result");
+                            Console.WriteLine($"[JOINER] Matched offer uuid, setting result");
+                            tcs.TrySetResult(sdp ?? string.Empty);
+                        }
+                    }
+                    nostr.OnOfferReceived += Handler;
+
+                    _pluginLog?.Info($"[WebRTC] JOINER: Subscribing to uuid {uuid}");
+                    Console.WriteLine($"[JOINER] Subscribing to uuid {uuid}");
+                    await nostr.SubscribeAsync(uuid);
+                    _pluginLog?.Info($"[WebRTC] JOINER: Subscribed, waiting for offer on uuid {uuid}");
+                    Console.WriteLine($"[JOINER] Subscribed, waiting for offer on uuid {uuid}");
+
+                    // Wait up to 30s for offer
+                    using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    using (cts.Token.Register(() => tcs.TrySetCanceled())) { }
+                    string offerSdp;
+                    try {
+                        offerSdp = await tcs.Task.ConfigureAwait(false);
+                        _pluginLog?.Info($"[WebRTC] JOINER: ✅ Received offer SDP (len={offerSdp.Length})");
+                        Console.WriteLine($"[JOINER] ✅ Received offer SDP (len={offerSdp.Length})");
+                    } catch (TaskCanceledException) {
+                        _pluginLog?.Error($"[WebRTC] JOINER: ❌ Timed out waiting for offer on uuid {uuid}");
+                        Console.WriteLine($"[JOINER] ❌ Timed out waiting for offer on uuid {uuid}");
+                        throw new TimeoutException($"Timed out waiting for offer via Nostr for uuid {uuid}");
+                    } catch (Exception ex) {
+                        _pluginLog?.Error($"[WebRTC] JOINER: ❌ Error waiting for offer: {ex.Message}");
+                        _pluginLog?.Error($"[WebRTC] JOINER: ❌ Stack trace: {ex.StackTrace}");
+                        Console.WriteLine($"[JOINER] ❌ Error waiting for offer: {ex.Message}");
+                        Console.WriteLine($"[JOINER] ❌ Stack trace: {ex.StackTrace}");
+                        throw;
+                    }
+
+                    _pluginLog?.Info($"[WebRTC] JOINER: Offer received via Nostr (len={offerSdp.Length}), creating answer");
+                    Console.WriteLine($"[JOINER] Offer received via Nostr (len={offerSdp.Length}), creating answer");
+                    
+                    // Wait for HandleOffer to create the peer, then get the answer
+                    string answerSdp = "";
+                    for (int i = 0; i < 10; i++) // Wait up to 5 seconds
+                    {
+                        if (_webrtcManager.Peers.ContainsKey(uuid))
+                        {
+                            _pluginLog?.Info($"[WebRTC] JOINER: Peer {uuid} found after {i * 500}ms");
+                            // Peer was created by HandleOffer, just wait for answer to be generated
+                            await Task.Delay(1000); // Give time for answer creation
+                            answerSdp = "answer_handled_by_event";
+                            break;
+                        }
+                        await Task.Delay(500);
+                    }
+                    
+                    if (string.IsNullOrEmpty(answerSdp) || answerSdp == "answer_handled_by_event")
+                    {
+                        _pluginLog?.Info($"[WebRTC] JOINER: HandleOffer will send answer automatically");
+                        answerSdp = "ok"; // Answer will be sent by HandleOffer event
+                    }
+
+                    _pluginLog?.Info($"[WebRTC] JOINER: Publishing answer via Nostr for uuid {uuid}, answer SDP len={answerSdp?.Length ?? 0}");
+                    Console.WriteLine($"[JOINER] Publishing answer via Nostr for uuid {uuid}, answer SDP len={answerSdp?.Length ?? 0}");
+                    await nostr.PublishAnswerAsync(uuid, answerSdp ?? "ok");
+                    _pluginLog?.Info($"[WebRTC] JOINER: Answer published via Nostr for uuid {uuid}");
+                    Console.WriteLine($"[JOINER] Answer published via Nostr for uuid {uuid}");
+                    return "ok";
+                }
+                else
+                {
+                    // Legacy path removed as requested
+                    _pluginLog?.Error($"[WebRTC] JOINER: Invalid invite code, only nostr:// supported. Input: {offerUrl}");
+                    Console.WriteLine($"[JOINER] Invalid invite code, only nostr:// supported. Input: {offerUrl}");
+                    throw new InvalidOperationException("Only nostr:// invites are supported now");
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog?.Error($"[WebRTC] JOINER: Exception in CreateAnswerAsync: {ex.Message}");
+                _pluginLog?.Error($"[WebRTC] JOINER: Stack trace: {ex.StackTrace}");
+                Console.WriteLine($"[JOINER] Exception in CreateAnswerAsync: {ex.Message}");
+                Console.WriteLine($"[JOINER] Stack trace: {ex.StackTrace}");
+                throw;
+            }
         }
 
         public Task SetRemoteAnswerAsync(string answerSdp)
@@ -239,37 +486,63 @@ namespace FyteClub.WebRTC
             _pluginLog?.Info("✅ [WebRTC] Sent client ready signal - onboarding complete");
         }
 
-        public string GenerateInviteWithIce(string syncshellName, string password, string wormholeCode)
+        public string GenerateInviteWithIce(string syncshellName, string password, string offerUrl)
         {
-            return $"{syncshellName}:{password}:{wormholeCode}";
-        }
-
-        public string GenerateAnswerWithIce(string answer)
-        {
-            // No longer needed with WebWormhole
-            return "connected";
+            _pluginLog?.Info($"[WebRTC] Generating invite with persistent offer URL: {offerUrl}");
+            return $"{syncshellName}:{password}:{offerUrl}";
         }
         
         public event Action<string>? OnAnswerCodeGenerated;
-
+        
         public void ProcessInviteWithIce(string inviteCode)
         {
-            // Parse wormhole code from invite and join
+            _pluginLog?.Info($"[WebRTC] Processing invite with ICE: {inviteCode}");
+            // Parse invite code and process
             var parts = inviteCode.Split(':');
             if (parts.Length >= 3)
             {
-                var wormholeCode = parts[2];
-                _ = Task.Run(async () => await CreateAnswerAsync(wormholeCode));
+                var offerUrl = parts[2];
+                _ = Task.Run(async () => {
+                    var answer = await CreateAnswerAsync(offerUrl);
+                    OnAnswerCodeGenerated?.Invoke(answer);
+                });
             }
         }
+        
+        public string GenerateAnswerWithIce(string answer)
+        {
+            _pluginLog?.Info($"[WebRTC] Generating answer with ICE: {answer}");
+            return answer; // Already processed by Nostr signaling
+        }
+
+
 
         public void Dispose()
         {
-            _currentPeer = null;
-            _webrtcManager?.Dispose();
-            _webrtcManager = null;
-            _signaling = null;
-            _reconnectionManager?.Dispose();
+            try
+            {
+                // Cancel any ongoing tasks first
+                if (_currentPeer != null)
+                {
+                    _currentPeer.OnDataReceived = null;
+                    _currentPeer = null;
+                }
+                
+                // Dispose WebRTC manager which handles native resources
+                _webrtcManager?.Dispose();
+                _webrtcManager = null;
+                
+                // Dispose Nostr signaling connections
+                _hostNostrSignaling?.Dispose();
+                _hostNostrSignaling = null;
+                
+                // Dispose reconnection manager
+                _reconnectionManager?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                _pluginLog?.Error($"Error during RobustWebRTCConnection disposal: {ex.Message}");
+            }
         }
     }
 }

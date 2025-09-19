@@ -30,7 +30,8 @@ namespace FyteClubPlugin.Tests
             var answerCode = InviteCodeGenerator.GenerateWebRTCAnswer(syncshellId, answer, identity.EncryptionKey);
             
             // Host processes answer
-            var success = await manager.ProcessAnswerCode(answerCode);
+            var result = await manager.ProcessAnswerCode(answerCode);
+            var success = !string.IsNullOrEmpty(result);
             
             // Assert
             Assert.NotEmpty(inviteCode);
@@ -108,7 +109,7 @@ namespace FyteClubPlugin.Tests
             var answer = await mockConnection.CreateAnswerAsync(offerSdp);
             var answerCode = InviteCodeGenerator.GenerateWebRTCAnswer(syncshellId, answer, identity.EncryptionKey);
             
-            await manager.ProcessAnswerCode(answerCode);
+            var processResult = await manager.ProcessAnswerCode(answerCode);
             
             // Act
             await manager.SendModData(syncshell.Id, "test mod data");

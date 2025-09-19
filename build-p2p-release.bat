@@ -38,36 +38,45 @@ copy "plugin\bin\Release\win-x64\FyteClub.dll" "release\FyteClub-Plugin\" >nul
 copy "plugin\FyteClub.json" "release\FyteClub-Plugin\" >nul
 copy "plugin\bin\Release\win-x64\FyteClub.deps.json" "release\FyteClub-Plugin\" >nul
 
-:: copy native WebRTC library (optional custom wrapper)
-copy "plugin\bin\Release\win-x64\webrtc_native.dll" "release\FyteClub-Plugin\" >nul
-if %errorlevel% neq 0 (
-    echo INFO: webrtc_native.dll not found - using ProximityVoiceChat WebRTC library only
-)
+:: copy WebRTC libraries (critical for P2P functionality)
+copy "plugin\bin\Release\win-x64\Microsoft.MixedReality.WebRTC.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\mrwebrtc.dll" "release\FyteClub-Plugin\" >nul
+if exist "plugin\bin\Release\win-x64\webrtc_native.dll" copy "plugin\bin\Release\win-x64\webrtc_native.dll" "release\FyteClub-Plugin\" >nul
 
-:: copy Microsoft WebRTC library (critical for P2P functionality)
-if exist "plugin\bin\Release\win-x64\Microsoft.MixedReality.WebRTC.dll" copy "plugin\bin\Release\win-x64\Microsoft.MixedReality.WebRTC.dll" "release\FyteClub-Plugin\" >nul
-if %errorlevel% neq 0 (
-    echo WARNING: Microsoft.MixedReality.WebRTC.dll not found - P2P features will be disabled
-)
+:: copy Nostr signaling dependencies
+copy "plugin\bin\Release\win-x64\Nostr.Client.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\Websocket.Client.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\System.Reactive.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\Newtonsoft.Json.dll" "release\FyteClub-Plugin\" >nul
 
-:: copy native WebRTC runtime (mrwebrtc.dll) - critical for P2P functionality
-if exist "plugin\bin\Release\win-x64\mrwebrtc.dll" (
-    copy "plugin\bin\Release\win-x64\mrwebrtc.dll" "release\FyteClub-Plugin\" >nul
-    echo mrwebrtc.dll copied
-) else (
-    echo ERROR: mrwebrtc.dll not found - WebRTC will fail to initialize
-)
+:: copy cryptography dependencies
+copy "plugin\bin\Release\win-x64\NBitcoin.Secp256k1.dll" "release\FyteClub-Plugin\" >nul
+
+:: copy other dependencies
+copy "plugin\bin\Release\win-x64\Microsoft.Extensions.Logging.Abstractions.dll" "release\FyteClub-Plugin\" >nul
 
 :: copy API dependencies
-if exist "plugin\bin\Release\win-x64\Penumbra.Api.dll" copy "plugin\bin\Release\win-x64\Penumbra.Api.dll" "release\FyteClub-Plugin\" >nul
-if exist "plugin\bin\Release\win-x64\Glamourer.Api.dll" copy "plugin\bin\Release\win-x64\Glamourer.Api.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\Penumbra.Api.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\Glamourer.Api.dll" "release\FyteClub-Plugin\" >nul
 
 :: copy documentation
 copy "README.md" "release\FyteClub-Plugin\" >nul
 
-:: check it worked
+:: check critical files
 if not exist "release\FyteClub-Plugin\FyteClub.dll" (
-    echo Plugin package failed - missing DLL
+    echo ERROR: FyteClub.dll missing
+    exit /b 1
+)
+if not exist "release\FyteClub-Plugin\Microsoft.MixedReality.WebRTC.dll" (
+    echo ERROR: Microsoft.MixedReality.WebRTC.dll missing - P2P will not work
+    exit /b 1
+)
+if not exist "release\FyteClub-Plugin\mrwebrtc.dll" (
+    echo ERROR: mrwebrtc.dll missing - WebRTC will fail
+    exit /b 1
+)
+if not exist "release\FyteClub-Plugin\Nostr.Client.dll" (
+    echo ERROR: Nostr.Client.dll missing - signaling will fail
     exit /b 1
 )
 

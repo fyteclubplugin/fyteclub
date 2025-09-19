@@ -1,0 +1,6 @@
+c:\Users\Me\git\fyteclub\plugin-tests\obj\Release\net9.0-windows\FyteClubPlugin.Tests.csproj.AssemblyReference.cache
+c:\Users\Me\git\fyteclub\plugin-tests\obj\Release\net9.0-windows\FyteClubPlugin.Tests.GeneratedMSBuildEditorConfig.editorconfig
+c:\Users\Me\git\fyteclub\plugin-tests\obj\Release\net9.0-windows\FyteClubPlugin.Tests.AssemblyInfoInputs.cache
+c:\Users\Me\git\fyteclub\plugin-tests\obj\Release\net9.0-windows\FyteClubPlugin.Tests.AssemblyInfo.cs
+c:\Users\Me\git\fyteclub\plugin-tests\obj\Release\net9.0-windows\FyteClubPlugin.Tests.csproj.CoreCompileInputs.cache
+c:\Users\Me\git\fyteclub\plugin-tests\obj\Release\net9.0-windows\FyteClubPlugin.Tests.sourcelink.json
