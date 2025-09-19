@@ -38,9 +38,10 @@ copy "plugin\bin\Release\win-x64\FyteClub.dll" "release\FyteClub-Plugin\" >nul
 copy "plugin\FyteClub.json" "release\FyteClub-Plugin\" >nul
 copy "plugin\bin\Release\win-x64\FyteClub.deps.json" "release\FyteClub-Plugin\" >nul
 
-:: copy WebRTC libraries (critical for P2P functionality)
+:: copy WebRTC libraries (from ProximityVoiceChat - critical for P2P functionality)
 copy "plugin\bin\Release\win-x64\Microsoft.MixedReality.WebRTC.dll" "release\FyteClub-Plugin\" >nul
 copy "plugin\bin\Release\win-x64\mrwebrtc.dll" "release\FyteClub-Plugin\" >nul
+:: copy optional native wrapper (if built)
 if exist "plugin\bin\Release\win-x64\webrtc_native.dll" copy "plugin\bin\Release\win-x64\webrtc_native.dll" "release\FyteClub-Plugin\" >nul
 
 :: copy Nostr signaling dependencies
@@ -49,7 +50,7 @@ copy "plugin\bin\Release\win-x64\Websocket.Client.dll" "release\FyteClub-Plugin\
 copy "plugin\bin\Release\win-x64\System.Reactive.dll" "release\FyteClub-Plugin\" >nul
 copy "plugin\bin\Release\win-x64\Newtonsoft.Json.dll" "release\FyteClub-Plugin\" >nul
 
-:: copy cryptography dependencies
+:: copy cryptography dependencies (Ed25519 for Nostr)
 copy "plugin\bin\Release\win-x64\NBitcoin.Secp256k1.dll" "release\FyteClub-Plugin\" >nul
 
 :: copy other dependencies
