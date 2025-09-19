@@ -1,0 +1,11 @@
+c:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\bin\netstandard2.0\Debug\Microsoft.MixedReality.WebRTC.deps.json
+C:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\bin\netstandard2.0\Debug\Microsoft.MixedReality.WebRTC.dll
+C:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\bin\netstandard2.0\Debug\Microsoft.MixedReality.WebRTC.pdb
+C:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\bin\build\Microsoft.MixedReality.WebRTC\Debug\Debug\Microsoft.MixedReality.WebRTC.csproj.AssemblyReference.cache
+C:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\bin\build\Microsoft.MixedReality.WebRTC\Debug\Debug\Microsoft.MixedReality.WebRTC.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\bin\build\Microsoft.MixedReality.WebRTC\Debug\Debug\Microsoft.MixedReality.WebRTC.AssemblyInfoInputs.cache
+C:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\bin\build\Microsoft.MixedReality.WebRTC\Debug\Debug\Microsoft.MixedReality.WebRTC.AssemblyInfo.cs
+C:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\bin\build\Microsoft.MixedReality.WebRTC\Debug\Debug\Microsoft.MixedReality.WebRTC.csproj.CoreCompileInputs.cache
+C:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\bin\build\Microsoft.MixedReality.WebRTC\Debug\Debug\Microsoft.MixedReality.WebRTC.sourcelink.json
+C:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\bin\build\Microsoft.MixedReality.WebRTC\Debug\Debug\Microsoft.MixedReality.WebRTC.dll
+C:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\bin\build\Microsoft.MixedReality.WebRTC\Debug\Debug\Microsoft.MixedReality.WebRTC.pdb
