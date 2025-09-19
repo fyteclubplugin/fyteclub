@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Text;
 using System.Web;
 using Dalamud.Plugin.Services;
+using Microsoft.MixedReality.WebRTC;
 
 namespace FyteClub
 {
@@ -265,24 +266,56 @@ namespace FyteClub
                 var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
                 if (syncshell == null) return string.Empty;
                 
-                // Generate unique UUID for this connection
-                var uuid = Guid.NewGuid().ToString();
+                // Create host WebRTC connection if not exists
+                if (!_webrtcConnections.ContainsKey(syncshellId))
+                {
+                    var hostConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
+                    await hostConnection.InitializeAsync();
+                    
+                    hostConnection.OnDataReceived += data => HandleModData(syncshellId, data);
+                    hostConnection.OnConnected += () => {
+                        SecureLogger.LogInfo("Host P2P connection established for syncshell {0}", syncshellId);
+                    };
+                    
+                    _webrtcConnections[syncshellId] = hostConnection;
+                }
                 
-                // Create Nostr invite with UUID
-                var nostrInvite = new {
-                    type = "nostr_invite",
-                    syncshellId = syncshellId,
-                    name = syncshell.Name,
-                    key = syncshell.EncryptionKey,
-                    uuid = uuid,
-                    relays = new[] { "wss://relay.damus.io", "wss://nos.lol" }
-                };
+                // Generate Nostr offer URI using RobustWebRTCConnection
+                if (_webrtcConnections[syncshellId] is WebRTC.RobustWebRTCConnection robustConnection)
+                {
+                    var nostrOfferUri = await robustConnection.CreateOfferAsync();
+                    
+                    // Extract UUID from the generated offer URI
+                    var uuid = "";
+                    if (nostrOfferUri.StartsWith("nostr://"))
+                    {
+                        var uri = new Uri(nostrOfferUri);
+                        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                        uuid = query["uuid"] ?? Guid.NewGuid().ToString();
+                    }
+                    else
+                    {
+                        uuid = Guid.NewGuid().ToString();
+                    }
+                    
+                    // Create Nostr invite with the UUID and relays
+                    var nostrInvite = new {
+                        type = "nostr_invite",
+                        syncshellId = syncshellId,
+                        name = syncshell.Name,
+                        key = syncshell.EncryptionKey,
+                        uuid = uuid,
+                        relays = new[] { "wss://relay.damus.io", "wss://nos.lol" }
+                    };
+                    
+                    var json = System.Text.Json.JsonSerializer.Serialize(nostrInvite);
+                    var inviteCode = "NOSTR:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json));
+                    
+                    SecureLogger.LogInfo("Generated Nostr invite code with UUID {0} for syncshell {1}", uuid, syncshellId);
+                    return inviteCode;
+                }
                 
-                var json = System.Text.Json.JsonSerializer.Serialize(nostrInvite);
-                var inviteCode = "NOSTR:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json));
-                
-                SecureLogger.LogInfo("Generated Nostr invite code with UUID {0} for syncshell {1}", uuid, syncshellId);
-                return inviteCode;
+                return string.Empty;
             }
             catch (Exception ex)
             {
@@ -660,7 +693,13 @@ namespace FyteClub
                     return await JoinViaBootstrap(inviteCode.Substring(10));
                 }
                 
-                // Manual invite code (first joiner)
+                // Check for Nostr invite code
+                if (inviteCode.StartsWith("NOSTR:"))
+                {
+                    return await JoinViaNostrInvite(inviteCode.Substring(6));
+                }
+                
+                // Legacy manual invite code (first joiner)
                 var parts = inviteCode.Split(':', 4);
                 if (parts.Length < 2)
                 {
@@ -775,6 +814,66 @@ namespace FyteClub
             catch (Exception ex)
             {
                 SecureLogger.LogError("Failed to join syncshell by invite code: {0}", ex.Message);
+                return JoinResult.Failed;
+            }
+        }
+        
+        private async Task<JoinResult> JoinViaNostrInvite(string nostrInviteBase64)
+        {
+            try
+            {
+                var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(nostrInviteBase64));
+                var nostrInvite = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
+                
+                var syncshellId = nostrInvite.GetProperty("syncshellId").GetString() ?? "";
+                var name = nostrInvite.GetProperty("name").GetString() ?? "";
+                var key = nostrInvite.GetProperty("key").GetString() ?? "";
+                var uuid = nostrInvite.GetProperty("uuid").GetString() ?? "";
+                var relays = nostrInvite.GetProperty("relays").EnumerateArray().Select(r => r.GetString() ?? "").Where(r => !string.IsNullOrEmpty(r)).ToArray();
+                
+                // Check if already in this syncshell
+                if (_syncshells.Any(s => s.Id == syncshellId))
+                {
+                    SecureLogger.LogInfo("Already in syncshell '{0}' with ID '{1}'", name, syncshellId);
+                    return JoinResult.AlreadyJoined;
+                }
+                
+                // Join syncshell with correct name and key
+                var success = JoinSyncshell(name, key);
+                if (success)
+                {
+                    SecureLogger.LogInfo("Successfully joined syncshell '{0}' via Nostr invite", name);
+                    
+                    // Create WebRTC connection and process Nostr offer
+                    var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
+                    await connection.InitializeAsync();
+                    
+                    connection.OnDataReceived += data => HandleModData(syncshellId, data);
+                    connection.OnConnected += () => {
+                        SecureLogger.LogInfo("Nostr P2P connection established for syncshell {0}", syncshellId);
+                    };
+                    
+                    // Use RobustWebRTCConnection to handle Nostr signaling
+                    if (connection is WebRTC.RobustWebRTCConnection robustConnection)
+                    {
+                        // Create nostr offer URI for the connection
+                        var relayParam = string.Join(",", relays);
+                        var nostrOfferUri = $"nostr://offer?uuid={uuid}&relays={Uri.EscapeDataString(relayParam)}";
+                        
+                        // Process the offer URI - this will subscribe to Nostr and wait for offer
+                        var answer = await robustConnection.CreateAnswerAsync(nostrOfferUri);
+                        SecureLogger.LogInfo("Processed Nostr offer and created answer for syncshell {0}", syncshellId);
+                    }
+                    
+                    _webrtcConnections[syncshellId] = connection;
+                    SecureLogger.LogInfo("WebRTC connection established via Nostr signaling for syncshell {0}", syncshellId);
+                }
+                
+                return success ? JoinResult.Success : JoinResult.Failed;
+            }
+            catch (Exception ex)
+            {
+                SecureLogger.LogError("Failed to join via Nostr invite: {0}", ex.Message);
                 return JoinResult.Failed;
             }
         }
