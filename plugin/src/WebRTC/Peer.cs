@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.MixedReality.WebRTC;
 
@@ -15,6 +16,14 @@ namespace FyteClub.WebRTC
         public bool IgnoreOffer { get; set; } = false;
         public IceConnectionState IceState { get; set; }
         public bool DataChannelReady { get; set; } = false;
+
+        // SDP/ICE coordination flags
+        public bool AnswerProcessed { get; set; } = false; // set after successful SRD(answer) on offerer
+        public bool RemoteSdpApplied { get; set; } = false; // true after SRD(offer) on answerer or SRD(answer) on offerer
+
+        // Per-peer op serialization and readiness
+        public readonly SemaphoreSlim OpLock = new(1, 1);
+        public readonly TaskCompletionSource<bool> Initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
         
         public Action<byte[]>? OnDataReceived { get; set; }
         public Action? OnDataChannelReady { get; set; }

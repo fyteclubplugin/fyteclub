@@ -132,8 +132,11 @@ namespace FyteClub.WebRTC
 
             try
             {
-                // Create offer SDP directly
-                var peerId = "host";
+                // Build nostr:// invite URI (uuid + default relays)
+                var uuid = Guid.NewGuid().ToString("N")[..8];
+                
+                // Create offer SDP directly using UUID as peer ID
+                var peerId = uuid;
                 _pluginLog?.Info($"[WebRTC] Creating offer SDP for peerId: {peerId}");
                 var offerSdp = await _webrtcManager.CreateOfferAsync(peerId);
                 _pluginLog?.Info($"[WebRTC] Created offer SDP (len={offerSdp.Length})");
@@ -144,8 +147,6 @@ namespace FyteClub.WebRTC
                     return string.Empty;
                 }
 
-                // Build nostr:// invite URI (uuid + default relays)
-                var uuid = Guid.NewGuid().ToString("N")[..8];
                 var relays = new[] { 
                     "wss://relay.damus.io", 
                     "wss://nos.lol", 
@@ -188,7 +189,7 @@ namespace FyteClub.WebRTC
                         answerReceived = true; // Stop re-publishing
                         if (_webrtcManager != null && !string.IsNullOrEmpty(answerSdp))
                         {
-                            _webrtcManager.HandleAnswer("host", answerSdp);
+                            _webrtcManager.HandleAnswer(uuid, answerSdp);
                             _pluginLog?.Info($"[WebRTC] HOST: Set remote answer successfully");
                         }
                     }
@@ -216,7 +217,7 @@ namespace FyteClub.WebRTC
                 if (_webrtcManager != null)
                 {
                     _webrtcManager.OnPeerConnected += (peer) => {
-                        if (peer.PeerId == "host")
+                        if (peer.PeerId == uuid)
                         {
                             connectionEstablished = true;
                             _pluginLog?.Info($"[WebRTC] HOST: Connection established, stopping re-publish");
@@ -330,13 +331,16 @@ namespace FyteClub.WebRTC
                     return "already_connected";
                 }
 
-                // Prevent duplicate peer creation for same UUID
+                // Check if peer already exists and is connected
                 var (testUuid, _) = NostrUtil.ParseNostrOfferUri(offerUrl);
                 if (_webrtcManager.Peers.ContainsKey(testUuid))
                 {
-                    _pluginLog?.Info($"[WebRTC] Peer {testUuid} already exists, skipping duplicate creation");
-                    Console.WriteLine($"[JOINER] Peer {testUuid} already exists, skipping duplicate creation");
-                    return "peer_exists";
+                    var existingPeer = _webrtcManager.Peers[testUuid];
+                    if (existingPeer.DataChannel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+                    {
+                        _pluginLog?.Info($"[WebRTC] Peer {testUuid} already connected");
+                        return "already_connected";
+                    }
                 }
 
                 _pluginLog?.Info($"[WebRTC] JOINER: Checking if URL starts with nostr://");
@@ -357,100 +361,34 @@ namespace FyteClub.WebRTC
                     Console.WriteLine($"[JOINER] Creating NostrSignaling instance");
                     var nostr = new NNostrSignaling(relays.Length > 0 ? relays : new[] { "wss://relay.damus.io", "wss://nos.lol", "wss://nostr-pub.wellorder.net" }, priv, pub, _pluginLog);
                     
-                    // CRITICAL: Set UUID and signaling channel BEFORE any peer operations
+                    // Set UUID and signaling channel - let HandleOffer create the peer
                     nostr.SetCurrentUuid(uuid);
                     _webrtcManager.SetSignalingChannel(nostr);
-                    _pluginLog?.Info($"[WebRTC] JOINER: UUID {uuid} set in signaling before peer creation");
-
-                    _pluginLog?.Info($"[WebRTC] JOINER: Setting up TaskCompletionSource and event handler");
-                    Console.WriteLine($"[JOINER] Setting up TaskCompletionSource and event handler");
-                    var tcs = new TaskCompletionSource<string>();
-                    void Handler(string evtUuid, string? sdp)
-                    {
-                        _pluginLog?.Debug($"[WebRTC] JOINER: OnOfferReceived fired for uuid={evtUuid}, expected={uuid}, sdpLen={sdp?.Length ?? 0}");
-                        Console.WriteLine($"[JOINER] OnOfferReceived fired for uuid={evtUuid}, expected={uuid}, sdpLen={sdp?.Length ?? 0}");
-                        if (evtUuid == uuid && !tcs.Task.IsCompleted)
-                        {
-                            _pluginLog?.Info($"[WebRTC] JOINER: Matched offer uuid, setting result");
-                            Console.WriteLine($"[JOINER] Matched offer uuid, setting result");
-                            tcs.TrySetResult(sdp ?? string.Empty);
-                        }
-                    }
-                    nostr.OnOfferReceived += Handler;
+                    _pluginLog?.Info($"[WebRTC] JOINER: UUID {uuid} set in signaling, waiting for offer");
 
                     _pluginLog?.Info($"[WebRTC] JOINER: Subscribing to uuid {uuid}");
                     Console.WriteLine($"[JOINER] Subscribing to uuid {uuid}");
                     await nostr.SubscribeAsync(uuid);
-                    _pluginLog?.Info($"[WebRTC] JOINER: Subscribed, waiting for offer on uuid {uuid}");
-                    Console.WriteLine($"[JOINER] Subscribed, waiting for offer on uuid {uuid}");
+                    _pluginLog?.Info($"[WebRTC] JOINER: Subscribed, HandleOffer will process offers automatically");
+                    Console.WriteLine($"[JOINER] Subscribed, HandleOffer will process offers automatically");
 
-                    // Enhanced timeout with republish request fallback
-                    using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(45));
-                    using (cts.Token.Register(() => tcs.TrySetCanceled())) { }
-                    
-                    // Send republish request after initial wait
+                    // Send republish request after initial wait to ensure host republishes
                     _ = Task.Run(async () => {
-                        await Task.Delay(10000); // Wait 10s first
-                        if (!tcs.Task.IsCompleted)
+                        await Task.Delay(5000); // Wait 5s first
+                        _pluginLog?.Info($"[WebRTC] JOINER: Sending republish request for UUID {uuid}");
+                        try
                         {
-                            _pluginLog?.Info($"[WebRTC] JOINER: Sending republish request for UUID {uuid}");
-                            try
-                            {
-                                // Use the NNostr signaling to send the request
-                                await nostr.SendRepublishRequestAsync(uuid);
-                                _pluginLog?.Info($"[WebRTC] JOINER: Republish request sent for UUID {uuid}");
-                            }
-                            catch (Exception ex)
-                            {
-                                _pluginLog?.Warning($"[WebRTC] JOINER: Failed to send republish request: {ex.Message}");
-                            }
+                            await nostr.SendRepublishRequestAsync(uuid);
+                            _pluginLog?.Info($"[WebRTC] JOINER: Republish request sent for UUID {uuid}");
+                        }
+                        catch (Exception ex)
+                        {
+                            _pluginLog?.Warning($"[WebRTC] JOINER: Failed to send republish request: {ex.Message}");
                         }
                     });
                     
-                    string offerSdp;
-                    try {
-                        offerSdp = await tcs.Task.ConfigureAwait(false);
-                        _pluginLog?.Info($"[WebRTC] JOINER: ✅ Received offer SDP (len={offerSdp.Length})");
-                        Console.WriteLine($"[JOINER] ✅ Received offer SDP (len={offerSdp.Length})");
-                    } catch (TaskCanceledException) {
-                        _pluginLog?.Error($"[WebRTC] JOINER: ❌ Timed out waiting for offer on uuid {uuid} after 45s");
-                        Console.WriteLine($"[JOINER] ❌ Timed out waiting for offer on uuid {uuid} after 45s");
-                        throw new TimeoutException($"Timed out waiting for offer via Nostr for uuid {uuid}");
-                    } catch (Exception ex) {
-                        _pluginLog?.Error($"[WebRTC] JOINER: ❌ Error waiting for offer: {ex.Message}");
-                        Console.WriteLine($"[JOINER] ❌ Error waiting for offer: {ex.Message}");
-                        throw;
-                    }
-
-                    _pluginLog?.Info($"[WebRTC] JOINER: Offer received via Nostr (len={offerSdp.Length}), creating answer");
-                    Console.WriteLine($"[JOINER] Offer received via Nostr (len={offerSdp.Length}), creating answer");
-                    
-                    // Wait for HandleOffer to create the peer, then get the answer
-                    string answerSdp = "";
-                    for (int i = 0; i < 10; i++) // Wait up to 5 seconds
-                    {
-                        if (_webrtcManager.Peers.ContainsKey(uuid))
-                        {
-                            _pluginLog?.Info($"[WebRTC] JOINER: Peer {uuid} found after {i * 500}ms");
-                            // Peer was created by HandleOffer, just wait for answer to be generated
-                            await Task.Delay(1000); // Give time for answer creation
-                            answerSdp = "answer_handled_by_event";
-                            break;
-                        }
-                        await Task.Delay(500);
-                    }
-                    
-                    if (string.IsNullOrEmpty(answerSdp) || answerSdp == "answer_handled_by_event")
-                    {
-                        _pluginLog?.Info($"[WebRTC] JOINER: HandleOffer will send answer automatically");
-                        answerSdp = "ok"; // Answer will be sent by HandleOffer event
-                    }
-
-                    _pluginLog?.Info($"[WebRTC] JOINER: Publishing answer via Nostr for uuid {uuid}, answer SDP len={answerSdp?.Length ?? 0}");
-                    Console.WriteLine($"[JOINER] Publishing answer via Nostr for uuid {uuid}, answer SDP len={answerSdp?.Length ?? 0}");
-                    await nostr.PublishAnswerAsync(uuid, answerSdp ?? "ok");
-                    _pluginLog?.Info($"[WebRTC] JOINER: Answer published via Nostr for uuid {uuid}");
-                    Console.WriteLine($"[JOINER] Answer published via Nostr for uuid {uuid}");
+                    // Return success - HandleOffer will process offers and create peer automatically
+                    _pluginLog?.Info($"[WebRTC] JOINER: Setup complete, HandleOffer will create peer when offer arrives");
                     return "ok";
                 }
                 else

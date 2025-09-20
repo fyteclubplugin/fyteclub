@@ -137,6 +137,7 @@ namespace FyteClub.WebRTC
                 var type = typeEl.GetString();
 
                 _log?.Info($"[NNostr] Received {type} for UUID {matchedUuid}");
+                _log?.Info($"[NNostr] Event ID: {ev.Id}, Kind: {ev.Kind}, Content: {json.Substring(0, Math.Min(100, json.Length))}...");
 
                 if (string.Equals(type, "offer", StringComparison.OrdinalIgnoreCase))
                 {
@@ -189,7 +190,8 @@ namespace FyteClub.WebRTC
             var offerFilter = new NostrSubscriptionFilter
             {
                 Kinds = new[] { 30078 },
-                Limit = 1
+                Since = DateTimeOffset.UtcNow.AddMinutes(-5),
+                Limit = 10
             };
             // Add #d tag filter via extension data
             offerFilter.ExtensionData = new Dictionary<string, System.Text.Json.JsonElement>
@@ -200,7 +202,8 @@ namespace FyteClub.WebRTC
             var answerFilter = new NostrSubscriptionFilter
             {
                 Kinds = new[] { 30079 },
-                Limit = 1
+                Since = DateTimeOffset.UtcNow.AddMinutes(-5),
+                Limit = 10
             };
             answerFilter.ExtensionData = new Dictionary<string, System.Text.Json.JsonElement>
             {
@@ -248,9 +251,16 @@ namespace FyteClub.WebRTC
                 throw new InvalidOperationException("Invalid private key for signing");
             await ev.ComputeIdAndSignAsync(ecKey);
 
-            foreach (var client in _clients)
+            foreach (var client in _clients.ToArray())
             {
-                await client.PublishEvent(ev);
+                try
+                {
+                    await client.PublishEvent(ev);
+                }
+                catch (Exception ex)
+                {
+                    _log?.Warning($"[NNostr] Failed to publish offer to relay: {ex.Message}");
+                }
             }
             if (!string.IsNullOrEmpty(ev.Id))
             {
@@ -291,9 +301,16 @@ namespace FyteClub.WebRTC
                 throw new InvalidOperationException("Invalid private key for signing");
             await ev.ComputeIdAndSignAsync(ecKey);
 
-            foreach (var client in _clients)
+            foreach (var client in _clients.ToArray())
             {
-                await client.PublishEvent(ev);
+                try
+                {
+                    await client.PublishEvent(ev);
+                }
+                catch (Exception ex)
+                {
+                    _log?.Warning($"[NNostr] Failed to publish answer to relay: {ex.Message}");
+                }
             }
             if (!string.IsNullOrEmpty(ev.Id))
             {
@@ -307,6 +324,7 @@ namespace FyteClub.WebRTC
                 }
             }
             _log?.Info($"[NNostr] Published NIP-33 answer for UUID {uuid}");
+            _log?.Info($"[NNostr] Answer event ID: {ev.Id}, Content: {content.Substring(0, Math.Min(100, content.Length))}...");
         }
 
         public async Task SendRepublishRequestAsync(string uuid)
@@ -331,9 +349,16 @@ namespace FyteClub.WebRTC
                     throw new InvalidOperationException("Invalid private key for signing");
                 await ev.ComputeIdAndSignAsync(ecKey);
 
-                foreach (var client in _clients)
+                foreach (var client in _clients.ToArray())
                 {
-                    await client.PublishEvent(ev);
+                    try
+                    {
+                        await client.PublishEvent(ev);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log?.Warning($"[NNostr] Failed to publish republish request to relay: {ex.Message}");
+                    }
                 }
                 if (!string.IsNullOrEmpty(ev.Id))
                 {
@@ -401,9 +426,16 @@ namespace FyteClub.WebRTC
                     throw new InvalidOperationException("Invalid private key for signing");
                 await ev.ComputeIdAndSignAsync(ecKey);
                 
-                foreach (var client in _clients)
+                foreach (var client in _clients.ToArray())
                 {
-                    await client.PublishEvent(ev);
+                    try
+                    {
+                        await client.PublishEvent(ev);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log?.Warning($"[NNostr] Failed to publish ICE candidate to relay: {ex.Message}");
+                    }
                 }
             }
             catch (Exception ex)

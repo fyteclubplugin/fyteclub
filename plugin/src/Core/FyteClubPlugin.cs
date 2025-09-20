@@ -1118,15 +1118,28 @@ namespace FyteClub
             {
                 _pluginLog.Info("FyteClub: P2P connection already established via JoinSyncshellByInviteCode");
                 
-                // Parse invite code to get syncshell name for member sync
-                var parts = inviteCode.Split(':', 4);
-                if (parts.Length < 1)
+                // Extract syncshell name from NOSTR invite code
+                string syncshellName = "Unknown";
+                if (inviteCode.StartsWith("NOSTR:"))
                 {
-                    _pluginLog.Error("Invalid invite code format for member sync");
-                    return;
+                    try
+                    {
+                        var base64 = inviteCode.Substring(6);
+                        var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(base64));
+                        var invite = JsonSerializer.Deserialize<JsonElement>(json);
+                        syncshellName = invite.GetProperty("name").GetString() ?? "Unknown";
+                    }
+                    catch
+                    {
+                        _pluginLog.Error("Failed to parse NOSTR invite code for syncshell name");
+                        return;
+                    }
                 }
-                
-                var syncshellName = parts[0];
+                else
+                {
+                    var parts = inviteCode.Split(':', 4);
+                    if (parts.Length >= 1) syncshellName = parts[0];
+                }
                 
                 // Find the syncshell we just joined
                 var syncshell = _syncshellManager.GetSyncshells().FirstOrDefault(s => s.Name == syncshellName);
