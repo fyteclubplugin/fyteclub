@@ -395,11 +395,19 @@ namespace FyteClub.WebRTC
                 _pluginLog?.Info($"[WebRTC] 🔥 Current peers count: {_peers.Count}");
                 _pluginLog?.Info($"[WebRTC] 🔥 Peer exists check: {_peers.ContainsKey(peerId)}");
                 
-                // Check if peer already exists to prevent duplicates
+                // Check if peer already exists and is the offerer (host receiving its own offer)
                 if (_peers.ContainsKey(peerId))
                 {
-                    _pluginLog?.Info($"[WebRTC] 🔄 Using existing peer {peerId} for offer");
                     var existingPeer = _peers[peerId];
+                    
+                    // If this peer is the offerer, ignore the offer (it's our own offer bouncing back)
+                    if (existingPeer.IsOfferer)
+                    {
+                        _pluginLog?.Info($"[WebRTC] 🔄 Ignoring own offer for {peerId} (host receiving own offer)");
+                        return;
+                    }
+                    
+                    _pluginLog?.Info($"[WebRTC] 🔄 Using existing peer {peerId} for offer");
                     
                     // Set remote description on existing peer
                     _pluginLog?.Info($"[WebRTC] 📨 JOINER: Received offer, setting remote description for {peerId}");
@@ -417,7 +425,7 @@ namespace FyteClub.WebRTC
                     return;
                 }
                 
-                // Create new peer and handle offer
+                // Create new peer and handle offer (this is a joiner receiving an offer)
                 _pluginLog?.Info($"[WebRTC] 🆕 Creating new peer for offer from {peerId}");
                 var answer = await CreateAnswerAsync(peerId, offerSdp);
                 _pluginLog?.Info($"[WebRTC] ✅ HANDLE OFFER COMPLETED for {peerId}, answer: {answer.Length} chars");
