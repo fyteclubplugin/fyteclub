@@ -298,14 +298,20 @@ namespace FyteClub
                         uuid = Guid.NewGuid().ToString();
                     }
                     
-                    // Create Nostr invite with the UUID and relays
+                    // Create Nostr invite with the UUID and relays (same as RobustWebRTCConnection)
                     var nostrInvite = new {
                         type = "nostr_invite",
                         syncshellId = syncshellId,
                         name = syncshell.Name,
                         key = syncshell.EncryptionKey,
                         uuid = uuid,
-                        relays = new[] { "wss://relay.damus.io", "wss://nos.lol" }
+                        relays = new[] { 
+                            "wss://relay.damus.io", 
+                            "wss://nos.lol", 
+                            "wss://nostr-pub.wellorder.net",
+                            "wss://relay.snort.social",
+                            "wss://nostr.wine"
+                        }
                     };
                     
                     var json = System.Text.Json.JsonSerializer.Serialize(nostrInvite);
