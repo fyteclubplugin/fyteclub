@@ -44,11 +44,13 @@ copy "plugin\bin\Release\win-x64\mrwebrtc.dll" "release\FyteClub-Plugin\" >nul
 :: copy optional native wrapper (if built)
 if exist "plugin\bin\Release\win-x64\webrtc_native.dll" copy "plugin\bin\Release\win-x64\webrtc_native.dll" "release\FyteClub-Plugin\" >nul
 
-:: copy Nostr signaling dependencies
-copy "plugin\bin\Release\win-x64\Nostr.Client.dll" "release\FyteClub-Plugin\" >nul
-copy "plugin\bin\Release\win-x64\Websocket.Client.dll" "release\FyteClub-Plugin\" >nul
-copy "plugin\bin\Release\win-x64\System.Reactive.dll" "release\FyteClub-Plugin\" >nul
-copy "plugin\bin\Release\win-x64\Newtonsoft.Json.dll" "release\FyteClub-Plugin\" >nul
+:: copy NNostr signaling dependencies
+copy "plugin\bin\Release\win-x64\NNostr.Client.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\ChaCha20-NetStandard.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\LinqKit.Core.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\Microsoft.Bcl.AsyncInterfaces.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\System.Interactive.Async.dll" "release\FyteClub-Plugin\" >nul
+copy "plugin\bin\Release\win-x64\System.Linq.Async.dll" "release\FyteClub-Plugin\" >nul
 
 :: copy cryptography dependencies (Ed25519 for Nostr)
 copy "plugin\bin\Release\win-x64\NBitcoin.Secp256k1.dll" "release\FyteClub-Plugin\" >nul
@@ -76,8 +78,8 @@ if not exist "release\FyteClub-Plugin\mrwebrtc.dll" (
     echo ERROR: mrwebrtc.dll missing - WebRTC will fail
     exit /b 1
 )
-if not exist "release\FyteClub-Plugin\Nostr.Client.dll" (
-    echo ERROR: Nostr.Client.dll missing - signaling will fail
+if not exist "release\FyteClub-Plugin\NNostr.Client.dll" (
+    echo ERROR: NNostr.Client.dll missing - signaling will fail
     exit /b 1
 )
 

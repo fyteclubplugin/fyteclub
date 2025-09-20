@@ -18,6 +18,7 @@ namespace FyteClub.WebRTC
 
         private readonly ConcurrentDictionary<string, Peer> _peers = new();
         private readonly ConcurrentDictionary<string, Queue<IceCandidate>> _pendingIceCandidates = new();
+        private readonly HashSet<string> _hostingUuids = new(); // Track UUIDs we're hosting to prevent self-loop
         private ISignalingChannel _signalingChannel;
         private readonly PeerConnectionConfiguration _config;
         private readonly IPluginLog? _pluginLog;
@@ -86,6 +87,25 @@ namespace FyteClub.WebRTC
 
             peer.PeerConnection.CreateOffer();
             return await tcs.Task;
+        }
+        
+        // Track UUIDs this instance is hosting to prevent self-loop
+        public void AddHostingUuid(string uuid)
+        {
+            lock (_hostingUuids)
+            {
+                _hostingUuids.Add(uuid);
+                _pluginLog?.Info($"[WebRTC] Tracking hosting UUID {uuid} to prevent self-loop");
+            }
+        }
+        
+        public void RemoveHostingUuid(string uuid)
+        {
+            lock (_hostingUuids)
+            {
+                _hostingUuids.Remove(uuid);
+                _pluginLog?.Info($"[WebRTC] Stopped tracking hosting UUID {uuid}");
+            }
         }
 
         // Legacy wormhole join removed. Only NostrSignaling supported.
@@ -394,6 +414,16 @@ namespace FyteClub.WebRTC
                 _pluginLog?.Info($"[WebRTC] 🔥 HANDLE OFFER EVENT TRIGGERED for {peerId}, SDP: {offerSdp.Length} chars");
                 _pluginLog?.Info($"[WebRTC] 🔥 Current peers count: {_peers.Count}");
                 _pluginLog?.Info($"[WebRTC] 🔥 Peer exists check: {_peers.ContainsKey(peerId)}");
+                
+                // Prevent self-loop: Ignore offers for UUIDs this instance is hosting
+                lock (_hostingUuids)
+                {
+                    if (_hostingUuids.Contains(peerId))
+                    {
+                        _pluginLog?.Info($"[WebRTC] 🔄 Ignoring own offer for hosted UUID {peerId}");
+                        return;
+                    }
+                }
                 
                 // Check if peer already exists and is the offerer (host receiving its own offer)
                 if (_peers.ContainsKey(peerId))

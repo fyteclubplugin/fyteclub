@@ -2,7 +2,7 @@
 <Project Sdk="Dalamud.NET.Sdk/13.1.0">
   <PropertyGroup>
     <AssemblyName>FyteClub</AssemblyName>
-    <Version>4.5.0</Version>
+    <Version>4.5.5</Version>
     <PackageProjectUrl>https://github.com/fyteclubplugin/fyteclub</PackageProjectUrl>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
@@ -29,7 +29,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Nostr.Client" Version="2.0.0" />
+    <PackageReference Include="NNostr.Client" Version="0.0.54" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="7.0.1" />
   </ItemGroup>
 

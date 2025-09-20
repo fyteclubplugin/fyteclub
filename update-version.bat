@@ -39,31 +39,35 @@ echo.
 REM Auto-update without confirmation
 
 echo.
-echo [1/7] Updating VERSION file...
+echo [1/8] Updating VERSION file...
 echo %NEW_VERSION% > VERSION
 echo [OK] VERSION file updated
 
-echo [2/7] Updating server package.json...
+echo [2/8] Updating server package.json...
 powershell -Command "(Get-Content 'server\package.json') -replace '\"version\": \".*\"', '\"version\": \"%NEW_VERSION%\"' | Set-Content 'server\package.json'"
 echo [OK] server/package.json updated
 
-echo [3/7] Updating client package.json...
+echo [3/8] Updating client package.json...
 powershell -Command "(Get-Content 'client\package.json') -replace '\"version\": \".*\"', '\"version\": \"%NEW_VERSION%\"' | Set-Content 'client\package.json'"
 echo ✅ client/package.json updated
 
-echo [4/7] Updating plugin .csproj file...
+echo [4/8] Updating plugin .csproj file...
 powershell -Command "(Get-Content 'plugin\FyteClub.csproj') -replace '<Version>.*</Version>', '<Version>%NEW_VERSION%</Version>' | Set-Content 'plugin\FyteClub.csproj'"
 echo ✅ plugin/FyteClub.csproj updated
 
-echo [5/7] Updating plugin manifest ^(FyteClub.json^)...
+echo [5/8] Updating plugin manifest ^(FyteClub.json^)...
 powershell -Command "(Get-Content 'plugin\FyteClub.json') -replace '\"AssemblyVersion\": \".*\"', '\"AssemblyVersion\": \"%NEW_VERSION%\"' | Set-Content 'plugin\FyteClub.json'"
 echo ✅ plugin/FyteClub.json updated
 
-echo [6/7] Updating plugin repo manifest ^(repo.json^)...
+echo [6/8] Updating plugin repo manifest ^(repo.json^)...
 powershell -Command "(Get-Content 'plugin\repo.json') -replace '\"AssemblyVersion\": \".*\"', '\"AssemblyVersion\": \"%NEW_VERSION%\"' | Set-Content 'plugin\repo.json'"
 echo ✅ plugin/repo.json updated
 
-echo [7/7] Updating documentation version references...
+echo [7/8] Updating plugin source code version string...
+powershell -Command "(Get-Content 'plugin\src\Core\FyteClubPlugin.cs') -replace 'FyteClub v[0-9]+\.[0-9]+\.[0-9]+ initialized', 'FyteClub v%NEW_VERSION% initialized' | Set-Content 'plugin\src\Core\FyteClubPlugin.cs'"
+echo ✅ plugin/src/Core/FyteClubPlugin.cs updated
+
+echo [8/8] Updating documentation version references...
 REM Update README.md version references
 powershell -Command "if (Test-Path 'README.md') { (Get-Content 'README.md') -replace 'v[0-9]+\.[0-9]+\.[0-9]+', 'v%NEW_VERSION%' | Set-Content 'README.md' }"
 REM Update release notes
@@ -85,6 +89,7 @@ echo   • client/package.json
 echo   • plugin/FyteClub.csproj
 echo   • plugin/FyteClub.json
 echo   • plugin/repo.json
+echo   • plugin/src/Core/FyteClubPlugin.cs
 echo   • Documentation files
 echo.
 echo [>] Next steps:

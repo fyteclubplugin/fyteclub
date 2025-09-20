@@ -4,7 +4,7 @@
   "Punchline": "P2P mod sharing with friends",
   "Description": "Share FFXIV mods automatically using peer-to-peer connections. No servers needed!",
   "InternalName": "FyteClub",
-    "AssemblyVersion": "4.5.0",
+    "AssemblyVersion": "4.5.5",
   "RepoUrl": "https://github.com/fyteclubplugin/fyteclub",
   "ApplicableVersion": "any",
   "Tags": [

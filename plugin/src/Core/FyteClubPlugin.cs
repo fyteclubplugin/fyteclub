@@ -182,7 +182,7 @@ namespace FyteClub
             
 
             
-            _pluginLog.Info("FyteClub v4.2.7 initialized - P2P mod sharing with syncshells");
+            _pluginLog.Info("FyteClub v4.5.5 initialized - P2P mod sharing with syncshells");
         }
 
         private void InitializeClientCache()

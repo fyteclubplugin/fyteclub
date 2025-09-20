@@ -20,66 +20,73 @@
         "resolved": "7.0.1",
         "contentHash": "pkeBFx0vqMW/A3aUVHh7MPu3WkBhaVlezhSZeb1c9XD0vUReYH1TLFSy5MxJgZfmz5LZzYoErMorlYZiwpOoNA=="
       },
-      "Nostr.Client": {
+      "NNostr.Client": {
         "type": "Direct",
-        "requested": "[2.0.0, )",
-        "resolved": "2.0.0",
-        "contentHash": "3R63+9kSmTVjE65o6Cq5dx7p+fVgG2LAsOuVUHVwV3+wp0RkxcmCRe9tGJoW1ys4zG2nR3kqCfYtkjN/aW21aw==",
+        "requested": "[0.0.54, )",
+        "resolved": "0.0.54",
+        "contentHash": "wN/7Thnu7g0l7LedUcO7DzXinw3bu9C5nKn2p6VZSNG3vymRuyH35VG64Qr63wEM+bHfPuxrQ9IyQNOwwKl4Mg==",
         "dependencies": {
-          "BTCPayServer.Lightning.Common": "1.3.21",
-          "Microsoft.Extensions.Logging.Abstractions": "7.0.1",
-          "NBitcoin.Secp256k1": "3.1.1",
-          "Newtonsoft.Json": "13.0.3",
-          "System.Reactive": "6.0.0",
-          "Websocket.Client": "4.6.1"
+          "LibChaCha20": "1.0.1",
+          "LinqKit.Core": "1.2.5",
+          "NBitcoin.Secp256k1": "3.1.6",
+          "System.Interactive.Async": "6.0.1",
+          "System.Text.Json": "8.0.4",
+          "System.Threading.Channels": "8.0.0"
         }
       },
-      "BTCPayServer.Lightning.Common": {
+      "LibChaCha20": {
         "type": "Transitive",
-        "resolved": "1.3.21",
-        "contentHash": "KK9jI98l4CjY7m2l7BML97KWNBZIgNwEXYBB8Wy85o8+zJ/BcD9Fz+NemRhCtdvuR7cotvlfDyCmacchiU05MQ==",
-        "dependencies": {
-          "NBitcoin": "7.0.1",
-          "Newtonsoft.Json": "13.0.1"
-        }
+        "resolved": "1.0.1",
+        "contentHash": "pLKTZWVPKf5vd1MthOCph/p7iR3DM8PQOeBLe7e5VGXVqju4GOWT+JAgKReQ+7sWU4HDC+hJF/Thrj08YFkugg=="
       },
-      "NBitcoin": {
+      "LinqKit.Core": {
         "type": "Transitive",
-        "resolved": "7.0.1",
-        "contentHash": "42vGnCcbTR2Gi7feOJT4qQUZaRHqYVbDb7A5yN7pdUsKzQK7WPkZUISKh9WaLKtAM3BJT6ntCDg/gA7zuid2Uw==",
-        "dependencies": {
-          "Microsoft.Extensions.Logging.Abstractions": "1.0.0",
-          "Newtonsoft.Json": "11.0.2"
-        }
+        "resolved": "1.2.5",
+        "contentHash": "+5UKyagtVX33TSeOGorYzDXus/ypAISfM7HFfrix4BEmuuGF+nhSjf8P9csejLQ79ny5ms33M5/lQ2SkwC0Jxw=="
+      },
+      "Microsoft.Bcl.AsyncInterfaces": {
+        "type": "Transitive",
+        "resolved": "6.0.0",
+        "contentHash": "UcSjPsst+DfAdJGVDsu346FX0ci0ah+lw3WRtn18NUwEqRt70HaOQ7lI72vy3+1LxtqI3T5GWwV39rQSrCzAeg=="
       },
       "NBitcoin.Secp256k1": {
         "type": "Transitive",
-        "resolved": "3.1.1",
-        "contentHash": "ekF91qDK2+TI9FFhXvjClfUOQ3DWxNhvjh8Eoqawk1KPk/hCURpc8xoyeprtAiIoM5wgPnWeFxQybVWhl2NsHA=="
+        "resolved": "3.1.6",
+        "contentHash": "Ao9jN/16lhQoI0aMdUxgiEfuyFdg2nd2SdinqqEFuCyYl1NH6upa++Tp0wbXHTr6jf7klXh3wjmsX+ArzliZRQ=="
       },
-      "Newtonsoft.Json": {
+      "System.Interactive.Async": {
         "type": "Transitive",
-        "resolved": "13.0.3",
-        "contentHash": "HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=="
+        "resolved": "6.0.1",
+        "contentHash": "f8H1O4ZWDQo344y5NQU76G4SIjWMuKDVXL9OM1dg6K5YZnLkc8iCdQDybBvMcC6ufk61jzXGVAX6UCDu0qDSjA==",
+        "dependencies": {
+          "System.Linq.Async": "6.0.1"
+        }
       },
-      "System.Reactive": {
+      "System.Linq.Async": {
         "type": "Transitive",
-        "resolved": "6.0.0",
-        "contentHash": "31kfaW4ZupZzPsI5PVe77VhnvFF55qgma7KZr/E0iFTs6fmdhhG8j0mgEx620iLTey1EynOkEfnyTjtNEpJzGw=="
+        "resolved": "6.0.1",
+        "contentHash": "0YhHcaroWpQ9UCot3Pizah7ryAzQhNvobLMSxeDIGmnXfkQn8u5owvpOH0K6EVB+z9L7u6Cc4W17Br/+jyttEQ==",
+        "dependencies": {
+          "Microsoft.Bcl.AsyncInterfaces": "6.0.0"
+        }
+      },
+      "System.Text.Encodings.Web": {
+        "type": "Transitive",
+        "resolved": "8.0.0",
+        "contentHash": "yev/k9GHAEGx2Rg3/tU6MQh4HGBXJs70y7j1LaM1i/ER9po+6nnQ6RRqTJn1E7Xu0fbIFK80Nh5EoODxrbxwBQ=="
+      },
+      "System.Text.Json": {
+        "type": "Transitive",
+        "resolved": "8.0.4",
+        "contentHash": "bAkhgDJ88XTsqczoxEMliSrpijKZHhbJQldhAmObj/RbrN3sU5dcokuXmWJWsdQAhiMJ9bTayWsL1C9fbbCRhw==",
+        "dependencies": {
+          "System.Text.Encodings.Web": "8.0.0"
+        }
       },
       "System.Threading.Channels": {
         "type": "Transitive",
-        "resolved": "5.0.0",
-        "contentHash": "RLBIxntLaG9pRmmuVDwY1kc8Bvp/FQzSxPU+19VekkScKkWtVP9r8bLhm28ama3usc816UBrmkg3vv3jUea/hw=="
-      },
-      "Websocket.Client": {
-        "type": "Transitive",
-        "resolved": "4.6.1",
-        "contentHash": "6ccH+gNepmlQILnp8L+9J3PvN8Nk9qmdWWhb7aBZC8TvhisgK/JMq6H1evtzRJ3MRM/FWjumP6J/HPEt+DXwuQ==",
-        "dependencies": {
-          "System.Reactive": "5.0.0",
-          "System.Threading.Channels": "5.0.0"
-        }
+        "resolved": "8.0.0",
+        "contentHash": "CMaFr7v+57RW7uZfZkPExsPB6ljwzhjACWW1gfU35Y56rk72B/Wu+sTqxVmGSk4SFUlPc3cjeKND0zktziyjBA=="
       },
       "glamourer.api": {
         "type": "Project"
@@ -91,6 +98,12 @@
         "type": "Project"
       }
     },
-    "net9.0-windows7.0/win-x64": {}
+    "net9.0-windows7.0/win-x64": {
+      "System.Text.Encodings.Web": {
+        "type": "Transitive",
+        "resolved": "8.0.0",
+        "contentHash": "yev/k9GHAEGx2Rg3/tU6MQh4HGBXJs70y7j1LaM1i/ER9po+6nnQ6RRqTJn1E7Xu0fbIFK80Nh5EoODxrbxwBQ=="
+      }
+    }
   }
 }

@@ -12,7 +12,7 @@ namespace FyteClub.WebRTC
         private readonly IPluginLog? _pluginLog;
         private readonly SyncshellPersistence? _persistence;
         private readonly ReconnectionManager? _reconnectionManager;
-        private NostrSignaling? _hostNostrSignaling;
+        private NNostrSignaling? _hostNostrSignaling;
         private string _currentSyncshellId = string.Empty;
         private string _currentPassword = string.Empty;
 
@@ -52,7 +52,7 @@ namespace FyteClub.WebRTC
                     "wss://nostr.wine"
                 };
                 var (priv, pub) = NostrUtil.GenerateEphemeralKeys();
-                var nostrSignaling = new NostrSignaling(relays, priv, pub, _pluginLog);
+                var nostrSignaling = new NNostrSignaling(relays, priv, pub, _pluginLog);
                 _webrtcManager = new WebRTCManager(nostrSignaling, _pluginLog);
 
                 _webrtcManager.OnPeerConnected += (peer) => {
@@ -154,13 +154,16 @@ namespace FyteClub.WebRTC
                     "wss://nostr.wine"
                 };
                 _pluginLog?.Info($"[WebRTC] Generated UUID: {uuid}, using {relays.Length} relays");
+                
+                // Track this UUID to prevent self-loop
+                _webrtcManager.AddHostingUuid(uuid);
 
                 // Test Nostr publishing with detailed logging
                 _pluginLog?.Info($"[WebRTC] Starting Nostr publishing test...");
                 var (priv, pub) = NostrUtil.GenerateEphemeralKeys();
                 _pluginLog?.Info($"[WebRTC] Generated keys - priv: {priv[..8]}..., pub: {pub[..8]}...");
                 
-                _hostNostrSignaling = new NostrSignaling(relays, priv, pub, _pluginLog);
+                _hostNostrSignaling = new NNostrSignaling(relays, priv, pub, _pluginLog);
                 _hostNostrSignaling.SetCurrentUuid(uuid); // Set UUID before peer creation
                 _pluginLog?.Info($"[WebRTC] NostrSignaling created with UUID {uuid}, attempting to publish offer...");
                 
@@ -175,6 +178,8 @@ namespace FyteClub.WebRTC
                 // Host subscribes to the same UUID to receive the answer
                 await _hostNostrSignaling.SubscribeAsync(uuid);
                 var answerReceived = false;
+                var connectionEstablished = false;
+                
                 _hostNostrSignaling.OnAnswerReceived += async (evtUuid, answerSdp) =>
                 {
                     if (evtUuid == uuid)
@@ -189,14 +194,49 @@ namespace FyteClub.WebRTC
                     }
                 };
                 
-                // Periodically re-publish offer until answer is received
+                // Handle republish requests from joiners
+                _hostNostrSignaling.OnRepublishRequested += async (requestUuid) =>
+                {
+                    if (requestUuid == uuid && !answerReceived && !connectionEstablished)
+                    {
+                        _pluginLog?.Info($"[WebRTC] HOST: Republishing offer on request for UUID {uuid}");
+                        try
+                        {
+                            await _hostNostrSignaling.PublishOfferAsync(uuid, offerSdp);
+                            _pluginLog?.Info($"[WebRTC] HOST: Offer republished on request successfully");
+                        }
+                        catch (Exception ex)
+                        {
+                            _pluginLog?.Warning($"[WebRTC] HOST: Failed to republish on request: {ex.Message}");
+                        }
+                    }
+                };
+                
+                // Monitor connection establishment
+                if (_webrtcManager != null)
+                {
+                    _webrtcManager.OnPeerConnected += (peer) => {
+                        if (peer.PeerId == "host")
+                        {
+                            connectionEstablished = true;
+                            _pluginLog?.Info($"[WebRTC] HOST: Connection established, stopping re-publish");
+                        }
+                    };
+                }
+                
+                // Enhanced re-publish logic with faster initial attempts
                 _ = Task.Run(async () =>
                 {
                     var republishCount = 0;
-                    while (!answerReceived && republishCount < 12) // Re-publish for up to 2 minutes (12 * 10s)
+                    var maxAttempts = 24; // 2 minutes total
+                    
+                    while (!answerReceived && !connectionEstablished && republishCount < maxAttempts)
                     {
-                        await Task.Delay(10000); // Wait 10 seconds
-                        if (!answerReceived)
+                        // Faster re-publish for first few attempts, then slower
+                        var delay = republishCount < 6 ? 3000 : 10000; // 3s for first 6, then 10s
+                        await Task.Delay(delay);
+                        
+                        if (!answerReceived && !connectionEstablished)
                         {
                             republishCount++;
                             _pluginLog?.Info($"[WebRTC] HOST: Re-publishing offer #{republishCount} for UUID {uuid}");
@@ -211,9 +251,10 @@ namespace FyteClub.WebRTC
                             }
                         }
                     }
-                    if (!answerReceived)
+                    
+                    if (!answerReceived && !connectionEstablished)
                     {
-                        _pluginLog?.Warning($"[WebRTC] HOST: No answer received after {republishCount} re-publishes for UUID {uuid}");
+                        _pluginLog?.Error($"[WebRTC] HOST: Connection failed after {republishCount} attempts for UUID {uuid}");
                     }
                 });
 
@@ -314,7 +355,7 @@ namespace FyteClub.WebRTC
                     var (priv, pub) = NostrUtil.GenerateEphemeralKeys();
                     _pluginLog?.Info($"[WebRTC] JOINER: Creating NostrSignaling instance");
                     Console.WriteLine($"[JOINER] Creating NostrSignaling instance");
-                    var nostr = new NostrSignaling(relays.Length > 0 ? relays : new[] { "wss://relay.damus.io", "wss://nos.lol", "wss://nostr-pub.wellorder.net" }, priv, pub, _pluginLog);
+                    var nostr = new NNostrSignaling(relays.Length > 0 ? relays : new[] { "wss://relay.damus.io", "wss://nos.lol", "wss://nostr-pub.wellorder.net" }, priv, pub, _pluginLog);
                     
                     // CRITICAL: Set UUID and signaling channel BEFORE any peer operations
                     nostr.SetCurrentUuid(uuid);
@@ -343,23 +384,41 @@ namespace FyteClub.WebRTC
                     _pluginLog?.Info($"[WebRTC] JOINER: Subscribed, waiting for offer on uuid {uuid}");
                     Console.WriteLine($"[JOINER] Subscribed, waiting for offer on uuid {uuid}");
 
-                    // Wait up to 30s for offer
-                    using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    // Enhanced timeout with republish request fallback
+                    using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(45));
                     using (cts.Token.Register(() => tcs.TrySetCanceled())) { }
+                    
+                    // Send republish request after initial wait
+                    _ = Task.Run(async () => {
+                        await Task.Delay(10000); // Wait 10s first
+                        if (!tcs.Task.IsCompleted)
+                        {
+                            _pluginLog?.Info($"[WebRTC] JOINER: Sending republish request for UUID {uuid}");
+                            try
+                            {
+                                // Use the NNostr signaling to send the request
+                                await nostr.SendRepublishRequestAsync(uuid);
+                                _pluginLog?.Info($"[WebRTC] JOINER: Republish request sent for UUID {uuid}");
+                            }
+                            catch (Exception ex)
+                            {
+                                _pluginLog?.Warning($"[WebRTC] JOINER: Failed to send republish request: {ex.Message}");
+                            }
+                        }
+                    });
+                    
                     string offerSdp;
                     try {
                         offerSdp = await tcs.Task.ConfigureAwait(false);
                         _pluginLog?.Info($"[WebRTC] JOINER: ✅ Received offer SDP (len={offerSdp.Length})");
                         Console.WriteLine($"[JOINER] ✅ Received offer SDP (len={offerSdp.Length})");
                     } catch (TaskCanceledException) {
-                        _pluginLog?.Error($"[WebRTC] JOINER: ❌ Timed out waiting for offer on uuid {uuid}");
-                        Console.WriteLine($"[JOINER] ❌ Timed out waiting for offer on uuid {uuid}");
+                        _pluginLog?.Error($"[WebRTC] JOINER: ❌ Timed out waiting for offer on uuid {uuid} after 45s");
+                        Console.WriteLine($"[JOINER] ❌ Timed out waiting for offer on uuid {uuid} after 45s");
                         throw new TimeoutException($"Timed out waiting for offer via Nostr for uuid {uuid}");
                     } catch (Exception ex) {
                         _pluginLog?.Error($"[WebRTC] JOINER: ❌ Error waiting for offer: {ex.Message}");
-                        _pluginLog?.Error($"[WebRTC] JOINER: ❌ Stack trace: {ex.StackTrace}");
                         Console.WriteLine($"[JOINER] ❌ Error waiting for offer: {ex.Message}");
-                        Console.WriteLine($"[JOINER] ❌ Stack trace: {ex.StackTrace}");
                         throw;
                     }
 
