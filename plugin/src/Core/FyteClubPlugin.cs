@@ -44,6 +44,7 @@ namespace FyteClub
         private readonly SafeModIntegration _safeModIntegration;
         private readonly P2PModSyncOrchestrator _modSyncOrchestrator;
         public readonly SyncshellManager _syncshellManager;
+        public readonly FyteClub.TURN.TurnServerManager _turnManager;
 
         private readonly CancellationTokenSource _cancellationTokenSource = new();
 
@@ -116,6 +117,7 @@ namespace FyteClub
             _redrawCoordinator = new FyteClubRedrawCoordinator(pluginLog, _mediator, _modSystemIntegration);
             _playerDetection = new PlayerDetectionService(objectTable, _mediator, _pluginLog);
             _syncshellManager = new SyncshellManager(pluginLog);
+            _turnManager = new FyteClub.TURN.TurnServerManager(pluginLog);
             
             // Initialize sync queue processor (runs every 3 seconds)
             _syncQueueProcessor = new Timer(_ => _ = Task.Run(ProcessSyncQueue), null, 
@@ -463,7 +465,7 @@ namespace FyteClub
                 await Task.Run(async () => {
                     try
                     {
-                        var testConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
+                        var testConnection = await WebRTCConnectionFactory.CreateConnectionAsync(_turnManager);
                         testConnection?.Dispose();
                         
                         _pluginLog.Info($"FyteClub: WebRTC P2P ready for {activeSyncshells.Count} active syncshells");
@@ -953,6 +955,9 @@ namespace FyteClub
                 // Initialize the syncshell as ready to accept P2P connections
                 await _syncshellManager.InitializeAsHost(syncshell.Id);
                 
+                // Wire up P2P message handling
+                WireUpP2PMessageHandling(syncshell.Id);
+                
                 _pluginLog.Info($"[DEBUG] FyteClubPlugin.CreateSyncshell SUCCESS - returning syncshell");
                 return syncshell;
             }
@@ -1014,7 +1019,9 @@ namespace FyteClub
             { 
                 Syncshells = _syncshellManager.GetSyncshells(),
                 BlockedUsers = _blockedUsers.Keys.ToList(),
-                RecentlySyncedUsers = _recentlySyncedUsers.Keys.ToList()
+                RecentlySyncedUsers = _recentlySyncedUsers.Keys.ToList(),
+                EnableTurnHosting = _turnManager?.IsHostingEnabled ?? false,
+                TurnServerPort = _turnManager?.LocalServer?.Port ?? 3478
             };
             _pluginInterface.SavePluginConfig(config);
         }
@@ -1203,6 +1210,18 @@ namespace FyteClub
             foreach (var syncedUser in config.RecentlySyncedUsers ?? new List<string>())
             {
                 _recentlySyncedUsers.TryAdd(syncedUser, 0);
+            }
+            
+            // Auto-enable TURN hosting if configured
+            if (config.EnableTurnHosting)
+            {
+                _ = Task.Run(async () => {
+                    if (_turnManager != null)
+                    {
+                        await _turnManager.EnableHostingAsync();
+                        _pluginLog.Info("[TURN] Auto-enabled hosting from saved configuration");
+                    }
+                });
             }
         }
 
@@ -1462,6 +1481,7 @@ namespace FyteClub
                 {
                     try
                     {
+                        _turnManager?.Dispose();
                         _syncshellManager?.Dispose();
                         _modSyncOrchestrator?.Dispose();
                         _clientCache?.Dispose();
@@ -1737,6 +1757,79 @@ namespace FyteClub
                 _pluginLog.Error($"Plugin recovery failed");
             }
         }
+        
+        private void WireUpP2PMessageHandling(string syncshellId)
+        {
+            var connection = _syncshellManager.GetWebRTCConnection(syncshellId);
+            if (connection is RobustWebRTCConnection robustConnection)
+            {
+                robustConnection.OnPhonebookUpdated += (players) => {
+                    _pluginLog.Info($"[P2P] Phonebook updated with {players.Count} players");
+                    foreach (var player in players)
+                    {
+                        _recentlySyncedUsers.TryAdd(player, 0);
+                    }
+                    SaveConfiguration();
+                };
+                
+                robustConnection.OnModDataReceived += async (playerName, modData) => {
+                    _pluginLog.Info($"[P2P] Processing mod data for: {playerName}");
+                    await ProcessReceivedModData(playerName, modData);
+                };
+            }
+        }
+        
+        private async Task ProcessReceivedModData(string playerName, JsonElement modData)
+        {
+            try
+            {
+                // Extract mod components
+                var mods = modData.TryGetProperty("mods", out var modsProperty) ? 
+                    modsProperty.EnumerateArray().Select(m => m.GetString()).Where(s => !string.IsNullOrEmpty(s)).ToList() : 
+                    new List<string>();
+                    
+                var glamourerDesign = modData.TryGetProperty("glamourerDesign", out var glamProperty) ? 
+                    glamProperty.GetString() : null;
+                    
+                var outfitHash = modData.TryGetProperty("outfitHash", out var hashProperty) ? 
+                    hashProperty.GetString() : null;
+                
+                // Create player info
+                var playerInfo = new AdvancedPlayerInfo
+                {
+                    PlayerName = playerName,
+                    Mods = mods,
+                    GlamourerDesign = glamourerDesign
+                };
+                
+                // Store in caches
+                if (_componentCache != null && !string.IsNullOrEmpty(outfitHash))
+                {
+                    await _componentCache.StoreAppearanceRecipe(playerName, outfitHash, playerInfo);
+                }
+                
+                if (_clientCache != null)
+                {
+                    _clientCache.UpdateRecipeForPlayer(playerName, playerInfo);
+                }
+                
+                // Apply mods and redraw
+                var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, playerName);
+                if (success)
+                {
+                    _pluginLog.Info($"[P2P] Applied and cached mods for: {playerName}");
+                    _loadingStates[playerName] = LoadingState.Complete;
+                    _recentlySyncedUsers.TryAdd(playerName, 0);
+                    
+                    // Trigger redraw
+                    _redrawCoordinator.RedrawCharacterIfFound(playerName);
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"[P2P] Failed to process mod data for {playerName}: {ex.Message}");
+            }
+        }
 
 
     }
@@ -1753,6 +1846,12 @@ namespace FyteClub
         private bool? _webrtcAvailable = null;
         private DateTime _lastWebrtcTest = DateTime.MinValue;
         private string _blockPlayerName = "";
+        
+        // TURN hosting tab fields
+        private bool _enableTurnHosting = false;
+        private string _turnTestStatus = "";
+        private bool _isTurnTesting = false;
+        private Vector4 _turnStatusColor = new(1, 1, 1, 1);
 
         public ConfigWindow(FyteClubPlugin plugin) : base("FyteClub - P2P Mod Sharing")
         {
@@ -1762,6 +1861,8 @@ namespace FyteClub
                 MinimumSize = new Vector2(400, 300),
                 MaximumSize = new Vector2(800, 600)
             };
+            
+            _enableTurnHosting = _plugin._turnManager.IsHostingEnabled;
         }
 
         public override void Draw()
@@ -1783,6 +1884,12 @@ namespace FyteClub
                 if (ImGui.BeginTabItem("Cache"))
                 {
                     DrawCacheTab();
+                    ImGui.EndTabItem();
+                }
+                
+                if (ImGui.BeginTabItem("Routing Server"))
+                {
+                    DrawTurnHostingTab();
                     ImGui.EndTabItem();
                 }
                 
@@ -1909,7 +2016,7 @@ namespace FyteClub
                 {
                     try
                     {
-                        var testConnection = WebRTCConnectionFactory.CreateConnectionAsync().Result;
+                        var testConnection = WebRTCConnectionFactory.CreateConnectionAsync(_turnManager).Result;
                         testConnection.Dispose();
                         _webrtcAvailable = true;
                     }
@@ -1939,7 +2046,7 @@ namespace FyteClub
                         try
                         {
                             _ = Task.Run(async () => {
-                                var bootstrapCode = await _plugin._syncshellManager.CreateBootstrapCode(syncshell.Id);
+                                var bootstrapCode = await _plugin._syncshellManager.CreateBootstrapCode(syncshell.Id, _plugin._turnManager);
                                 ImGui.SetClipboardText(bootstrapCode);
                                 _plugin._pluginLog.Info($"Copied bootstrap code for stale syncshell: {syncshell.Name}");
                             });
@@ -1961,7 +2068,7 @@ namespace FyteClub
                     try
                     {
                         _ = Task.Run(async () => {
-                            var inviteCode = await _plugin._syncshellManager.GenerateNostrInviteCode(syncshell.Id);
+                            var inviteCode = await _plugin._syncshellManager.GenerateNostrInviteCode(syncshell.Id, _plugin._turnManager);
                             ImGui.SetClipboardText(inviteCode);
                             
                             if (inviteCode.StartsWith("BOOTSTRAP:"))
@@ -2112,6 +2219,207 @@ namespace FyteClub
                 ImGui.EndPopup();
             }
         }
+        
+        private void DrawTurnHostingTab()
+        {
+            var turnManager = _plugin._turnManager;
+            if (turnManager == null)
+            {
+                ImGui.Text("TURN server manager not available");
+                return;
+            }
+            
+            ImGui.Text("🌐 Help Your Syncshell - Routing Server");
+            ImGui.Separator();
+            
+            // Description
+            ImGui.TextWrapped("What is this?");
+            ImGui.TextWrapped("When enabled, your computer becomes a routing server to help your syncshell friends connect when direct connections fail. This improves connectivity for everyone in your group.");
+            
+            ImGui.Spacing();
+            ImGui.TextWrapped("Privacy & Security:");
+            ImGui.BulletText("Only your syncshell members can use your routing server");
+            ImGui.BulletText("No personal data is stored or transmitted");
+            ImGui.BulletText("Traffic is encrypted end-to-end");
+            ImGui.BulletText("Automatically stops when you close FFXIV");
+            
+            ImGui.Spacing();
+            ImGui.Separator();
+            
+            // Update state from manager
+            _enableTurnHosting = turnManager.IsHostingEnabled;
+            
+            // Hosting controls
+            if (ImGui.Checkbox("Enable Routing Server", ref _enableTurnHosting))
+            {
+                _ = Task.Run(async () => {
+                    if (_enableTurnHosting)
+                    {
+                        var success = await turnManager.EnableHostingAsync();
+                        if (!success)
+                        {
+                            _enableTurnHosting = false;
+                            _turnTestStatus = "❌ Failed to start routing server";
+                            _turnStatusColor = new Vector4(1, 0.3f, 0.3f, 1);
+                        }
+                        else
+                        {
+                            _turnTestStatus = "✅ Routing server started successfully";
+                            _turnStatusColor = new Vector4(0.3f, 1, 0.3f, 1);
+                        }
+                    }
+                    else
+                    {
+                        turnManager.DisableHosting();
+                        _turnTestStatus = "Routing server stopped";
+                        _turnStatusColor = new Vector4(1, 1, 1, 1);
+                    }
+                });
+            }
+            
+            if (_enableTurnHosting)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.3f, 1, 0.3f, 1), "Active");
+            }
+            
+            ImGui.Spacing();
+            
+            // Per-syncshell TURN hosting configuration
+            if (_enableTurnHosting)
+            {
+                ImGui.Text("Enable routing for specific syncshells:");
+                ImGui.Separator();
+                
+                var syncshells = _plugin.GetSyncshells();
+                foreach (var syncshell in syncshells)
+                {
+                    bool enableForSyncshell = syncshell.EnableTurnHosting;
+                    if (ImGui.Checkbox($"{syncshell.Name}##turn_{syncshell.Id}", ref enableForSyncshell))
+                    {
+                        syncshell.EnableTurnHosting = enableForSyncshell;
+                        _plugin.SaveConfiguration();
+                        
+                        if (enableForSyncshell)
+                        {
+                            _plugin._pluginLog.Info($"[TURN] Enabled routing for syncshell: {syncshell.Name}");
+                        }
+                        else
+                        {
+                            _plugin._pluginLog.Info($"[TURN] Disabled routing for syncshell: {syncshell.Name}");
+                        }
+                    }
+                    
+                    ImGui.SameLine();
+                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), $"({syncshell.Members?.Count ?? 0} members)");
+                }
+                
+                if (syncshells.Count == 0)
+                {
+                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "No syncshells available. Create a syncshell first.");
+                }
+                
+                ImGui.Spacing();
+            }
+            
+            // Connectivity test
+            if (ImGui.Button("Test Connectivity"))
+            {
+                if (!_isTurnTesting)
+                {
+                    _ = Task.Run(async () => {
+                        _isTurnTesting = true;
+                        _turnTestStatus = "Testing local port availability...";
+                        _turnStatusColor = new Vector4(1, 1, 0.3f, 1);
+                        
+                        try
+                        {
+                            // Test local port availability
+                            using var udpTest = new System.Net.Sockets.UdpClient(3478);
+                            _turnTestStatus = "Testing external connectivity...";
+                            
+                            // Test external connectivity using TURN server's method
+                            var testServer = new FyteClub.TURN.SyncshellTurnServer(_plugin._pluginLog);
+                            var isExternallyAccessible = await testServer.TestExternalConnectivity();
+                            testServer.Dispose();
+                            
+                            if (isExternallyAccessible)
+                            {
+                                _turnTestStatus = "✅ Full connectivity test passed - ready to host!";
+                                _turnStatusColor = new Vector4(0.3f, 1, 0.3f, 1);
+                            }
+                            else
+                            {
+                                _turnTestStatus = "⚠️ Local port OK, but external access may be blocked\nCheck router port forwarding for UDP 3478";
+                                _turnStatusColor = new Vector4(1, 0.6f, 0.2f, 1);
+                            }
+                        }
+                        catch (System.Net.Sockets.SocketException)
+                        {
+                            _turnTestStatus = "❌ Port 3478 is not available or blocked locally";
+                            _turnStatusColor = new Vector4(1, 0.3f, 0.3f, 1);
+                        }
+                        catch (Exception ex)
+                        {
+                            _turnTestStatus = $"❌ Test failed: {ex.Message}";
+                            _turnStatusColor = new Vector4(1, 0.3f, 0.3f, 1);
+                        }
+                        finally
+                        {
+                            _isTurnTesting = false;
+                        }
+                    });
+                }
+            }
+            
+            ImGui.SameLine();
+            if (_isTurnTesting)
+            {
+                ImGui.TextColored(new Vector4(1, 1, 0.3f, 1), "Testing...");
+            }
+            else if (!string.IsNullOrEmpty(_turnTestStatus))
+            {
+                ImGui.TextWrapped(_turnTestStatus);
+                if (_turnTestStatus.Contains("port forwarding"))
+                {
+                    ImGui.Spacing();
+                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 1, 1), 
+                        "💡 Tip: Forward UDP port 3478 to this PC's IP in your router settings");
+                }
+            }
+            
+            ImGui.Spacing();
+            ImGui.Separator();
+            
+            // Status
+            if (turnManager.IsHostingEnabled && turnManager.LocalServer != null)
+            {
+                var server = turnManager.LocalServer;
+                
+                ImGui.Text("Server Status:");
+                ImGui.BulletText($"External IP: {server.ExternalIP}");
+                ImGui.BulletText($"Port: {server.Port}");
+                ImGui.BulletText($"Status: Running");
+                
+                var serverCount = turnManager.AvailableServers.Count;
+                ImGui.BulletText($"Other routing servers available: {serverCount}");
+                
+                if (serverCount > 0)
+                {
+                    ImGui.TextColored(new Vector4(0.3f, 1, 0.3f, 1), 
+                        $"🌐 Great! Your syncshell has {serverCount + 1} routing servers total");
+                }
+                else
+                {
+                    ImGui.TextColored(new Vector4(1, 1, 0.3f, 1), 
+                        "💡 Encourage friends to enable hosting for better connectivity");
+                }
+            }
+            else
+            {
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Not hosting");
+            }
+        }
     }
 
     public enum LoadingState { None, Requesting, Downloading, Applying, Complete, Failed }
@@ -2124,6 +2432,8 @@ namespace FyteClub
         public int ProximityRange { get; set; } = 50;
         public List<string> BlockedUsers { get; set; } = new();
         public List<string> RecentlySyncedUsers { get; set; } = new();
+        public bool EnableTurnHosting { get; set; } = false;
+        public int TurnServerPort { get; set; } = 3478;
     }
 
     public class PlayerSnapshot

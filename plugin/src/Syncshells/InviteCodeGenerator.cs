@@ -36,13 +36,18 @@ namespace FyteClub
             return "syncshell://" + Convert.ToBase64String(combined).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         }
         
-        public static string GenerateBootstrapInvite(string syncshellId, string offerSdp, byte[] groupKey, string publicKey, string ipAddress, int port, string? answerChannel = null)
+        public static string GenerateBootstrapInvite(string syncshellId, string offerSdp, byte[] groupKey, string publicKey, string ipAddress, int port, string? answerChannel = null, TurnServerInfo? turnServer = null)
         {
             var bootstrapData = new
             {
                 publicKey,
                 ipAddress,
-                port
+                port,
+                turnServer = turnServer != null ? new {
+                    url = turnServer.Url,
+                    username = turnServer.Username,
+                    password = turnServer.Password
+                } : null
             };
             
             var invite = new
@@ -177,8 +182,23 @@ namespace FyteClub
             BootstrapInfo? bootstrapInfo = null;
             if (invite.TryGetProperty("bootstrap", out var bootstrapElement))
             {
-                var bootstrapJson = bootstrapElement.GetRawText();
-                bootstrapInfo = JsonSerializer.Deserialize<BootstrapInfo>(bootstrapJson);
+                bootstrapInfo = new BootstrapInfo
+                {
+                    PublicKey = bootstrapElement.GetProperty("publicKey").GetString() ?? "",
+                    IpAddress = bootstrapElement.GetProperty("ipAddress").GetString() ?? "",
+                    Port = bootstrapElement.GetProperty("port").GetInt32()
+                };
+                
+                // Extract TURN server info if present
+                if (bootstrapElement.TryGetProperty("turnServer", out var turnElement) && turnElement.ValueKind != JsonValueKind.Null)
+                {
+                    bootstrapInfo.TurnServer = new TurnServerInfo
+                    {
+                        Url = turnElement.GetProperty("url").GetString() ?? "",
+                        Username = turnElement.GetProperty("username").GetString() ?? "",
+                        Password = turnElement.GetProperty("password").GetString() ?? ""
+                    };
+                }
             }
             return (invite.GetProperty("syncshell").GetString()!, invite.GetProperty("sdp").GetString()!, answerChannel, bootstrapInfo);
         }
@@ -352,5 +372,13 @@ namespace FyteClub
         public string PublicKey { get; set; } = string.Empty;
         public string IpAddress { get; set; } = string.Empty;
         public int Port { get; set; }
+        public TurnServerInfo? TurnServer { get; set; }
+    }
+    
+    public class TurnServerInfo
+    {
+        public string Url { get; set; } = string.Empty;
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
     }
 }

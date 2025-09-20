@@ -1,0 +1,1 @@
+// This file is no longer needed - TURN hosting functionality is integrated into the main ConfigWindow

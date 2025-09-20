@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.MixedReality.WebRTC;
 using Dalamud.Plugin.Services;
+using FyteClub.TURN;
 
 namespace FyteClub.WebRTC
 {
@@ -22,35 +23,57 @@ namespace FyteClub.WebRTC
         private ISignalingChannel _signalingChannel;
         private readonly PeerConnectionConfiguration _config;
         private readonly IPluginLog? _pluginLog;
+        private readonly TurnServerManager _turnManager;
         private bool _disposed = false;
 
         public WebRTCManager(ISignalingChannel signalingChannel, IPluginLog? pluginLog = null)
         {
             _signalingChannel = signalingChannel;
             _pluginLog = pluginLog;
+            _turnManager = new TurnServerManager(pluginLog);
             _pluginLog?.Info($"[WebRTC] Using {signalingChannel.GetType().Name} for P2P connections");
             
             _config = new PeerConnectionConfiguration
             {
-                IceServers = {
-                    // Multiple STUN servers for better connectivity
-                    new IceServer { Urls = { "stun:stun.l.google.com:19302" } },
-                    new IceServer { Urls = { "stun:stun1.l.google.com:19302" } },
-                    new IceServer { Urls = { "stun:stun2.l.google.com:19302" } },
-                    new IceServer { Urls = { "stun:stun.cloudflare.com:3478" } },
-                    // Free TURN servers for NAT traversal
-                    new IceServer { 
-                        Urls = { "turn:openrelay.metered.ca:80" },
-                        TurnUserName = "openrelayproject",
-                        TurnPassword = "openrelayproject"
-                    },
-                    new IceServer { 
-                        Urls = { "turn:openrelay.metered.ca:443" },
-                        TurnUserName = "openrelayproject",
-                        TurnPassword = "openrelayproject"
-                    }
+                IceServers = GetDynamicIceServers(),
+                IceTransportType = IceTransportType.Relay
+            };
+        }
+        
+        private List<IceServer> GetDynamicIceServers()
+        {
+            var servers = new List<IceServer>
+            {
+                new IceServer { Urls = { "stun:stun.l.google.com:19302" } },
+                new IceServer { 
+                    Urls = { "turn:openrelay.metered.ca:80" },
+                    TurnUserName = "openrelayproject",
+                    TurnPassword = "openrelayproject"
                 }
             };
+            
+            foreach (var turnServer in _turnManager.AvailableServers)
+            {
+                servers.Add(new IceServer
+                {
+                    Urls = { turnServer.Url },
+                    TurnUserName = turnServer.Username,
+                    TurnPassword = turnServer.Password
+                });
+            }
+            
+            var localServer = _turnManager.GetLocalServerInfo();
+            if (localServer != null)
+            {
+                servers.Add(new IceServer
+                {
+                    Urls = { localServer.Url },
+                    TurnUserName = localServer.Username,
+                    TurnPassword = localServer.Password
+                });
+            }
+            
+            return servers;
 
             RegisterSignalingHandlers();
         }
@@ -95,6 +118,8 @@ namespace FyteClub.WebRTC
                 }
             };
 
+            // Wait a moment for data channel to be registered in SDP
+            await Task.Delay(100);
             peer.PeerConnection.CreateOffer();
             return await tcs.Task;
         }
@@ -252,17 +277,40 @@ namespace FyteClub.WebRTC
             
             _pluginLog?.Info($"[WebRTC] ✅ DataChannelAdded handler registered for {peerId}");
 
-            // ProximityVoiceChat pattern: Only offerer creates data channel
+            // CRITICAL: Create data channel BEFORE any SDP operations for offerer
             if (isOfferer)
             {
-                _pluginLog?.Info($"[WebRTC] 📞 Creating data channel for {peerId} (offerer)");
-                peer.DataChannel = await peerConnection.AddDataChannelAsync("fyteclub", true, true);
-                RegisterDataChannelHandlers(peer, peer.DataChannel);
-                _pluginLog?.Info($"[WebRTC] ✅ Data channel created for {peerId}, State: {peer.DataChannel.State}");
+                _pluginLog?.Info($"[WebRTC] 📞 OFFERER: Creating data channel for {peerId} - BEFORE SDP operations");
+                _pluginLog?.Info($"[WebRTC] 📞 OFFERER: PeerConnection state before data channel creation: {peerConnection.GetHashCode()}");
+                
+                try
+                {
+                    // Use explicit data channel configuration for better reliability
+                    peer.DataChannel = await peerConnection.AddDataChannelAsync("fyteclub", ordered: true, reliable: true);
+                    _pluginLog?.Info($"[WebRTC] ✅ OFFERER: Data channel created successfully for {peerId}");
+                    _pluginLog?.Info($"[WebRTC] ✅ OFFERER: Data channel details - Label: {peer.DataChannel.Label}, State: {peer.DataChannel.State}");
+                    
+                    RegisterDataChannelHandlers(peer, peer.DataChannel);
+                    _pluginLog?.Info($"[WebRTC] ✅ OFFERER: Data channel handlers registered for {peerId}");
+                    
+                    // Test data channel immediately
+                    _pluginLog?.Info($"[WebRTC] 🔍 OFFERER: Testing data channel access for {peerId}");
+                    var testLabel = peer.DataChannel.Label;
+                    var testState = peer.DataChannel.State;
+                    _pluginLog?.Info($"[WebRTC] 🔍 OFFERER: Data channel test passed - Label: {testLabel}, State: {testState}");
+                }
+                catch (Exception dcEx)
+                {
+                    _pluginLog?.Error($"[WebRTC] 💥 OFFERER: Failed to create data channel for {peerId}: {dcEx.Message}");
+                    _pluginLog?.Error($"[WebRTC] 💥 OFFERER: Data channel exception stack: {dcEx.StackTrace}");
+                    throw;
+                }
             }
             else
             {
-                _pluginLog?.Info($"[WebRTC] ⏳ Answerer {peerId} waiting for data channel from remote");
+                _pluginLog?.Info($"[WebRTC] ⏳ ANSWERER: {peerId} waiting for data channel from remote via DataChannelAdded event");
+                _pluginLog?.Info($"[WebRTC] ⏳ ANSWERER: PeerConnection state: {peerConnection.GetHashCode()}");
+                _pluginLog?.Info($"[WebRTC] ⏳ ANSWERER: DataChannelAdded handler should fire when remote creates channel");
             }
 
             // SDP ready event handling - CRITICAL for offer/answer exchange
@@ -437,37 +485,55 @@ namespace FyteClub.WebRTC
         
         private void RegisterDataChannelHandlers(Peer peer, Microsoft.MixedReality.WebRTC.DataChannel channel)
         {
-            _pluginLog?.Info($"[WebRTC] 📝 Registering data channel handlers for {peer.PeerId}, initial state: {channel.State}");
+            _pluginLog?.Info($"[WebRTC] 📝 HANDLERS: Registering data channel handlers for {peer.PeerId}");
+            _pluginLog?.Info($"[WebRTC] 📝 HANDLERS: Initial channel state: {channel.State}");
+            _pluginLog?.Info($"[WebRTC] 📝 HANDLERS: Channel label: {channel.Label}");
+            _pluginLog?.Info($"[WebRTC] 📝 HANDLERS: Peer role: {(peer.IsOfferer ? "OFFERER" : "ANSWERER")}");
             
             channel.StateChanged += () => {
                 try
                 {
-                    if (_disposed) return;
+                    if (_disposed) 
+                    {
+                        _pluginLog?.Warning($"[WebRTC] ⚠️ HANDLERS: StateChanged fired but manager disposed for {peer.PeerId}");
+                        return;
+                    }
                     
-                    _pluginLog?.Info($"[WebRTC] 📡 Data channel STATE CHANGE for {peer.PeerId}: {channel.State}");
+                    _pluginLog?.Info($"[WebRTC] 📡 HANDLERS: Data channel STATE CHANGE for {peer.PeerId}: {channel.State}");
+                    _pluginLog?.Info($"[WebRTC] 📡 HANDLERS: Current ICE state: {peer.IceState}");
+                    _pluginLog?.Info($"[WebRTC] 📡 HANDLERS: DataChannelReady flag: {peer.DataChannelReady}");
                     
                     if (channel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
                     {
-                        _pluginLog?.Info($"[WebRTC] ✅ Data channel OPEN for {peer.PeerId} - triggering ready event");
+                        _pluginLog?.Info($"[WebRTC] ✅ HANDLERS: Data channel OPEN for {peer.PeerId} - triggering ready event");
                         peer.DataChannelReady = true;
                         peer.OnDataChannelReady?.Invoke();
                         CheckAndTriggerConnection(peer);
                     }
-                    else if (channel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Connecting && peer.IceState == IceConnectionState.Connected)
+                    else if (channel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Connecting)
                     {
-                        _pluginLog?.Info($"[WebRTC] ✅ Data channel CONNECTING but ICE connected for {peer.PeerId} - assuming ready");
-                        peer.DataChannelReady = true;
-                        peer.OnDataChannelReady?.Invoke();
-                        CheckAndTriggerConnection(peer);
+                        _pluginLog?.Info($"[WebRTC] 🔄 HANDLERS: Data channel CONNECTING for {peer.PeerId}");
+                        if (peer.IceState == IceConnectionState.Connected)
+                        {
+                            _pluginLog?.Info($"[WebRTC] ✅ HANDLERS: Data channel CONNECTING but ICE connected for {peer.PeerId} - assuming ready");
+                            peer.DataChannelReady = true;
+                            peer.OnDataChannelReady?.Invoke();
+                            CheckAndTriggerConnection(peer);
+                        }
                     }
                     else if (channel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Closed)
                     {
-                        _pluginLog?.Warning($"[WebRTC] ❌ Data channel CLOSED for {peer.PeerId}");
+                        _pluginLog?.Warning($"[WebRTC] ❌ HANDLERS: Data channel CLOSED for {peer.PeerId}");
+                    }
+                    else
+                    {
+                        _pluginLog?.Info($"[WebRTC] 🔄 HANDLERS: Data channel state {channel.State} for {peer.PeerId}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _pluginLog?.Error($"[WebRTC] ❌ Error in data channel state handler: {ex.Message}");
+                    _pluginLog?.Error($"[WebRTC] ❌ HANDLERS: Error in data channel state handler: {ex.Message}");
+                    _pluginLog?.Error($"[WebRTC] ❌ HANDLERS: Stack trace: {ex.StackTrace}");
                 }
             };
 
@@ -475,13 +541,16 @@ namespace FyteClub.WebRTC
                 try
                 {
                     if (_disposed) return;
+                    _pluginLog?.Info($"[WebRTC] 📨 HANDLERS: Message received on {peer.PeerId}, {data.Length} bytes");
                     peer.OnDataReceived?.Invoke(data);
                 }
                 catch (Exception ex)
                 {
-                    _pluginLog?.Error($"[WebRTC] Error in data channel message handler: {ex.Message}");
+                    _pluginLog?.Error($"[WebRTC] ❌ HANDLERS: Error in data channel message handler: {ex.Message}");
                 }
             };
+            
+            _pluginLog?.Info($"[WebRTC] ✅ HANDLERS: All data channel handlers registered for {peer.PeerId}");
         }
         
         private void CheckAndTriggerConnection(Peer peer)
@@ -790,14 +859,30 @@ namespace FyteClub.WebRTC
             }
         }
         
+        public int GetAvailableTurnServerCount(string syncshellId = "")
+        {
+            return _turnManager.GetAvailableServerCount(syncshellId);
+        }
+        
+        public bool IsHostingTurnServer()
+        {
+            return _turnManager.IsHostingEnabled;
+        }
+        
+        public TurnServerManager GetTurnManager()
+        {
+            return _turnManager;
+        }
+        
         public void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
             
-            // Clear event handlers to prevent callbacks during disposal
             OnPeerConnected = null;
             OnPeerDisconnected = null;
+            
+            _turnManager?.Dispose();
             
             foreach (var peer in _peers.Values)
             {

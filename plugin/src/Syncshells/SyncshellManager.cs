@@ -214,7 +214,7 @@ namespace FyteClub
             return await GenerateManualInviteCode(syncshellId);
         }
         
-        public async Task<string> CreateBootstrapCode(string syncshellId)
+        public async Task<string> CreateBootstrapCode(string syncshellId, FyteClub.TURN.TurnServerManager? turnManager = null)
         {
             Console.WriteLine($"🚀 [SyncshellManager] Creating bootstrap code for syncshell: {syncshellId}");
             
@@ -227,9 +227,31 @@ namespace FyteClub
             
             Console.WriteLine($"🚀 [SyncshellManager] Found syncshell: {syncshell.Name}, IsStale: {syncshell.IsStale}");
             
-            var bootstrapCode = WebRTC.SyncshellRecovery.CreateBootstrapCode(syncshellId, syncshell.EncryptionKey);
-            Console.WriteLine($"✅ [SyncshellManager] Bootstrap code created: {bootstrapCode}");
+            // Include TURN server info in bootstrap code
+            object? turnServerInfo = null;
+            if (turnManager?.IsHostingEnabled == true && turnManager.LocalServer != null)
+            {
+                turnServerInfo = new {
+                    url = $"turn:{turnManager.LocalServer.ExternalIP}:{turnManager.LocalServer.Port}",
+                    username = turnManager.LocalServer.Username,
+                    password = turnManager.LocalServer.Password
+                };
+                Console.WriteLine($"🌐 [SyncshellManager] Including TURN server in bootstrap: {turnManager.LocalServer.ExternalIP}:{turnManager.LocalServer.Port}");
+            }
             
+            var bootstrapInfo = new {
+                type = "bootstrap",
+                syncshellId = syncshellId,
+                name = syncshell.Name,
+                key = syncshell.EncryptionKey,
+                turnServer = turnServerInfo,
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            };
+            
+            var json = System.Text.Json.JsonSerializer.Serialize(bootstrapInfo);
+            var bootstrapCode = "BOOTSTRAP:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json));
+            
+            Console.WriteLine($"✅ [SyncshellManager] Bootstrap code created with TURN server info");
             return bootstrapCode;
         }
         
@@ -259,7 +281,7 @@ namespace FyteClub
             return await GenerateNostrInviteCode(syncshellId);
         }
         
-        public async Task<string> GenerateNostrInviteCode(string syncshellId)
+        public async Task<string> GenerateNostrInviteCode(string syncshellId, FyteClub.TURN.TurnServerManager? turnManager = null)
         {
             try
             {
@@ -298,7 +320,19 @@ namespace FyteClub
                         uuid = Guid.NewGuid().ToString();
                     }
                     
-                    // Create Nostr invite with the UUID and relays (same as RobustWebRTCConnection)
+                    // Get TURN server info from host if available
+                    object? turnServerInfo = null;
+                    if (turnManager?.IsHostingEnabled == true && turnManager.LocalServer != null)
+                    {
+                        turnServerInfo = new {
+                            url = $"turn:{turnManager.LocalServer.ExternalIP}:{turnManager.LocalServer.Port}",
+                            username = turnManager.LocalServer.Username,
+                            password = turnManager.LocalServer.Password
+                        };
+                        SecureLogger.LogInfo("Including TURN server info in invite: {0}:{1}", turnManager.LocalServer.ExternalIP, turnManager.LocalServer.Port);
+                    }
+                    
+                    // Create Nostr invite with the UUID, relays, and TURN server info
                     var nostrInvite = new {
                         type = "nostr_invite",
                         syncshellId = syncshellId,
@@ -311,13 +345,14 @@ namespace FyteClub
                             "wss://nostr-pub.wellorder.net",
                             "wss://relay.snort.social",
                             "wss://nostr.wine"
-                        }
+                        },
+                        turnServer = turnServerInfo
                     };
                     
                     var json = System.Text.Json.JsonSerializer.Serialize(nostrInvite);
                     var inviteCode = "NOSTR:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json));
                     
-                    SecureLogger.LogInfo("Generated Nostr invite code with UUID {0} for syncshell {1}", uuid, syncshellId);
+                    SecureLogger.LogInfo("Generated Nostr invite code with UUID {0} and TURN server for syncshell {1}", uuid, syncshellId);
                     return inviteCode;
                 }
                 
@@ -1073,6 +1108,11 @@ namespace FyteClub
         public List<SyncshellInfo> GetSyncshells()
         {
             return new List<SyncshellInfo>(_syncshells);
+        }
+        
+        public IWebRTCConnection? GetWebRTCConnection(string syncshellId)
+        {
+            return _webrtcConnections.TryGetValue(syncshellId, out var connection) ? connection : null;
         }
         
         // Separate mod data mapping from network phonebook

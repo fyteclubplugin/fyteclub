@@ -19,6 +19,7 @@ namespace FyteClub
         public List<string> Members { get; set; } = new();
         public string Status { get; set; } = "";
         public DateTime LastConnected { get; set; } = DateTime.UtcNow;
+        public bool EnableTurnHosting { get; set; } = true; // Default to enabled for new syncshells
         
         // Helper property for invite permissions
         public bool CanShare => IsOwner || CanInvite || Members.Count < 10;

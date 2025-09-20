@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
 using FyteClub.WebRTC;
@@ -15,32 +16,48 @@ namespace FyteClub
             _pluginLog = pluginLog;
         }
 
-        public static async Task<IWebRTCConnection> CreateConnectionAsync()
+        public static async Task<IWebRTCConnection> CreateConnectionAsync(FyteClub.TURN.TurnServerManager? turnManager = null)
         {
             if (_nativeAvailable == null)
             {
                 _nativeAvailable = await TestNativeAvailability();
             }
 
-            // Try robust WebRTC first
+            // Force TURN server usage for reliable connections
             try
             {
                 var robustConnection = new WebRTC.RobustWebRTCConnection(_pluginLog);
+                
+                // Configure TURN servers if available
+                if (turnManager != null)
+                {
+                    var availableServers = GetAvailableTurnServers(turnManager);
+                    if (availableServers.Count > 0)
+                    {
+                        var bestServer = SelectBestTurnServer(availableServers);
+                        if (bestServer != null)
+                        {
+                            robustConnection.ConfigureTurnServers(new List<FyteClub.TURN.TurnServerInfo> { bestServer });
+                            _pluginLog?.Info($"WebRTC: Using optimal TURN server {bestServer.Url} (load: {bestServer.UserCount})");
+                        }
+                    }
+                }
+                
                 var robustSuccess = await robustConnection.InitializeAsync();
                 if (robustSuccess)
                 {
-                    _pluginLog?.Info("WebRTC: Using RobustWebRTCConnection with ICE support");
+                    _pluginLog?.Info("WebRTC: Using RobustWebRTCConnection with TURN server routing");
                     return robustConnection;
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog?.Warning($"Robust WebRTC failed, falling back: {ex.Message}");
+                _pluginLog?.Warning($"TURN-enabled WebRTC failed, falling back: {ex.Message}");
             }
             
             if (_nativeAvailable.Value)
             {
-                _pluginLog?.Info("WebRTC: Using LibWebRTCConnection (native fallback)");
+                _pluginLog?.Info("WebRTC: Using LibWebRTCConnection (native fallback without TURN)");
                 return new LibWebRTCConnection(_pluginLog);
             }
             else
@@ -49,6 +66,53 @@ namespace FyteClub
                 _pluginLog?.Error("Please ensure Visual C++ Redistributable is installed.");
                 throw new InvalidOperationException("WebRTC native library not available. Cannot create P2P connections.");
             }
+        }
+        
+        private static List<FyteClub.TURN.TurnServerInfo> GetAvailableTurnServers(FyteClub.TURN.TurnServerManager turnManager)
+        {
+            var turnServers = new List<FyteClub.TURN.TurnServerInfo>();
+            
+            // Add local TURN server if hosting
+            if (turnManager.IsHostingEnabled && turnManager.LocalServer != null)
+            {
+                turnServers.Add(new FyteClub.TURN.TurnServerInfo
+                {
+                    Url = $"turn:{turnManager.LocalServer.ExternalIP}:{turnManager.LocalServer.Port}",
+                    Username = turnManager.LocalServer.Username,
+                    Password = turnManager.LocalServer.Password
+                });
+            }
+            
+            // Add other syncshell member TURN servers
+            turnServers.AddRange(turnManager.AvailableServers);
+            
+            // Sort by load (ascending) for optimal selection
+            turnServers.Sort((a, b) => a.UserCount.CompareTo(b.UserCount));
+            
+            return turnServers;
+        }
+        
+        public static FyteClub.TURN.TurnServerInfo? SelectBestTurnServer(List<FyteClub.TURN.TurnServerInfo> availableServers, string? syncshellId = null)
+        {
+            if (availableServers.Count == 0) return null;
+            
+            // Proximity clustering: try to fill servers to ~15 people before moving to next
+            var primaryServers = availableServers.Where(s => s.UserCount > 0 && s.UserCount < 15).ToList();
+            if (primaryServers.Count > 0)
+            {
+                // Pick the most populated server under 15 (cluster together)
+                return primaryServers.OrderByDescending(s => s.UserCount).First();
+            }
+            
+            // If no primary servers available, use least loaded
+            var availableCapacity = availableServers.Where(s => s.UserCount < 18).ToList();
+            if (availableCapacity.Count > 0)
+            {
+                return availableCapacity.OrderBy(s => s.UserCount).First();
+            }
+            
+            // All servers near capacity, pick least loaded
+            return availableServers.OrderBy(s => s.UserCount).First();
         }
 
         private static async Task<bool> TestNativeAvailability()

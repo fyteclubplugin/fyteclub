@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+using System.Text.Json;
 using Dalamud.Plugin.Services;
 
 namespace FyteClub.WebRTC
@@ -15,6 +17,7 @@ namespace FyteClub.WebRTC
         private NNostrSignaling? _hostNostrSignaling;
         private string _currentSyncshellId = string.Empty;
         private string _currentPassword = string.Empty;
+        private List<FyteClub.TURN.TurnServerInfo> _turnServers = new();
 
         public event Action? OnConnected;
         public event Action? OnDisconnected;
@@ -58,7 +61,10 @@ namespace FyteClub.WebRTC
                 _webrtcManager.OnPeerConnected += (peer) => {
                     _pluginLog?.Info($"🔗 [WebRTC] Peer connected: {peer.PeerId}, DataChannel: {peer.DataChannel?.State}");
                     _currentPeer = peer;
-                    peer.OnDataReceived = (data) => OnDataReceived?.Invoke(data);
+                    peer.OnDataReceived = (data) => {
+                        OnDataReceived?.Invoke(data);
+                        _ = Task.Run(() => HandleP2PMessage(data));
+                    };
                     
                     // Wait for data channel to open, then trigger bootstrap
                     _ = Task.Run(async () => {
@@ -512,7 +518,159 @@ namespace FyteClub.WebRTC
             return answer; // Already processed by Nostr signaling
         }
 
-
+        private async Task HandleP2PMessage(byte[] data)
+        {
+            try
+            {
+                var json = System.Text.Encoding.UTF8.GetString(data);
+                var message = System.Text.Json.JsonSerializer.Deserialize<JsonElement>(json);
+                var type = message.GetProperty("type").GetString();
+                
+                _pluginLog?.Info($"[P2P] Received message: {type}");
+                
+                switch (type)
+                {
+                    case "phonebook_request":
+                        await HandlePhonebookRequest();
+                        break;
+                    case "phonebook_response":
+                        await HandlePhonebookResponse(message);
+                        break;
+                    case "mod_sync_request":
+                        await HandleModSyncRequest();
+                        break;
+                    case "mod_data":
+                        await HandleModData(message);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog?.Warning($"[P2P] Failed to handle message: {ex.Message}");
+            }
+        }
+        
+        private async Task HandlePhonebookRequest()
+        {
+            // Host sends phonebook with their info
+            var localPlayerName = await GetLocalPlayerName();
+            if (string.IsNullOrEmpty(localPlayerName)) return;
+            
+            var phonebook = new {
+                type = "phonebook_response",
+                players = new[] {
+                    new {
+                        name = localPlayerName,
+                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    }
+                }
+            };
+            
+            var response = System.Text.Json.JsonSerializer.Serialize(phonebook);
+            await SendDataAsync(System.Text.Encoding.UTF8.GetBytes(response));
+            _pluginLog?.Info($"[P2P] Sent phonebook with host info: {localPlayerName}");
+        }
+        
+        private async Task HandlePhonebookResponse(JsonElement message)
+        {
+            // Joiner receives phonebook, adds self, sends back
+            var localPlayerName = await GetLocalPlayerName();
+            if (string.IsNullOrEmpty(localPlayerName)) return;
+            
+            var players = message.GetProperty("players").EnumerateArray().ToList();
+            var updatedPlayers = players.Select(p => new {
+                name = p.GetProperty("name").GetString(),
+                timestamp = p.GetProperty("timestamp").GetInt64()
+            }).ToList();
+            
+            // Add joiner to phonebook
+            updatedPlayers.Add(new {
+                name = localPlayerName,
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            });
+            
+            var updatedPhonebook = new {
+                type = "phonebook_update",
+                players = updatedPlayers
+            };
+            
+            var response = System.Text.Json.JsonSerializer.Serialize(updatedPhonebook);
+            await SendDataAsync(System.Text.Encoding.UTF8.GetBytes(response));
+            _pluginLog?.Info($"[P2P] Updated phonebook with joiner info: {localPlayerName}");
+            
+            // Update local recently synced users
+            OnPhonebookUpdated?.Invoke(updatedPlayers.Select(p => p.name).Where(n => !string.IsNullOrEmpty(n)).ToList());
+        }
+        
+        private async Task HandleModSyncRequest()
+        {
+            // Send our mod data
+            var localPlayerName = await GetLocalPlayerName();
+            if (string.IsNullOrEmpty(localPlayerName)) return;
+            
+            var modData = await GetLocalModData(localPlayerName);
+            if (modData != null)
+            {
+                var response = System.Text.Json.JsonSerializer.Serialize(modData);
+                await SendDataAsync(System.Text.Encoding.UTF8.GetBytes(response));
+                _pluginLog?.Info($"[P2P] Sent mod data for: {localPlayerName}");
+            }
+        }
+        
+        private async Task HandleModData(JsonElement message)
+        {
+            var playerName = message.GetProperty("playerName").GetString();
+            if (string.IsNullOrEmpty(playerName)) return;
+            
+            _pluginLog?.Info($"[P2P] Received mod data for: {playerName}");
+            OnModDataReceived?.Invoke(playerName, message);
+        }
+        
+        private async Task<string> GetLocalPlayerName()
+        {
+            // This would need to be injected or accessed via callback
+            return "LocalPlayer"; // Placeholder
+        }
+        
+        private async Task<object> GetLocalModData(string playerName)
+        {
+            // This would need to be injected or accessed via callback
+            return new {
+                type = "mod_data",
+                playerName = playerName,
+                mods = new string[0],
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            };
+        }
+        
+        public event Action<List<string>>? OnPhonebookUpdated;
+        public event Action<string, JsonElement>? OnModDataReceived;
+        
+        public void ConfigureTurnServers(List<FyteClub.TURN.TurnServerInfo> turnServers)
+        {
+            _turnServers = turnServers ?? new List<FyteClub.TURN.TurnServerInfo>();
+            _pluginLog?.Info($"[WebRTC] Configured {_turnServers.Count} TURN servers for reliable routing");
+            
+            // Configure WebRTC manager with available TURN servers
+            if (_webrtcManager != null)
+            {
+                _webrtcManager.ConfigureTurnServers(_turnServers);
+            }
+        }
+        
+        public void SelectTurnServerForSyncshell(string syncshellId)
+        {
+            if (_turnServers.Count == 0) return;
+            
+            // Use consistent server selection based on syncshell ID
+            var selectedServer = WebRTCConnectionFactory.SelectTurnServerForSyncshell(syncshellId, _turnServers);
+            if (selectedServer != null)
+            {
+                var serverList = new List<FyteClub.TURN.TurnServerInfo> { selectedServer };
+                _webrtcManager?.ConfigureTurnServers(serverList);
+                _pluginLog?.Info($"[WebRTC] Selected TURN server {selectedServer.Url} for syncshell {syncshellId}");
+            }
+        }
 
         public void Dispose()
         {
