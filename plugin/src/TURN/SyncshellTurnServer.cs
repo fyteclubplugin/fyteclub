@@ -157,8 +157,10 @@ namespace FyteClub.TURN
                 
                 ActiveConnections = _activeClients.Count;
                 
-                // Proximity-aware overflow handling
-                if (ActiveConnections >= 18) // Start redirecting at 18 to prevent hard limit
+                // Only enforce limits if alternative servers are available
+                var hasAlternatives = HasAvailableAlternativeServers();
+                
+                if (hasAlternatives && ActiveConnections >= 18) // Start redirecting at 18 when alternatives exist
                 {
                     var betterServer = GetBestOverflowServer();
                     if (betterServer != null)
@@ -169,10 +171,17 @@ namespace FyteClub.TURN
                     }
                 }
                 
-                if (ActiveConnections > MAX_CONNECTIONS)
+                // Hard limit only when alternatives exist, otherwise accept all connections
+                if (hasAlternatives && ActiveConnections > MAX_CONNECTIONS)
                 {
                     _pluginLog?.Warning($"[TURN] Hard connection limit reached ({ActiveConnections}/{MAX_CONNECTIONS}), rejecting {clientKey}");
                     return;
+                }
+                
+                // Log when operating beyond normal capacity without alternatives
+                if (!hasAlternatives && ActiveConnections > MAX_CONNECTIONS)
+                {
+                    _pluginLog?.Info($"[TURN] Operating at {ActiveConnections} connections (no alternatives available)");
                 }
             }
             
@@ -490,6 +499,15 @@ namespace FyteClub.TURN
             }
             
             _pluginLog?.Info($"[TURN] Notified {_activeClients.Count} clients to migrate to: {alternativeServer.ServerInfo.Url}");
+        }
+        
+        private bool HasAvailableAlternativeServers()
+        {
+            lock (_peerServers)
+            {
+                var cutoff = DateTime.UtcNow.AddMinutes(-2);
+                return _peerServers.Values.Any(p => p.LastSeen > cutoff && p.Load < MAX_CONNECTIONS);
+            }
         }
         
         private TurnPeerInfo? GetBestAlternativeServer()
