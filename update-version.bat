@@ -63,11 +63,21 @@ echo [6/8] Updating plugin repo manifest ^(repo.json^)...
 powershell -Command "(Get-Content 'plugin\repo.json') -replace '\"AssemblyVersion\": \".*\"', '\"AssemblyVersion\": \"%NEW_VERSION%\"' | Set-Content 'plugin\repo.json'"
 echo ✅ plugin/repo.json updated
 
-echo [7/8] Updating plugin source code version string...
+echo [7/8] Updating built manifest files...
+if exist "plugin\bin\Release\FyteClub.json" (
+    powershell -Command "(Get-Content 'plugin\bin\Release\FyteClub.json') -replace '\"AssemblyVersion\": \".*\"', '\"AssemblyVersion\": \"%NEW_VERSION%\"' | Set-Content 'plugin\bin\Release\FyteClub.json'"
+    echo ✅ plugin/bin/Release/FyteClub.json updated
+)
+if exist "release\FyteClub-Plugin\FyteClub.json" (
+    powershell -Command "(Get-Content 'release\FyteClub-Plugin\FyteClub.json') -replace '\"AssemblyVersion\": \".*\"', '\"AssemblyVersion\": \"%NEW_VERSION%\"' | Set-Content 'release\FyteClub-Plugin\FyteClub.json'"
+    echo ✅ release/FyteClub-Plugin/FyteClub.json updated
+)
+
+echo [8/8] Updating plugin source code version string...
 powershell -Command "(Get-Content 'plugin\src\Core\FyteClubPlugin.cs') -replace 'FyteClub v[0-9]+\.[0-9]+\.[0-9]+ initialized', 'FyteClub v%NEW_VERSION% initialized' | Set-Content 'plugin\src\Core\FyteClubPlugin.cs'"
 echo ✅ plugin/src/Core/FyteClubPlugin.cs updated
 
-echo [8/8] Updating documentation version references...
+echo [9/9] Updating documentation version references...
 REM Update README.md version references
 powershell -Command "if (Test-Path 'README.md') { (Get-Content 'README.md') -replace 'v[0-9]+\.[0-9]+\.[0-9]+', 'v%NEW_VERSION%' | Set-Content 'README.md' }"
 REM Update release notes
@@ -88,7 +98,9 @@ echo   • server/package.json
 echo   • client/package.json  
 echo   • plugin/FyteClub.csproj
 echo   • plugin/FyteClub.json
-echo   • plugin/repo.json
+  • plugin/repo.json
+echo   • plugin/bin/Release/FyteClub.json (if exists)
+echo   • release/FyteClub-Plugin/FyteClub.json (if exists)
 echo   • plugin/src/Core/FyteClubPlugin.cs
 echo   • Documentation files
 echo.

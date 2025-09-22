@@ -294,7 +294,11 @@ namespace FyteClub
                     var hostConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
                     await hostConnection.InitializeAsync();
                     
-                    hostConnection.OnDataReceived += data => HandleModData(syncshellId, data);
+                    // CRITICAL: Wire up data handler BEFORE storing connection
+                    hostConnection.OnDataReceived += data => {
+                        SecureLogger.LogInfo("📨📨📨 HOST received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
+                        HandleModData(syncshellId, data);
+                    };
                     hostConnection.OnConnected += () => {
                         SecureLogger.LogInfo("Host P2P connection established for syncshell {0}", syncshellId);
                     };
@@ -598,13 +602,22 @@ namespace FyteClub
                         var playerId = playerIdObj.ToString();
                         if (!string.IsNullOrEmpty(playerId))
                         {
-                            // Don't process our own mod data
+                            // Don't process our own mod data - check both full name and first name
                             var localPlayerName = GetLocalPlayerName();
-                            if (playerId == localPlayerName)
+                            if (!string.IsNullOrEmpty(localPlayerName))
                             {
-                                SecureLogger.LogInfo("Skipping own mod data for player: {0}", playerId);
-                                return;
+                                // Extract first name from both for comparison
+                                var localFirstName = localPlayerName.Split(' ')[0];
+                                var playerFirstName = playerId.Split(' ')[0];
+                                
+                                if (playerId == localPlayerName || playerFirstName == localFirstName)
+                                {
+                                    SecureLogger.LogInfo("Skipping own mod data for player: {0} (local: {1})", playerId, localPlayerName);
+                                    return;
+                                }
                             }
+                            
+                            SecureLogger.LogInfo("Processing mod data for player: {0} (local player: {1})", playerId, localPlayerName ?? "unknown");
                             
                             StoreReceivedModDataInCache(playerId, parsedData);
                             SecureLogger.LogInfo("Stored P2P mod data in cache for player: {0}", playerId);
@@ -612,7 +625,7 @@ namespace FyteClub
                             // Fire event to trigger ProcessReceivedModData in plugin
                             var jsonElement = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(modData);
                             OnModDataReceived?.Invoke(playerId, jsonElement);
-                            Console.WriteLine($"🎯 FIRED OnModDataReceived event for player: {playerId}");
+                            SecureLogger.LogInfo("🎯 FIRED OnModDataReceived event for player: {0}", playerId);
                         }
                     }
                 }
@@ -921,14 +934,25 @@ namespace FyteClub
                         }
                     }
                     
+                    // CRITICAL: Wire up mod data handler BEFORE creating connection
+                    // This ensures we can process data received during bootstrap
+                    SecureLogger.LogInfo("[P2P] Pre-wiring mod data handler for immediate bootstrap processing");
+                    
                     // Create WebRTC connection and process Nostr offer
                     var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                     await connection.InitializeAsync();
                     
-                    connection.OnDataReceived += data => HandleModData(syncshellId, data);
+                    // CRITICAL: Wire up data handler BEFORE storing connection
+                    connection.OnDataReceived += data => {
+                        SecureLogger.LogInfo("📨📨📨 Received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
+                        HandleModData(syncshellId, data);
+                    };
                     connection.OnConnected += () => {
                         SecureLogger.LogInfo("Nostr P2P connection established for syncshell {0}", syncshellId);
                     };
+                    
+                    // Store connection AFTER wiring up handlers
+                    _webrtcConnections[syncshellId] = connection;
                     
                     // Use RobustWebRTCConnection to handle Nostr signaling
                     if (connection is WebRTC.RobustWebRTCConnection robustConnection)
@@ -949,7 +973,6 @@ namespace FyteClub
                         SecureLogger.LogInfo("Processed Nostr offer and created answer for syncshell {0}", syncshellId);
                     }
                     
-                    _webrtcConnections[syncshellId] = connection;
                     SecureLogger.LogInfo("WebRTC connection established via Nostr signaling for syncshell {0}", syncshellId);
                 }
                 
@@ -1170,7 +1193,7 @@ namespace FyteClub
             }
             else
             {
-                SecureLogger.LogInfo("Mod data handler already wired up, skipping");
+                SecureLogger.LogInfo("Mod data handler already wired up, skipping duplicate");
             }
         }
         
@@ -1486,30 +1509,45 @@ namespace FyteClub
         {
             try
             {
-                Console.WriteLine($"Host: Received mod sync request for {syncshellId}");
+                SecureLogger.LogInfo("🎨 HOST: Received mod sync request for syncshell {0}", syncshellId);
+                SecureLogger.LogInfo("🎨 HOST: Available player mod data: {0} players", _playerModData.Count);
+                
+                // Log which players we have mod data for
+                foreach (var playerName in _playerModData.Keys)
+                {
+                    SecureLogger.LogInfo("🎨 HOST: Have mod data for: {0}", playerName);
+                }
                 
                 // Send current mod data for all known players
+                var sentCount = 0;
                 foreach (var playerData in _playerModData.Values)
                 {
                     var modSyncData = new
                     {
-                        type = "mod_sync_response",
-                        syncshellId = syncshellId,
+                        type = "mod_data", // Use "mod_data" not "mod_sync_response" to match handler
                         playerId = playerData.PlayerName,
+                        playerName = playerData.PlayerName, // Add both for compatibility
                         componentData = playerData.ComponentData,
                         recipeData = playerData.RecipeData,
                         timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                     };
                     
                     var json = System.Text.Json.JsonSerializer.Serialize(modSyncData);
+                    SecureLogger.LogInfo("🎨 HOST: Sending mod data for {0} ({1} bytes)", playerData.PlayerName, json.Length);
                     _ = SendModData(syncshellId, json);
+                    sentCount++;
                 }
                 
-                Console.WriteLine($"Host: Sent mod sync response for {_playerModData.Count} players");
+                SecureLogger.LogInfo("🎨 HOST: Sent mod sync response for {0} players", sentCount);
+                
+                if (sentCount == 0)
+                {
+                    SecureLogger.LogWarning("🎨 HOST: No player mod data available to send - this means 'Butter Beans' mod data is not in the cache");
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Host: Failed to handle mod sync request: {ex.Message}");
+                SecureLogger.LogError("🎨 HOST: Failed to handle mod sync request: {0}", ex.Message);
             }
         }
         

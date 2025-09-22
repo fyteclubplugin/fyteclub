@@ -2,7 +2,7 @@
 <Project Sdk="Dalamud.NET.Sdk/13.1.0">
   <PropertyGroup>
     <AssemblyName>FyteClub</AssemblyName>
-    <Version>4.5.8</Version>
+    <Version>4.5.9</Version>
     <PackageProjectUrl>https://github.com/fyteclubplugin/fyteclub</PackageProjectUrl>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>

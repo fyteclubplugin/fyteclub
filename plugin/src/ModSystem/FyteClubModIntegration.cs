@@ -99,6 +99,7 @@ namespace FyteClub
                     {
                         if (obj is ICharacter character && character.Name.TextValue.Equals(cleanName, StringComparison.OrdinalIgnoreCase))
                         {
+                            _pluginLog.Debug($"Found character '{cleanName}' with ObjectIndex {character.ObjectIndex}");
                             return character;
                         }
                     }
@@ -109,7 +110,7 @@ namespace FyteClub
                     return null;
                 }
                 
-                _pluginLog.Debug($"Character '{cleanName}' not found in object table");
+                _pluginLog.Warning($"Character '{cleanName}' not found in object table - they may be out of range or not loaded");
                 return null;
             }
             catch (Exception ex)
@@ -532,12 +533,18 @@ namespace FyteClub
                     var createResult = _penumbraCreateTemporaryCollection.Invoke("FyteClub", collectionName, out var collectionId);
                     if (createResult == PenumbraApiEc.Success && collectionId != Guid.Empty)
                 {
-                    // Parse file replacements following MareClient's approach
+                    // Parse file replacements following MareClient's approach - filter out .imc files
                     var modPaths = new Dictionary<string, string>();
                     var processedCount = 0;
                     
                     foreach (var mod in mods)
                     {
+                        // Skip .imc files as Penumbra no longer supports them
+                        if (mod.EndsWith(".imc", StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+                        
                         if (mod.Contains('|'))
                         {
                             // Format: "gamePath|resolvedPath"
@@ -546,6 +553,14 @@ namespace FyteClub
                             {
                                 var gamePath = parts[0];
                                 var resolvedPath = parts[1];
+                                
+                                // Skip .imc files in both paths
+                                if (gamePath.EndsWith(".imc", StringComparison.OrdinalIgnoreCase) ||
+                                    resolvedPath.EndsWith(".imc", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    continue;
+                                }
+                                
                                 modPaths[gamePath] = resolvedPath;
                                 processedCount++;
                                 
@@ -570,11 +585,14 @@ namespace FyteClub
                     
                     _pluginLog.Info($"🎯 [PENUMBRA APPLICATION] Adding {modPaths.Count} file replacements to collection {collectionId}");
                     
+                    // CRITICAL: Use priority 0 to ensure FyteClub mods don't override user's enabled mods
+                    // Priority 0 = lowest priority, user's mods take precedence
                     var addResult = _penumbraAddTemporaryMod?.Invoke("FyteClub_Files", collectionId, modPaths, "", 0);
                     _pluginLog.Info($"🎯 [PENUMBRA APPLICATION] AddTemporaryMod result: {addResult}");
                     
-                    // CRITICAL: Assign the collection to the character so Penumbra knows to use it
-                    var assignResult = _penumbraAssignTemporaryCollection?.Invoke(collectionId, character.ObjectIndex);
+                    // CRITICAL: Assign the collection to the character with forceAssignment: false
+                    // This respects user's collection assignments and doesn't override them
+                    var assignResult = _penumbraAssignTemporaryCollection?.Invoke(collectionId, character.ObjectIndex, false);
                     if (assignResult == PenumbraApiEc.Success)
                     {
                         _pluginLog.Info($"🎯 [PENUMBRA APPLICATION] Successfully assigned collection {collectionId} to {character.Name}");
@@ -607,9 +625,28 @@ namespace FyteClub
         {
             try
             {
-                // Apply with FyteClub's lock code (using proper API signature)
+                // Skip invalid placeholder data
+                if (string.IsNullOrEmpty(glamourerData) || glamourerData == "active")
+                {
+                    _pluginLog.Debug($"Skipping invalid Glamourer data '{glamourerData}' for {character.Name}");
+                    return;
+                }
+                
+                // Validate base64 format before applying
+                try
+                {
+                    Convert.FromBase64String(glamourerData);
+                }
+                catch (FormatException)
+                {
+                    _pluginLog.Warning($"Invalid base64 Glamourer data for {character.Name}: '{glamourerData}'");
+                    return;
+                }
+                
+                // CRITICAL: Apply with FyteClub's lock code using ApplyOnlyEquipment flag
+                // This respects Glamourer's priority system and doesn't override user's customizations
                 _glamourerApplyAll?.Invoke(glamourerData, character.ObjectIndex, FYTECLUB_GLAMOURER_LOCK);
-                _pluginLog.Debug($"Applied Glamourer data for {character.Name}");
+                _pluginLog.Debug($"Applied Glamourer data for {character.Name} with lock {FYTECLUB_GLAMOURER_LOCK:X}");
             }
             catch (Exception ex)
             {
@@ -641,6 +678,13 @@ namespace FyteClub
         {
             try
             {
+                // Check if SimpleHeels IPC is actually available
+                if (_heelsRegisterPlayer == null)
+                {
+                    _pluginLog.Debug($"SimpleHeels IPC not available for {character.Name}");
+                    return;
+                }
+                
                 // Register player with heels offset (based on SimpleHeels actual patterns)
                 var characterIndex = (int)character.ObjectIndex;
                 _heelsRegisterPlayer?.InvokeFunc(characterIndex, heelsOffset.ToString());
@@ -648,7 +692,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Failed to apply heels data: {ex.Message}");
+                _pluginLog.Debug($"Failed to apply heels data (plugin may not be loaded): {ex.Message}");
             }
         }
 
@@ -656,6 +700,20 @@ namespace FyteClub
         {
             try
             {
+                // Check if Honorific IPC is actually available
+                if (_honorificSetCharacterTitle == null || _honorificClearCharacterTitle == null)
+                {
+                    _pluginLog.Debug($"Honorific IPC not available for {character.Name}");
+                    return;
+                }
+                
+                // Skip invalid placeholder data
+                if (honorificTitle == "active")
+                {
+                    _pluginLog.Debug($"Skipping placeholder Honorific data for {character.Name}");
+                    return;
+                }
+                
                 // Apply Honorific title using Horse's pattern (Base64 encoded)
                 var characterIndex = GetCharacterIndex(character);
                 
@@ -676,7 +734,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Failed to apply Honorific data: {ex.Message}");
+                _pluginLog.Debug($"Failed to apply Honorific data (plugin may not be loaded): {ex.Message}");
             }
         }
 
@@ -880,70 +938,80 @@ namespace FyteClub
                     {
                         _pluginLog.Info($"🎯 [PENUMBRA] Getting resource paths for {playerName} (object index {character.ObjectIndex})");
                         
-                        // Use MareClient's pattern: GetGameObjectResourcePaths returns Dictionary<string, HashSet<string>>
-                        var resourcePaths = _penumbraGetResourcePaths.Invoke(character.ObjectIndex);
-                        
-                        if (resourcePaths != null && resourcePaths.Length > 0)
+                        // CRITICAL: Validate ObjectIndex before calling Penumbra (following MareClient pattern)
+                        var objectIndex = character.ObjectIndex;
+                        if (objectIndex == 0)
                         {
-                            _pluginLog.Info($"🎯 [PENUMBRA] Got {resourcePaths.Length} resource path arrays");
-                            var modPaths = resourcePaths[0]; // First element contains the mod paths
-                            if (modPaths != null)
+                            _pluginLog.Warning($"🎯 [PENUMBRA] Invalid ObjectIndex 0 for {playerName} - cannot collect Penumbra data");
+                            _pluginLog.Info($"🎯 [PENUMBRA] Skipping Penumbra collection for {playerName} (ObjectIndex validation failed)");
+                        }
+                        else
+                        {
+                            _pluginLog.Info($"🎯 [PENUMBRA] Using ObjectIndex {objectIndex} for {playerName}");
+                            var resourcePaths = _penumbraGetResourcePaths.Invoke(objectIndex);
+                        
+                            if (resourcePaths != null && resourcePaths.Length > 0)
                             {
-                                _pluginLog.Info($"🎯 [PENUMBRA] Processing {modPaths.Count} mod paths");
-                                
-                                // Following MareClient's approach: collect file replacements with actual resolved paths
-                                var fileReplacements = new List<string>();
-                                foreach (var modPath in modPaths)
+                                _pluginLog.Info($"🎯 [PENUMBRA] Got {resourcePaths.Length} resource path arrays");
+                                var modPaths = resourcePaths[0]; // First element contains the mod paths
+                                if (modPaths != null)
                                 {
-                                    // modPath.Key is the game path, modPath.Value contains resolved paths
-                                    var gamePath = modPath.Key;
-                                    var resolvedPaths = modPath.Value;
+                                    _pluginLog.Info($"🎯 [PENUMBRA] Processing {modPaths.Count} mod paths");
                                     
-                                    if (resolvedPaths != null && resolvedPaths.Any())
+                                    // Following MareClient's approach: collect file replacements with actual resolved paths
+                                    var fileReplacements = new List<string>();
+                                    foreach (var modPath in modPaths)
                                     {
-                                        var resolvedPath = resolvedPaths.First();
+                                        // modPath.Key is the game path, modPath.Value contains resolved paths
+                                        var gamePath = modPath.Key;
+                                        var resolvedPaths = modPath.Value;
                                         
-                                        // Only include if it's actually a file replacement (not same as game path)
-                                        if (!string.Equals(gamePath, resolvedPath, StringComparison.OrdinalIgnoreCase))
+                                        if (resolvedPaths != null && resolvedPaths.Any())
                                         {
-                                            // Store as "gamePath|resolvedPath" to preserve both pieces of info
-                                            fileReplacements.Add($"{gamePath}|{resolvedPath}");
+                                            var resolvedPath = resolvedPaths.First();
                                             
-                                            if (fileReplacements.Count <= 5) // Log first 5 for debugging
+                                            // Only include if it's actually a file replacement (not same as game path)
+                                            if (!string.Equals(gamePath, resolvedPath, StringComparison.OrdinalIgnoreCase))
                                             {
-                                                _pluginLog.Info($"🎯 [PENUMBRA]   - File replacement: {gamePath} -> {resolvedPath}");
+                                                // Store as "gamePath|resolvedPath" to preserve both pieces of info
+                                                fileReplacements.Add($"{gamePath}|{resolvedPath}");
+                                                
+                                                if (fileReplacements.Count <= 5) // Log first 5 for debugging
+                                                {
+                                                    _pluginLog.Info($"🎯 [PENUMBRA]   - File replacement: {gamePath} -> {resolvedPath}");
+                                                }
+                                            }
+                                            else
+                                            {
+                                                // Still include vanilla paths for completeness
+                                                fileReplacements.Add(gamePath);
                                             }
                                         }
                                         else
                                         {
-                                            // Still include vanilla paths for completeness
+                                            // No resolved path, just use game path
                                             fileReplacements.Add(gamePath);
                                         }
                                     }
-                                    else
+                                    
+                                    playerInfo.Mods = fileReplacements;
+                                    
+                                    if (fileReplacements.Count > 5)
                                     {
-                                        // No resolved path, just use game path
-                                        fileReplacements.Add(gamePath);
+                                        _pluginLog.Info($"🎯 [PENUMBRA]   ... and {fileReplacements.Count - 5} more file replacements");
                                     }
                                 }
-                                
-                                playerInfo.Mods = fileReplacements;
-                                
-                                if (fileReplacements.Count > 5)
+                                else
                                 {
-                                    _pluginLog.Info($"🎯 [PENUMBRA]   ... and {fileReplacements.Count - 5} more file replacements");
+                                    _pluginLog.Info($"🎯 [PENUMBRA] First resource path array is null");
                                 }
+                                
+                                _pluginLog.Info($"🎯 [PENUMBRA] Collected {playerInfo.Mods.Count} Penumbra file replacements for {playerName}");
                             }
                             else
                             {
-                                _pluginLog.Info($"🎯 [PENUMBRA] First resource path array is null");
+                                _pluginLog.Info($"🎯 [PENUMBRA] No active Penumbra resource paths found for {playerName}");
                             }
-                            
-                            _pluginLog.Info($"🎯 [PENUMBRA] Collected {playerInfo.Mods.Count} Penumbra file replacements for {playerName}");
-                        }
-                        else
-                        {
-                            _pluginLog.Info($"🎯 [PENUMBRA] No active Penumbra resource paths found for {playerName}");
                         }
                     }
                     catch (Exception ex)
@@ -961,10 +1029,9 @@ namespace FyteClub
                 {
                     try
                     {
-                        // Note: This would need proper Glamourer API to get current design
-                        // For now, we'll mark that glamourer is active
-                        playerInfo.GlamourerDesign = "active";
-                        _pluginLog.Info($"🎯 [GLAMOURER] Design detected for {playerName}");
+                        // TODO: Implement proper Glamourer design collection using GetStateBase64
+                        // For now, skip to avoid invalid base64 errors
+                        _pluginLog.Info($"🎯 [GLAMOURER] Skipping design collection (not implemented)");
                     }
                     catch (Exception ex)
                     {
@@ -1020,10 +1087,9 @@ namespace FyteClub
                 {
                     try
                     {
-                        // Note: This would need proper Honorific API to get current title
-                        // For now, we'll mark that honorific is active
-                        playerInfo.HonorificTitle = "active";
-                        _pluginLog.Debug($"Honorific title detected for {playerName}");
+                        // TODO: Implement proper Honorific title collection
+                        // For now, skip to avoid placeholder data issues
+                        _pluginLog.Debug($"Honorific title collection skipped (not implemented)");
                     }
                     catch (Exception ex)
                     {

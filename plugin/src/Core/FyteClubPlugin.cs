@@ -31,7 +31,7 @@ namespace FyteClub
         private readonly ICommandManager _commandManager;
         private readonly IObjectTable _objectTable;
         private readonly IClientState _clientState;
-        private readonly IFramework _framework;
+        public readonly IFramework _framework;
         public readonly IPluginLog _pluginLog;
         
         private readonly FyteClubMediator _mediator = new();
@@ -186,7 +186,7 @@ namespace FyteClub
             
 
             
-            _pluginLog.Info("FyteClub v4.5.8 initialized - P2P mod sharing with distributed TURN servers");
+            _pluginLog.Info("FyteClub v4.5.9 initialized - P2P mod sharing with distributed TURN servers");
         }
 
         private void InitializeClientCache()
@@ -223,6 +223,8 @@ namespace FyteClub
             _modSystemIntegration.RetryDetection();
         }
 
+        private string? _lastLocalPlayerName = null;
+        
         private void OnFrameworkUpdate(IFramework framework)
         {
             try
@@ -231,10 +233,12 @@ namespace FyteClub
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 var isLocalPlayerValid = localPlayer != null && !string.IsNullOrEmpty(localPlayerName);
                 
-                // Update local player name for self-filtering if it changed
-                if (isLocalPlayerValid)
+                // Update local player name for self-filtering only if it changed
+                if (isLocalPlayerValid && localPlayerName != _lastLocalPlayerName)
                 {
                     _syncshellManager.SetLocalPlayerName(localPlayerName!);
+                    _lastLocalPlayerName = localPlayerName;
+                    _pluginLog.Info($"Updated local player name for mod filtering: {localPlayerName}");
                 }
                 
                 _mediator.ProcessQueue();
@@ -964,11 +968,32 @@ namespace FyteClub
                 
                 // Wire up P2P message handling BEFORE initializing as host
                 _pluginLog.Info($"[DEBUG] About to wire up P2P message handling for syncshell {syncshell.Id}");
-                WireUpP2PMessageHandling(syncshell.Id);
+                
+                // Must run on framework thread to access LocalPlayer
+                await _framework.RunOnFrameworkThread(() => {
+                    WireUpP2PMessageHandling(syncshell.Id);
+                });
+                
                 _pluginLog.Info($"[DEBUG] P2P message handling wired up for syncshell {syncshell.Id}");
                 
                 // Initialize the syncshell as ready to accept P2P connections
                 await _syncshellManager.InitializeAsHost(syncshell.Id);
+                
+                // CRITICAL: Collect and cache host's own mod data immediately
+                await _framework.RunOnFrameworkThread(async () => {
+                    var localPlayer = _clientState.LocalPlayer;
+                    var localPlayerName = localPlayer?.Name?.TextValue;
+                    if (!string.IsNullOrEmpty(localPlayerName))
+                    {
+                        _pluginLog.Info($"[HOST] Collecting own mod data for: {localPlayerName}");
+                        await SharePlayerModsToSyncshells(localPlayerName);
+                        _pluginLog.Info($"[HOST] Host mod data collected and cached");
+                    }
+                    else
+                    {
+                        _pluginLog.Warning($"[HOST] Could not get local player name for mod collection");
+                    }
+                });
                 
                 _pluginLog.Info($"[DEBUG] FyteClubPlugin.CreateSyncshell SUCCESS - returning syncshell");
                 return syncshell;
@@ -1276,6 +1301,33 @@ namespace FyteClub
                 }
                 _pluginLog.Info($"📤 [MOD SHARING]   - Glamourer: {(string.IsNullOrEmpty(playerInfo.GlamourerDesign) ? "None" : "Present")}");
                 _pluginLog.Info($"📤 [MOD SHARING]   - Hash: {outfitHash?[..8] ?? "none"}");
+                
+                // CRITICAL: Store host's own mod data in cache for sharing with joiners
+                var componentData = new
+                {
+                    mods = playerInfo.Mods,
+                    glamourerDesign = playerInfo.GlamourerDesign,
+                    customizePlusProfile = playerInfo.CustomizePlusProfile,
+                    simpleHeelsOffset = playerInfo.SimpleHeelsOffset,
+                    honorificTitle = playerInfo.HonorificTitle
+                };
+                
+                var modDataDict = new Dictionary<string, object>
+                {
+                    ["type"] = "mod_data",
+                    ["playerId"] = playerName,
+                    ["playerName"] = playerName,
+                    ["outfitHash"] = outfitHash ?? "",
+                    ["mods"] = playerInfo.Mods ?? new List<string>(),
+                    ["glamourerDesign"] = playerInfo.GlamourerDesign ?? "",
+                    ["customizePlusProfile"] = playerInfo.CustomizePlusProfile ?? "",
+                    ["simpleHeelsOffset"] = playerInfo.SimpleHeelsOffset ?? 0.0f,
+                    ["honorificTitle"] = playerInfo.HonorificTitle ?? "",
+                    ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                };
+                
+                _syncshellManager.UpdatePlayerModData(playerName, componentData, modDataDict);
+                _pluginLog.Info($"📤 [MOD SHARING] Cached own mod data for {playerName} (host)");
                 
                 var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
                 foreach (var syncshell in activeSyncshells)
@@ -1872,8 +1924,16 @@ namespace FyteClub
             }
         }
         
+        private bool _p2pMessageHandlingWired = false;
+        
         public void WireUpP2PMessageHandling(string syncshellId)
         {
+            if (_p2pMessageHandlingWired)
+            {
+                _pluginLog.Info($"[P2P] Message handling already wired up, skipping duplicate for syncshell {syncshellId}");
+                return;
+            }
+            
             _pluginLog.Info($"[P2P] ✅ Wiring up message handling for syncshell {syncshellId}");
             
             // Set local player name for filtering
@@ -1881,6 +1941,11 @@ namespace FyteClub
             if (!string.IsNullOrEmpty(localPlayerName))
             {
                 _syncshellManager.SetLocalPlayerName(localPlayerName);
+                _pluginLog.Info($"[P2P] Set local player name for filtering: {localPlayerName}");
+            }
+            else
+            {
+                _pluginLog.Warning("[P2P] Could not get local player name for filtering");
             }
             
             // Wire up the SyncshellManager event handler (only once)
@@ -1906,6 +1971,7 @@ namespace FyteClub
                 _pluginLog.Info($"[P2P] 🎯 IMMEDIATE: RobustWebRTCConnection events wired up for syncshell {syncshellId}");
             }
             
+            _p2pMessageHandlingWired = true;
             _pluginLog.Info($"[P2P] ✅ Message handling successfully wired up for syncshell {syncshellId}");
         }
         
@@ -1928,11 +1994,13 @@ namespace FyteClub
                     _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   - {property.Name}: {valueType} = {valuePreview}");
                 }
                 
-                // Extract mod components with detailed logging
+                // Extract mod components with detailed logging - check both direct and nested formats
                 var mods = new List<string>();
+                
+                // First try direct 'mods' property
                 if (modData.TryGetProperty("mods", out var modsProperty))
                 {
-                    _pluginLog.Info($"🎯 [P2P MOD PROCESSING] Found 'mods' property with {modsProperty.GetArrayLength()} items");
+                    _pluginLog.Info($"🎯 [P2P MOD PROCESSING] Found direct 'mods' property with {modsProperty.GetArrayLength()} items");
                     var modIndex = 0;
                     foreach (var mod in modsProperty.EnumerateArray())
                     {
@@ -1945,9 +2013,29 @@ namespace FyteClub
                                 _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   [{modIndex}]: {modPath}");
                             }
                         }
-                        else
+                        modIndex++;
+                    }
+                    if (mods.Count > 5)
+                    {
+                        _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   ... and {mods.Count - 5} more mods");
+                    }
+                }
+                // Try nested format: componentData.mods
+                else if (modData.TryGetProperty("componentData", out var componentDataProperty) &&
+                         componentDataProperty.TryGetProperty("mods", out var nestedModsProperty))
+                {
+                    _pluginLog.Info($"🎯 [P2P MOD PROCESSING] Found nested 'componentData.mods' property with {nestedModsProperty.GetArrayLength()} items");
+                    var modIndex = 0;
+                    foreach (var mod in nestedModsProperty.EnumerateArray())
+                    {
+                        var modPath = mod.GetString();
+                        if (!string.IsNullOrEmpty(modPath))
                         {
-                            _pluginLog.Warning($"🎯 [P2P MOD PROCESSING] Empty mod path at index {modIndex}");
+                            mods.Add(modPath);
+                            if (modIndex < 5) // Log first 5 mods for debugging
+                            {
+                                _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   [{modIndex}]: {modPath}");
+                            }
                         }
                         modIndex++;
                     }
@@ -1958,20 +2046,21 @@ namespace FyteClub
                 }
                 else
                 {
-                    _pluginLog.Warning($"🎯 [P2P MOD PROCESSING] No 'mods' property found in received data");
+                    _pluginLog.Warning($"🎯 [P2P MOD PROCESSING] No 'mods' property found in received data (checked both direct and componentData.mods)");
                 }
                 
-                var glamourerDesign = modData.TryGetProperty("glamourerDesign", out var glamProperty) ? 
-                    glamProperty.GetString() : null;
+                // Extract other mod data - try both direct and nested formats
+                var glamourerDesign = GetStringProperty(modData, "glamourerDesign") ?? 
+                                    GetNestedStringProperty(modData, "componentData", "glamourerDesign");
                     
-                var customizePlusProfile = modData.TryGetProperty("customizePlusProfile", out var customizeProperty) ? 
-                    customizeProperty.GetString() : null;
+                var customizePlusProfile = GetStringProperty(modData, "customizePlusProfile") ?? 
+                                         GetNestedStringProperty(modData, "componentData", "customizePlusProfile");
                     
-                var simpleHeelsOffset = modData.TryGetProperty("simpleHeelsOffset", out var heelsProperty) ? 
-                    (float?)heelsProperty.GetSingle() : null;
+                var simpleHeelsOffset = GetFloatProperty(modData, "simpleHeelsOffset") ?? 
+                                      GetNestedFloatProperty(modData, "componentData", "simpleHeelsOffset");
                     
-                var honorificTitle = modData.TryGetProperty("honorificTitle", out var honorificProperty) ? 
-                    honorificProperty.GetString() : null;
+                var honorificTitle = GetStringProperty(modData, "honorificTitle") ?? 
+                                   GetNestedStringProperty(modData, "componentData", "honorificTitle");
                     
                 var outfitHash = modData.TryGetProperty("outfitHash", out var hashProperty) ? 
                     hashProperty.GetString() : null;
@@ -2032,6 +2121,29 @@ namespace FyteClub
                 _pluginLog.Error($"🎯 [P2P MOD PROCESSING] Failed to process mod data for {playerName}: {ex.Message}");
                 _pluginLog.Error($"🎯 [P2P MOD PROCESSING] Stack trace: {ex.StackTrace}");
             }
+        }
+        
+        // Helper methods for extracting properties from nested JSON
+        private static string? GetStringProperty(JsonElement element, string propertyName)
+        {
+            return element.TryGetProperty(propertyName, out var prop) ? prop.GetString() : null;
+        }
+        
+        private static string? GetNestedStringProperty(JsonElement element, string parentProperty, string childProperty)
+        {
+            return element.TryGetProperty(parentProperty, out var parent) && 
+                   parent.TryGetProperty(childProperty, out var child) ? child.GetString() : null;
+        }
+        
+        private static float? GetFloatProperty(JsonElement element, string propertyName)
+        {
+            return element.TryGetProperty(propertyName, out var prop) ? (float?)prop.GetSingle() : null;
+        }
+        
+        private static float? GetNestedFloatProperty(JsonElement element, string parentProperty, string childProperty)
+        {
+            return element.TryGetProperty(parentProperty, out var parent) && 
+                   parent.TryGetProperty(childProperty, out var child) ? (float?)child.GetSingle() : null;
         }
 
 
@@ -2170,26 +2282,27 @@ namespace FyteClub
                                     _plugin._pluginLog.Info("Successfully joined syncshell via invite code");
                                     _plugin.SaveConfiguration();
                                     
+                                    // CRITICAL: Wire up message handling IMMEDIATELY after join success
+                                    // This ensures we can process data received during bootstrap
+                                    var syncshells = _plugin.GetSyncshells();
+                                    var joinedSyncshell = syncshells.LastOrDefault();
+                                    if (joinedSyncshell != null)
+                                    {
+                                        _plugin._pluginLog.Info($"[P2P] IMMEDIATE: Wiring up message handling for joined syncshell {joinedSyncshell.Id}");
+                                        
+                                        // Must run on framework thread to access LocalPlayer
+                                        await _plugin._framework.RunOnFrameworkThread(() => {
+                                            _plugin.WireUpP2PMessageHandling(joinedSyncshell.Id);
+                                        });
+                                    }
+                                    
                                     // Wait a moment for WebRTC processing to complete
                                     await Task.Delay(1000);
-                                    
-                                                    // Answer code handling removed - using Nostr signaling
                                     
                                     // Establish initial P2P connection with host
                                     _plugin._pluginLog.Info($"About to establish P2P connection with code: {capturedCode}");
                                     await _plugin.EstablishInitialP2PConnection(capturedCode);
                                     _plugin._pluginLog.Info("P2P connection establishment completed");
-                                    
-                                    // Wire up P2P message handling after connection is established
-                                    var syncshells = _plugin.GetSyncshells();
-                                    var joinedSyncshell = syncshells.LastOrDefault();
-                                    if (joinedSyncshell != null)
-                                    {
-                                        _plugin._pluginLog.Info($"[P2P] Wiring up message handling for joined syncshell {joinedSyncshell.Id}");
-                                        // Wait a moment for WebRTC connection to be fully established
-                                        await Task.Delay(2000);
-                                        _plugin.WireUpP2PMessageHandling(joinedSyncshell.Id);
-                                    }
                                     break;
                                 case JoinResult.AlreadyJoined:
                                     _plugin._pluginLog.Info("You are already in this syncshell");

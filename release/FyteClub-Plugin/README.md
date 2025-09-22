@@ -1,4 +1,4 @@
-# FyteClub vv4.5.7 (P2P Development)
+# FyteClub vv4.5.8 (P2P Development)
 
 Share FFXIV mods with friends automatically using peer-to-peer technology.
 
@@ -6,14 +6,22 @@ Share FFXIV mods with friends automatically using peer-to-peer technology.
 
 When you're near other players in FFXIV, it syncs your mods directly between players using WebRTC P2P connections. No servers needed - just create or join a syncshell with friends. The plugin detects when you change your mods and shares them automatically.
 
-## New in vv4.5.7 (Relay Synchronization Fix)
+## New in vv4.5.8 (Critical Stability Fixes)
+
+- **Fixed game exit hanging** - removed blocking waits from TURN server disposal
+- **Fixed plugin loading crash** - moved local player access to framework thread
+- **Fixed self-filtering bug** - joiner now properly processes host's mod data
+- Aggressive disposal system prevents resource leaks during shutdown
+- Improved WebRTC connection cleanup for better stability
+
+## Previous in vv4.5.8 (Relay Synchronization Fix)
 
 - **Fixed Nostr relay mismatch** between host and joiner connections
 - Host and joiner now use identical relay lists for reliable P2P signaling
 - Improved WebRTC connection establishment success rate
 - All 5 Nostr relays now properly synchronized in invite codes
 
-## Previous in vv4.5.7 (Simplified Architecture)
+## Previous in vv4.5.8 (Simplified Architecture)
 
 - **Switched to simplified P2P architecture** for better maintainability and debugging
 - Fixed WebRTC crashes by using ProximityVoiceChat's stable WebRTC library
