@@ -4,6 +4,8 @@
 FFXIV-ProximityVoiceChat/
 webrtc-checkout/
 .zencoder/
+MareClient/
+LightlessServer/
 
 # .NET build artifacts
 plugin/bin/
@@ -43,6 +45,9 @@ logs/
 *.tmp
 *.temp
 temp/
+
+# Mysterious files that keep appearing
+]
 
 # Secrets and credentials
 *.pem

@@ -19,6 +19,7 @@ namespace FyteClub
         private Queue<byte[]> _pendingMessages = new();
         private readonly Dalamud.Plugin.Services.IPluginLog? _pluginLog;
         private bool _onboardingCompleted = false;
+        private List<FyteClub.TURN.TurnServerInfo> _turnServers = new();
 
         public event Action? OnConnected;
         public event Action? OnDisconnected;
@@ -30,6 +31,11 @@ namespace FyteClub
         public LibWebRTCConnection(Dalamud.Plugin.Services.IPluginLog? pluginLog = null)
         {
             _pluginLog = pluginLog;
+        }
+        
+        public void ConfigureTurnServers(List<FyteClub.TURN.TurnServerInfo> turnServers)
+        {
+            _turnServers = turnServers ?? new List<FyteClub.TURN.TurnServerInfo>();
         }
         
         public static string? PluginDirectory { get; set; }
@@ -60,6 +66,22 @@ namespace FyteClub
                 
                 // Add STUN servers like the article mentions
                 config.IceServers.Add(new IceServer { Urls = { "stun:stun.l.google.com:19302" } });
+                
+                // Add configured TURN servers
+                foreach (var turnServer in _turnServers)
+                {
+                    var iceServer = new IceServer { Urls = { turnServer.Url } };
+                    if (!string.IsNullOrEmpty(turnServer.Username))
+                    {
+                        iceServer.TurnUserName = turnServer.Username;
+                    }
+                    if (!string.IsNullOrEmpty(turnServer.Password))
+                    {
+                        iceServer.TurnPassword = turnServer.Password;
+                    }
+                    config.IceServers.Add(iceServer);
+                    _pluginLog?.Info($"Added TURN server: {turnServer.Url} (user: {turnServer.Username})");
+                }
                 
                 _pluginLog?.Info("Creating PeerConnection...");
                 _peerConnection = new PeerConnection();
@@ -149,12 +171,10 @@ namespace FyteClub
             {
                 if (_peerConnection == null) return string.Empty;
                 
-                // For simplified P2P, create data channel BEFORE setting remote description
-                _pluginLog?.Info("📡 Creating answerer data channel for simplified P2P");
-                _dataChannel = await _peerConnection.AddDataChannelAsync("data", true, true);
-                SetupDataChannelHandlers();
+                // ANSWERER: Do NOT create the data channel; wait for remote via DataChannelAdded
+                _pluginLog?.Info("📡 ANSWERER: Waiting for remote data channel via DataChannelAdded");
                 
-                // Set remote offer after creating data channel
+                // Set remote offer
                 var offer = new SdpMessage { Type = SdpMessageType.Offer, Content = offerSdp };
                 await _peerConnection.SetRemoteDescriptionAsync(offer);
                 

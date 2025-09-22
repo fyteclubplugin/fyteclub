@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyCopyrightAttribute("Copyright (c) Microsoft Corporation")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("0.1.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.1.0+cac32abc96ee7c7515b3374beed6364e293bcb2b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.1.0+f1b751bc06a3d857b11fd10bce65f88fa0c06642")]
 [assembly: System.Reflection.AssemblyProductAttribute("Microsoft.MixedReality.WebRTC")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Microsoft.MixedReality.WebRTC")]
 [assembly: System.Reflection.AssemblyVersionAttribute("0.1.0.0")]

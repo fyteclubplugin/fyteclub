@@ -18,6 +18,7 @@ namespace FyteClub.WebRTC
         private string _currentSyncshellId = string.Empty;
         private string _currentPassword = string.Empty;
         private List<FyteClub.TURN.TurnServerInfo> _turnServers = new();
+        private Func<Task<string>>? _localPlayerNameResolver;
 
         public event Action? OnConnected;
         public event Action? OnDisconnected;
@@ -42,6 +43,11 @@ namespace FyteClub.WebRTC
             }
         }
 
+        public void SetLocalPlayerNameResolver(Func<Task<string>> resolver)
+        {
+            _localPlayerNameResolver = resolver;
+        }
+
         public Task<bool> InitializeAsync()
         {
             try
@@ -60,10 +66,26 @@ namespace FyteClub.WebRTC
 
                 _webrtcManager.OnPeerConnected += (peer) => {
                     _pluginLog?.Info($"🔗 [WebRTC] Peer connected: {peer.PeerId}, DataChannel: {peer.DataChannel?.State}");
+                    
+                    // Prevent duplicate peer handling
+                    if (_currentPeer?.PeerId == peer.PeerId)
+                    {
+                        _pluginLog?.Info($"⚠️ [WebRTC] Peer {peer.PeerId} already connected, skipping duplicate");
+                        return;
+                    }
+                    
                     _currentPeer = peer;
                     peer.OnDataReceived = (data) => {
-                        OnDataReceived?.Invoke(data);
-                        _ = Task.Run(() => HandleP2PMessage(data));
+                        // If an external handler is attached, delegate to it exclusively to avoid double-processing
+                        if (OnDataReceived != null)
+                        {
+                            OnDataReceived.Invoke(data);
+                        }
+                        else
+                        {
+                            // Fall back to internal handler when no external subscriber is set
+                            _ = Task.Run(() => HandleP2PMessage(data));
+                        }
                     };
                     
                     // Wait for data channel to open, then trigger bootstrap
@@ -172,7 +194,11 @@ namespace FyteClub.WebRTC
                 
                 _hostNostrSignaling = new NNostrSignaling(relays, priv, pub, _pluginLog);
                 _hostNostrSignaling.SetCurrentUuid(uuid); // Set UUID before peer creation
-                _pluginLog?.Info($"[WebRTC] NostrSignaling created with UUID {uuid}, attempting to publish offer...");
+                _pluginLog?.Info($"[WebRTC] NostrSignaling created with UUID {uuid}, connecting to relays...");
+
+                // Ensure relay connections before publishing/subscribing
+                await _hostNostrSignaling.StartAsync();
+                _pluginLog?.Info($"[WebRTC] NostrSignaling connected to relays, proceeding to publish offer...");
                 
                 // Set the signaling channel in WebRTC manager to use the UUID
                 _webrtcManager.SetSignalingChannel(_hostNostrSignaling);
@@ -191,6 +217,11 @@ namespace FyteClub.WebRTC
                 {
                     if (evtUuid == uuid)
                     {
+                        if (answerReceived)
+                        {
+                            _pluginLog?.Warning($"[WebRTC] ⚠️ Duplicate answer event for UUID {uuid}, ignoring");
+                            return;
+                        }
                         _pluginLog?.Info($"[WebRTC] HOST: Received answer SDP for UUID {uuid}, length={answerSdp?.Length ?? 0}");
                         answerReceived = true; // Stop re-publishing
                         if (_webrtcManager != null && !string.IsNullOrEmpty(answerSdp))
@@ -328,6 +359,30 @@ namespace FyteClub.WebRTC
                     Console.WriteLine($"[JOINER] _webrtcManager is null");
                     return string.Empty;
                 }
+                
+                // Apply TURN servers from invite code if available
+                if (_turnServers.Count > 0)
+                {
+                    var iceServers = _turnServers.Select(server => new Microsoft.MixedReality.WebRTC.IceServer
+                    {
+                        Urls = { server.Url },
+                        TurnUserName = server.Username,
+                        TurnPassword = server.Password
+                    }).ToList();
+                    
+                    // Add fallback STUN servers for better connectivity
+                    iceServers.Add(new Microsoft.MixedReality.WebRTC.IceServer { Urls = { "stun:stun.l.google.com:19302" } });
+                    iceServers.Add(new Microsoft.MixedReality.WebRTC.IceServer { Urls = { "stun:stun1.l.google.com:19302" } });
+                    
+                    _webrtcManager.ConfigureIceServers(iceServers);
+                    _pluginLog?.Info($"[WebRTC] JOINER: Applied {iceServers.Count} ICE servers ({_turnServers.Count} TURN + {iceServers.Count - _turnServers.Count} STUN)");
+                    
+                    // Log TURN server details for debugging
+                    foreach (var server in _turnServers)
+                    {
+                        _pluginLog?.Info($"[WebRTC] JOINER: TURN server {server.Url} user={server.Username} pass={server.Password}");
+                    }
+                }
 
                 // Prevent duplicate connections
                 if (_currentPeer != null)
@@ -395,6 +450,7 @@ namespace FyteClub.WebRTC
                     
                     // Return success - HandleOffer will process offers and create peer automatically
                     _pluginLog?.Info($"[WebRTC] JOINER: Setup complete, HandleOffer will create peer when offer arrives");
+                    _pluginLog?.Info($"[WebRTC] JOINER: Using {_turnServers.Count} TURN servers for connectivity");
                     return "ok";
                 }
                 else
@@ -523,11 +579,38 @@ namespace FyteClub.WebRTC
             try
             {
                 var json = System.Text.Encoding.UTF8.GetString(data);
-                var message = System.Text.Json.JsonSerializer.Deserialize<JsonElement>(json);
-                var type = message.GetProperty("type").GetString();
-                
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    _pluginLog?.Warning("[P2P] Received empty data frame");
+                    return;
+                }
+
+                JsonElement message;
+                try
+                {
+                    message = System.Text.Json.JsonSerializer.Deserialize<JsonElement>(json);
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog?.Warning($"[P2P] Invalid JSON payload ({ex.GetType().Name}): {ex.Message}");
+                    return;
+                }
+
+                if (message.ValueKind != System.Text.Json.JsonValueKind.Object)
+                {
+                    _pluginLog?.Warning($"[P2P] Ignoring non-object message: {json}");
+                    return;
+                }
+
+                if (!message.TryGetProperty("type", out var typeProp) || typeProp.ValueKind != System.Text.Json.JsonValueKind.String)
+                {
+                    _pluginLog?.Warning($"[P2P] Message missing 'type' string property: {json}");
+                    return;
+                }
+
+                var type = typeProp.GetString();
                 _pluginLog?.Info($"[P2P] Received message: {type}");
-                
+
                 switch (type)
                 {
                     case "phonebook_request":
@@ -536,11 +619,24 @@ namespace FyteClub.WebRTC
                     case "phonebook_response":
                         await HandlePhonebookResponse(message);
                         break;
+                    case "phonebook_update":
+                        await HandlePhonebookUpdate(message);
+                        break;
                     case "mod_sync_request":
                         await HandleModSyncRequest();
                         break;
                     case "mod_data":
                         await HandleModData(message);
+                        break;
+                    // Delegate syncshell-specific control messages to SyncshellManager without warnings
+                    case "member_list_request":
+                    case "member_list_response":
+                    case "client_ready":
+                        _pluginLog?.Debug($"[P2P] Delegating syncshell control message: {type}");
+                        // Still forward raw data via OnDataReceived (already done above)
+                        break;
+                    default:
+                        _pluginLog?.Warning($"[P2P] Unknown message type: {type}");
                         break;
                 }
             }
@@ -577,10 +673,18 @@ namespace FyteClub.WebRTC
             var localPlayerName = await GetLocalPlayerName();
             if (string.IsNullOrEmpty(localPlayerName)) return;
             
-            var players = message.GetProperty("players").EnumerateArray().ToList();
-            var updatedPlayers = players.Select(p => new {
-                name = p.GetProperty("name").GetString(),
-                timestamp = p.GetProperty("timestamp").GetInt64()
+            // Check if players property exists
+            if (!message.TryGetProperty("players", out var playersProperty))
+            {
+                _pluginLog?.Warning($"[P2P] phonebook_response missing 'players' property");
+                return;
+            }
+            
+            var players = playersProperty.EnumerateArray().ToList();
+            var updatedPlayers = players.Select(p => {
+                var name = p.TryGetProperty("name", out var nameProperty) ? nameProperty.GetString() : "Unknown";
+                var timestamp = p.TryGetProperty("timestamp", out var timestampProperty) ? timestampProperty.GetInt64() : DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                return new { name, timestamp };
             }).ToList();
             
             // Add joiner to phonebook
@@ -602,6 +706,26 @@ namespace FyteClub.WebRTC
             OnPhonebookUpdated?.Invoke(updatedPlayers.Select(p => p.name).Where(n => !string.IsNullOrEmpty(n)).ToList());
         }
         
+        private async Task HandlePhonebookUpdate(JsonElement message)
+        {
+            // Host receives phonebook update from joiner
+            if (!message.TryGetProperty("players", out var playersProperty))
+            {
+                _pluginLog?.Warning($"[P2P] phonebook_update missing 'players' property");
+                return;
+            }
+            
+            var players = playersProperty.EnumerateArray().ToList();
+            var playerNames = players.Select(p => {
+                return p.TryGetProperty("name", out var nameProperty) ? nameProperty.GetString() : "Unknown";
+            }).Where(n => !string.IsNullOrEmpty(n)).ToList();
+            
+            _pluginLog?.Info($"[P2P] Host received phonebook update with {playerNames.Count} players");
+            
+            // Update local phonebook
+            OnPhonebookUpdated?.Invoke(playerNames);
+        }
+        
         private async Task HandleModSyncRequest()
         {
             // Send our mod data
@@ -619,8 +743,18 @@ namespace FyteClub.WebRTC
         
         private async Task HandleModData(JsonElement message)
         {
-            var playerName = message.GetProperty("playerName").GetString();
-            if (string.IsNullOrEmpty(playerName)) return;
+            if (!message.TryGetProperty("playerName", out var playerNameProp) || playerNameProp.ValueKind != System.Text.Json.JsonValueKind.String)
+            {
+                _pluginLog?.Warning("[P2P] mod_data missing 'playerName' string; ignoring message");
+                return;
+            }
+
+            var playerName = playerNameProp.GetString();
+            if (string.IsNullOrWhiteSpace(playerName))
+            {
+                _pluginLog?.Warning("[P2P] mod_data has empty 'playerName'; ignoring message");
+                return;
+            }
             
             _pluginLog?.Info($"[P2P] Received mod data for: {playerName}");
             OnModDataReceived?.Invoke(playerName, message);
@@ -628,8 +762,19 @@ namespace FyteClub.WebRTC
         
         private async Task<string> GetLocalPlayerName()
         {
-            // This would need to be injected or accessed via callback
-            return "LocalPlayer"; // Placeholder
+            try
+            {
+                if (_localPlayerNameResolver != null)
+                {
+                    var name = await _localPlayerNameResolver();
+                    if (!string.IsNullOrWhiteSpace(name)) return name;
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog?.Warning($"[P2P] Local player name resolver failed: {ex.Message}");
+            }
+            return ""; // empty means unknown; callers already guard on empty
         }
         
         private async Task<object> GetLocalModData(string playerName)
@@ -651,10 +796,27 @@ namespace FyteClub.WebRTC
             _turnServers = turnServers ?? new List<FyteClub.TURN.TurnServerInfo>();
             _pluginLog?.Info($"[WebRTC] Configured {_turnServers.Count} TURN servers for reliable routing");
             
-            // Configure WebRTC manager with available TURN servers
-            if (_webrtcManager != null)
+            // Configure WebRTC manager with TURN servers immediately
+            if (_webrtcManager != null && _turnServers.Count > 0)
             {
-                _webrtcManager.ConfigureTurnServers(_turnServers);
+                var iceServers = _turnServers.Select(server => new Microsoft.MixedReality.WebRTC.IceServer
+                {
+                    Urls = { server.Url },
+                    TurnUserName = server.Username,
+                    TurnPassword = server.Password
+                }).ToList();
+                
+                // Add fallback STUN servers
+                iceServers.Add(new Microsoft.MixedReality.WebRTC.IceServer { Urls = { "stun:stun.l.google.com:19302" } });
+                iceServers.Add(new Microsoft.MixedReality.WebRTC.IceServer { Urls = { "stun:stun1.l.google.com:19302" } });
+                
+                _webrtcManager.ConfigureIceServers(iceServers);
+                _pluginLog?.Info($"[WebRTC] Applied {iceServers.Count} ICE servers to WebRTC manager ({_turnServers.Count} TURN + {iceServers.Count - _turnServers.Count} STUN)");
+                
+                foreach (var server in _turnServers)
+                {
+                    _pluginLog?.Info($"[WebRTC] HOST: TURN server {server.Url} user={server.Username} pass={server.Password}");
+                }
             }
         }
         
@@ -663,11 +825,11 @@ namespace FyteClub.WebRTC
             if (_turnServers.Count == 0) return;
             
             // Use consistent server selection based on syncshell ID
-            var selectedServer = WebRTCConnectionFactory.SelectTurnServerForSyncshell(syncshellId, _turnServers);
+            var selectedServer = WebRTCConnectionFactory.SelectBestTurnServer(_turnServers, syncshellId);
             if (selectedServer != null)
             {
                 var serverList = new List<FyteClub.TURN.TurnServerInfo> { selectedServer };
-                _webrtcManager?.ConfigureTurnServers(serverList);
+                // TURN server configured via connection factory
                 _pluginLog?.Info($"[WebRTC] Selected TURN server {selectedServer.Url} for syncshell {syncshellId}");
             }
         }
@@ -676,6 +838,14 @@ namespace FyteClub.WebRTC
         {
             try
             {
+                // Clear event handlers first
+                OnConnected = null;
+                OnDisconnected = null;
+                OnDataReceived = null;
+                OnPhonebookUpdated = null;
+                OnModDataReceived = null;
+                OnAnswerCodeGenerated = null;
+                
                 // Cancel any ongoing tasks first
                 if (_currentPeer != null)
                 {
@@ -683,16 +853,37 @@ namespace FyteClub.WebRTC
                     _currentPeer = null;
                 }
                 
-                // Dispose WebRTC manager which handles native resources
-                _webrtcManager?.Dispose();
-                _webrtcManager = null;
+                // Dispose Nostr signaling connections first (prevents new tasks)
+                try
+                {
+                    _hostNostrSignaling?.Dispose();
+                    _hostNostrSignaling = null;
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog?.Warning($"Error disposing Nostr signaling: {ex.Message}");
+                }
                 
-                // Dispose Nostr signaling connections
-                _hostNostrSignaling?.Dispose();
-                _hostNostrSignaling = null;
+                // Dispose WebRTC manager which handles native resources
+                try
+                {
+                    _webrtcManager?.Dispose();
+                    _webrtcManager = null;
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog?.Warning($"Error disposing WebRTC manager: {ex.Message}");
+                }
                 
                 // Dispose reconnection manager
-                _reconnectionManager?.Dispose();
+                try
+                {
+                    _reconnectionManager?.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog?.Warning($"Error disposing reconnection manager: {ex.Message}");
+                }
             }
             catch (Exception ex)
             {

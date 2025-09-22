@@ -303,12 +303,23 @@ namespace FyteClub
                 var modDataHash = CalculateModDataHash(playerInfo);
                 
                 // Debug: Log what data we received
-                _pluginLog.Info($"FyteClub: Received mod data for {playerName}:");
-                _pluginLog.Info($"  - Mods count: {playerInfo.Mods?.Count ?? 0}");
-                _pluginLog.Info($"  - Glamourer data: {(string.IsNullOrEmpty(playerInfo.GlamourerData) ? "None" : $"{playerInfo.GlamourerData.Length} chars")}");
-                _pluginLog.Info($"  - Customize+ data: {(string.IsNullOrEmpty(playerInfo.CustomizePlusData) ? "None" : "Present")}");
-                _pluginLog.Info($"  - Simple Heels: {playerInfo.SimpleHeelsOffset?.ToString() ?? "None"}");
-                _pluginLog.Info($"  - Honorific: {(string.IsNullOrEmpty(playerInfo.HonorificTitle) ? "None" : "Present")}");
+                _pluginLog.Info($"🎯 [MOD APPLICATION] Received mod data for {playerName}:");
+                _pluginLog.Info($"🎯 [MOD APPLICATION]   - Mods count: {playerInfo.Mods?.Count ?? 0}");
+                if (playerInfo.Mods?.Count > 0)
+                {
+                    for (int i = 0; i < Math.Min(5, playerInfo.Mods.Count); i++)
+                    {
+                        _pluginLog.Info($"🎯 [MOD APPLICATION]     [{i}]: {playerInfo.Mods[i]}");
+                    }
+                    if (playerInfo.Mods.Count > 5)
+                    {
+                        _pluginLog.Info($"🎯 [MOD APPLICATION]     ... and {playerInfo.Mods.Count - 5} more");
+                    }
+                }
+                _pluginLog.Info($"🎯 [MOD APPLICATION]   - Glamourer data: {(string.IsNullOrEmpty(playerInfo.GlamourerData) ? "None" : $"{playerInfo.GlamourerData.Length} chars")}");
+                _pluginLog.Info($"🎯 [MOD APPLICATION]   - Customize+ data: {(string.IsNullOrEmpty(playerInfo.CustomizePlusData) ? "None" : "Present")}");
+                _pluginLog.Info($"🎯 [MOD APPLICATION]   - Simple Heels: {playerInfo.SimpleHeelsOffset?.ToString() ?? "None"}");
+                _pluginLog.Info($"🎯 [MOD APPLICATION]   - Honorific: {(string.IsNullOrEmpty(playerInfo.HonorificTitle) ? "None" : "Present")}");
                 
                 // Check if we've already applied these exact mods recently
                 if (ShouldSkipApplication(playerName, modDataHash))
@@ -513,39 +524,82 @@ namespace FyteClub
             {
                 var collectionName = $"FyteClub_{character.Name}_{character.ObjectIndex}";
                 
+                _pluginLog.Info($"🎯 [PENUMBRA APPLICATION] Creating temporary collection for {character.Name} with {mods.Count} file replacements");
+                
                 // Create temporary collection (using proper API signature with out parameter)
                 if (_penumbraCreateTemporaryCollection != null)
                 {
                     var createResult = _penumbraCreateTemporaryCollection.Invoke("FyteClub", collectionName, out var collectionId);
                     if (createResult == PenumbraApiEc.Success && collectionId != Guid.Empty)
                 {
-                    // Add mods to collection (FyteClub's own pattern)
+                    // Parse file replacements following MareClient's approach
                     var modPaths = new Dictionary<string, string>();
+                    var processedCount = 0;
+                    
                     foreach (var mod in mods)
                     {
-                        modPaths[mod] = mod; // Simple 1:1 mapping for now
+                        if (mod.Contains('|'))
+                        {
+                            // Format: "gamePath|resolvedPath"
+                            var parts = mod.Split('|', 2);
+                            if (parts.Length == 2)
+                            {
+                                var gamePath = parts[0];
+                                var resolvedPath = parts[1];
+                                modPaths[gamePath] = resolvedPath;
+                                processedCount++;
+                                
+                                if (processedCount <= 5) // Log first 5 for debugging
+                                {
+                                    _pluginLog.Info($"🎯 [PENUMBRA APPLICATION]   - File replacement: {gamePath} -> {resolvedPath}");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Simple path, map to itself
+                            modPaths[mod] = mod;
+                            processedCount++;
+                        }
                     }
                     
-                    _penumbraAddTemporaryMod?.Invoke("FyteClub", collectionId, modPaths, "", 0);
+                    if (processedCount > 5)
+                    {
+                        _pluginLog.Info($"🎯 [PENUMBRA APPLICATION]   ... and {processedCount - 5} more file replacements");
+                    }
+                    
+                    _pluginLog.Info($"🎯 [PENUMBRA APPLICATION] Adding {modPaths.Count} file replacements to collection {collectionId}");
+                    
+                    var addResult = _penumbraAddTemporaryMod?.Invoke("FyteClub_Files", collectionId, modPaths, "", 0);
+                    _pluginLog.Info($"🎯 [PENUMBRA APPLICATION] AddTemporaryMod result: {addResult}");
                     
                     // CRITICAL: Assign the collection to the character so Penumbra knows to use it
                     var assignResult = _penumbraAssignTemporaryCollection?.Invoke(collectionId, character.ObjectIndex);
                     if (assignResult == PenumbraApiEc.Success)
                     {
-                        _pluginLog.Debug($"Successfully assigned collection {collectionId} to {character.Name}");
+                        _pluginLog.Info($"🎯 [PENUMBRA APPLICATION] Successfully assigned collection {collectionId} to {character.Name}");
                     }
                     else
                     {
-                        _pluginLog.Warning($"Failed to assign collection to {character.Name}: {assignResult}");
+                        _pluginLog.Warning($"🎯 [PENUMBRA APPLICATION] Failed to assign collection to {character.Name}: {assignResult}");
                     }
                     
-                    _pluginLog.Debug($"Applied {mods.Count} Penumbra mods for {character.Name}");
+                    _pluginLog.Info($"🎯 [PENUMBRA APPLICATION] Applied {processedCount} Penumbra file replacements for {character.Name}");
                     }
+                    else
+                    {
+                        _pluginLog.Warning($"🎯 [PENUMBRA APPLICATION] Failed to create temporary collection: {createResult}");
+                    }
+                }
+                else
+                {
+                    _pluginLog.Warning($"🎯 [PENUMBRA APPLICATION] CreateTemporaryCollection API not available");
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Failed to apply Penumbra mods: {ex.Message}");
+                _pluginLog.Error($"🎯 [PENUMBRA APPLICATION] Failed to apply Penumbra mods: {ex.Message}");
+                _pluginLog.Error($"🎯 [PENUMBRA APPLICATION] Stack trace: {ex.StackTrace}");
             }
         }
 
@@ -786,6 +840,8 @@ namespace FyteClub
         {
             try
             {
+                _pluginLog.Info($"🎯 [MOD COLLECTION] Starting mod collection for: {playerName}");
+                
                 var playerInfo = new AdvancedPlayerInfo
                 {
                     PlayerName = playerName,
@@ -804,49 +860,100 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    _pluginLog.Warning($"Failed to find character '{playerName}' on framework thread: {ex.Message}");
+                    _pluginLog.Warning($"🎯 [MOD COLLECTION] Failed to find character '{playerName}' on framework thread: {ex.Message}");
                     return playerInfo;
                 }
 
                 if (character == null)
                 {
-                    _pluginLog.Warning($"Character '{playerName}' not found for mod collection - they may be out of range");
+                    _pluginLog.Warning($"🎯 [MOD COLLECTION] Character '{playerName}' not found for mod collection - they may be out of range");
                     return playerInfo;
                 }
+                
+                _pluginLog.Info($"🎯 [MOD COLLECTION] Found character: {character.Name} (ObjectIndex: {character.ObjectIndex})");
+                _pluginLog.Info($"🎯 [MOD COLLECTION] Plugin availability - Penumbra: {IsPenumbraAvailable}, Glamourer: {IsGlamourerAvailable}, Customize+: {IsCustomizePlusAvailable}, Heels: {IsHeelsAvailable}, Honorific: {IsHonorificAvailable}");
 
-                // Get Penumbra mods (current resource paths for this character - Horse's pattern)
+                // Get Penumbra mods (following MareClient's approach - get actual file replacements, not just paths)
                 if (IsPenumbraAvailable && _penumbraGetResourcePaths != null)
                 {
                     try
                     {
-                        _pluginLog.Debug($"Getting Penumbra resource paths for {playerName} (object index {character.ObjectIndex})");
+                        _pluginLog.Info($"🎯 [PENUMBRA] Getting resource paths for {playerName} (object index {character.ObjectIndex})");
                         
-                        // Use Horse's pattern: GetGameObjectResourcePaths
+                        // Use MareClient's pattern: GetGameObjectResourcePaths returns Dictionary<string, HashSet<string>>
                         var resourcePaths = _penumbraGetResourcePaths.Invoke(character.ObjectIndex);
                         
                         if (resourcePaths != null && resourcePaths.Length > 0)
                         {
+                            _pluginLog.Info($"🎯 [PENUMBRA] Got {resourcePaths.Length} resource path arrays");
                             var modPaths = resourcePaths[0]; // First element contains the mod paths
                             if (modPaths != null)
                             {
+                                _pluginLog.Info($"🎯 [PENUMBRA] Processing {modPaths.Count} mod paths");
+                                
+                                // Following MareClient's approach: collect file replacements with actual resolved paths
+                                var fileReplacements = new List<string>();
                                 foreach (var modPath in modPaths)
                                 {
-                                    playerInfo.Mods.Add($"{modPath.Key}");
-                                    _pluginLog.Debug($"  - Mod path: {modPath.Key} -> {modPath.Value.FirstOrDefault()}");
+                                    // modPath.Key is the game path, modPath.Value contains resolved paths
+                                    var gamePath = modPath.Key;
+                                    var resolvedPaths = modPath.Value;
+                                    
+                                    if (resolvedPaths != null && resolvedPaths.Any())
+                                    {
+                                        var resolvedPath = resolvedPaths.First();
+                                        
+                                        // Only include if it's actually a file replacement (not same as game path)
+                                        if (!string.Equals(gamePath, resolvedPath, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            // Store as "gamePath|resolvedPath" to preserve both pieces of info
+                                            fileReplacements.Add($"{gamePath}|{resolvedPath}");
+                                            
+                                            if (fileReplacements.Count <= 5) // Log first 5 for debugging
+                                            {
+                                                _pluginLog.Info($"🎯 [PENUMBRA]   - File replacement: {gamePath} -> {resolvedPath}");
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // Still include vanilla paths for completeness
+                                            fileReplacements.Add(gamePath);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // No resolved path, just use game path
+                                        fileReplacements.Add(gamePath);
+                                    }
+                                }
+                                
+                                playerInfo.Mods = fileReplacements;
+                                
+                                if (fileReplacements.Count > 5)
+                                {
+                                    _pluginLog.Info($"🎯 [PENUMBRA]   ... and {fileReplacements.Count - 5} more file replacements");
                                 }
                             }
+                            else
+                            {
+                                _pluginLog.Info($"🎯 [PENUMBRA] First resource path array is null");
+                            }
                             
-                            _pluginLog.Debug($"Collected {playerInfo.Mods.Count} Penumbra resource paths for {playerName}");
+                            _pluginLog.Info($"🎯 [PENUMBRA] Collected {playerInfo.Mods.Count} Penumbra file replacements for {playerName}");
                         }
                         else
                         {
-                            _pluginLog.Debug($"No active Penumbra resource paths found for {playerName}");
+                            _pluginLog.Info($"🎯 [PENUMBRA] No active Penumbra resource paths found for {playerName}");
                         }
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog.Warning($"Failed to get Penumbra resource paths for {playerName}: {ex.Message}");
+                        _pluginLog.Warning($"🎯 [PENUMBRA] Failed to get Penumbra resource paths for {playerName}: {ex.Message}");
                     }
+                }
+                else
+                {
+                    _pluginLog.Info($"🎯 [PENUMBRA] Skipped - Available: {IsPenumbraAvailable}, API: {_penumbraGetResourcePaths != null}");
                 }
 
                 // Get Glamourer design (current character appearance)
@@ -857,12 +964,16 @@ namespace FyteClub
                         // Note: This would need proper Glamourer API to get current design
                         // For now, we'll mark that glamourer is active
                         playerInfo.GlamourerDesign = "active";
-                        _pluginLog.Debug($"Glamourer design detected for {playerName}");
+                        _pluginLog.Info($"🎯 [GLAMOURER] Design detected for {playerName}");
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog.Warning($"Failed to get Glamourer design: {ex.Message}");
+                        _pluginLog.Warning($"🎯 [GLAMOURER] Failed to get Glamourer design: {ex.Message}");
                     }
+                }
+                else
+                {
+                    _pluginLog.Info($"🎯 [GLAMOURER] Skipped - Available: {IsGlamourerAvailable}");
                 }
 
                 // Get Customize+ profile (current active profile)
@@ -920,11 +1031,18 @@ namespace FyteClub
                     }
                 }
 
+                _pluginLog.Info($"🎯 [MOD COLLECTION] FINAL RESULT for {playerName}:");
+                _pluginLog.Info($"🎯 [MOD COLLECTION]   - Mods: {playerInfo.Mods?.Count ?? 0} items");
+                _pluginLog.Info($"🎯 [MOD COLLECTION]   - Glamourer: {(string.IsNullOrEmpty(playerInfo.GlamourerDesign) ? "None" : "Present")}");
+                _pluginLog.Info($"🎯 [MOD COLLECTION]   - Customize+: {(string.IsNullOrEmpty(playerInfo.CustomizePlusProfile) ? "None" : "Present")}");
+                _pluginLog.Info($"🎯 [MOD COLLECTION]   - Heels: {playerInfo.SimpleHeelsOffset}");
+                _pluginLog.Info($"🎯 [MOD COLLECTION]   - Honorific: {(string.IsNullOrEmpty(playerInfo.HonorificTitle) ? "None" : "Present")}");
+                
                 return playerInfo;
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Failed to collect mods for {playerName}: {ex.Message}");
+                _pluginLog.Error($"🎯 [MOD COLLECTION] Failed to collect mods for {playerName}: {ex.Message}");
                 return null;
             }
         }

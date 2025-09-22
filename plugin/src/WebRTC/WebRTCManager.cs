@@ -36,22 +36,57 @@ namespace FyteClub.WebRTC
             _config = new PeerConnectionConfiguration
             {
                 IceServers = GetDynamicIceServers(),
-                IceTransportType = IceTransportType.Relay
+                IceTransportType = IceTransportType.All, // Allow all connection types for better connectivity
+                BundlePolicy = BundlePolicy.MaxBundle // Use single transport for all media
             };
+
+            // Ensure signaling event handlers are registered immediately
+            RegisterSignalingHandlers();
         }
         
         private List<IceServer> GetDynamicIceServers()
         {
             var servers = new List<IceServer>
             {
+                // Multiple STUN servers for better connectivity
                 new IceServer { Urls = { "stun:stun.l.google.com:19302" } },
+                new IceServer { Urls = { "stun:stun1.l.google.com:19302" } },
+                new IceServer { Urls = { "stun:stun2.l.google.com:19302" } },
+                new IceServer { Urls = { "stun:stun3.l.google.com:19302" } },
+                new IceServer { Urls = { "stun:stun4.l.google.com:19302" } },
+                
+                // Multiple reliable public TURN servers
                 new IceServer { 
                     Urls = { "turn:openrelay.metered.ca:80" },
+                    TurnUserName = "openrelayproject",
+                    TurnPassword = "openrelayproject"
+                },
+                new IceServer { 
+                    Urls = { "turn:openrelay.metered.ca:443" },
+                    TurnUserName = "openrelayproject",
+                    TurnPassword = "openrelayproject"
+                },
+                new IceServer { 
+                    Urls = { "turn:openrelay.metered.ca:443?transport=tcp" },
                     TurnUserName = "openrelayproject",
                     TurnPassword = "openrelayproject"
                 }
             };
             
+            // Add local TURN server first (highest priority)
+            var localServer = _turnManager.GetLocalServerInfo();
+            if (localServer != null)
+            {
+                servers.Insert(0, new IceServer
+                {
+                    Urls = { localServer.Url },
+                    TurnUserName = localServer.Username,
+                    TurnPassword = localServer.Password
+                });
+                _pluginLog?.Info($"[WebRTC] Added local TURN server: {localServer.Url}");
+            }
+            
+            // Add peer TURN servers
             foreach (var turnServer in _turnManager.AvailableServers)
             {
                 servers.Add(new IceServer
@@ -60,22 +95,11 @@ namespace FyteClub.WebRTC
                     TurnUserName = turnServer.Username,
                     TurnPassword = turnServer.Password
                 });
+                _pluginLog?.Info($"[WebRTC] Added peer TURN server: {turnServer.Url}");
             }
             
-            var localServer = _turnManager.GetLocalServerInfo();
-            if (localServer != null)
-            {
-                servers.Add(new IceServer
-                {
-                    Urls = { localServer.Url },
-                    TurnUserName = localServer.Username,
-                    TurnPassword = localServer.Password
-                });
-            }
-            
+            _pluginLog?.Info($"[WebRTC] Configured {servers.Count} ICE servers total");
             return servers;
-
-            RegisterSignalingHandlers();
         }
         
         public void SetSignalingChannel(ISignalingChannel signalingChannel)
@@ -241,6 +265,14 @@ namespace FyteClub.WebRTC
                 PeerConnection = peerConnection,
                 IsOfferer = isOfferer
             };
+
+            // Insert into peer map atomically to prevent duplicate creations
+            if (!_peers.TryAdd(peerId, peer))
+            {
+                _pluginLog?.Warning($"[WebRTC] ⚠️ Peer {peerId} was created concurrently. Disposing this duplicate and returning existing.");
+                try { peerConnection.Dispose(); } catch {}
+                return _peers[peerId];
+            }
 
             // CAUSE 1: Timing - Register handler before ANY operations
             _pluginLog?.Info($"[WebRTC] 📝 Registering DataChannelAdded handler for {peerId} (Thread: {System.Threading.Thread.CurrentThread.ManagedThreadId})");
@@ -436,46 +468,79 @@ namespace FyteClub.WebRTC
                 await ProcessPendingIceCandidates(peerId);
             });
             
-            // WORKAROUND: Start periodic state checking since events don't fire reliably
+            // Enhanced connection monitoring with timeout and retry logic
             _ = Task.Run(async () => {
-                _pluginLog?.Info($"[WebRTC] 🕰️ Starting periodic state checker for {peerId}");
+                _pluginLog?.Info($"[WebRTC] 🕰️ Starting enhanced connection monitor for {peerId}");
                 
-                for (int i = 0; i < 60; i++) // Check for 30 seconds
+                var connectionTimeout = 45; // 45 seconds total timeout
+                var checkInterval = 500; // Check every 500ms
+                var maxChecks = connectionTimeout * 1000 / checkInterval;
+                
+                for (int i = 0; i < maxChecks; i++)
                 {
                     if (_disposed || !_peers.ContainsKey(peerId)) break;
                     
-                    await Task.Delay(500);
+                    await Task.Delay(checkInterval);
                     
                     var currentDataChannelState = peer.DataChannel?.State;
+                    var currentIceState = peer.IceState;
                     
-                    // Check if data channel opened or if connection is ready
-                    if (peer.DataChannel != null && (currentDataChannelState == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open || 
-                        (currentDataChannelState == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Connecting && peer.IceState == IceConnectionState.Connected)) && !peer.DataChannelReady)
+                    // Check for successful connection
+                    if (peer.DataChannel != null && 
+                        (currentDataChannelState == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open || 
+                         (currentDataChannelState == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Connecting && 
+                          currentIceState == IceConnectionState.Connected)) && 
+                        !peer.DataChannelReady)
                     {
-                        _pluginLog?.Info($"[WebRTC] ✅ MANUAL Data channel ready for {peerId} (State: {currentDataChannelState})");
+                        _pluginLog?.Info($"[WebRTC] ✅ Connection established for {peerId} (DataChannel: {currentDataChannelState}, ICE: {currentIceState})");
                         peer.DataChannelReady = true;
                         peer.OnDataChannelReady?.Invoke();
                         
-                        // Assume Interactive Connectivity Establishment is connected if data channel opens
                         if (peer.IceState != IceConnectionState.Connected)
                         {
-                            _pluginLog?.Info($"[WebRTC] ✅ MANUAL Interactive Connectivity Establishment assumed CONNECTED for {peerId}");
                             peer.IceState = IceConnectionState.Connected;
                         }
                         
                         CheckAndTriggerConnection(peer);
-                        _pluginLog?.Info($"[WebRTC] 🎉 MANUAL: Connection established for {peerId}, stopping checker");
                         break;
                     }
                     
-                    // Log current state for debugging
+                    // Check for connection failure
+                    if (currentIceState == IceConnectionState.Failed || 
+                        currentIceState == IceConnectionState.Disconnected ||
+                        currentDataChannelState == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Closed)
+                    {
+                        _pluginLog?.Error($"[WebRTC] ❌ Connection failed for {peerId} (DataChannel: {currentDataChannelState}, ICE: {currentIceState})");
+                        OnPeerDisconnected?.Invoke(peer);
+                        break;
+                    }
+                    
+                    // Periodic status logging
                     if (i % 10 == 0) // Every 5 seconds
                     {
-                        _pluginLog?.Info($"[WebRTC] 🔍 State check {i/2}s for {peerId}: DataChannel={currentDataChannelState}, ICE={peer.IceState}, Ready={peer.DataChannelReady}");
+                        var elapsed = i * checkInterval / 1000;
+                        _pluginLog?.Info($"[WebRTC] 🔍 Connection status {elapsed}s for {peerId}: DataChannel={currentDataChannelState}, ICE={currentIceState}");
+                        
+                        // Force ICE restart if stuck in checking for too long
+                        if (elapsed > 20 && currentIceState == IceConnectionState.Checking)
+                        {
+                            _pluginLog?.Warning($"[WebRTC] ⚠️ ICE stuck in checking state for {peerId}, connection may be blocked by firewall");
+                        }
                     }
                 }
                 
-                _pluginLog?.Info($"[WebRTC] 🕰️ Periodic state checker finished for {peerId}");
+                // Final timeout check
+                if (!peer.DataChannelReady)
+                {
+                    _pluginLog?.Error($"[WebRTC] ⏰ Connection timeout for {peerId} after {connectionTimeout}s - final state: DataChannel={peer.DataChannel?.State}, ICE={peer.IceState}");
+                    _pluginLog?.Error($"[WebRTC] 💡 Troubleshooting tips for {peerId}:");
+                    _pluginLog?.Error($"[WebRTC] 💡   - Check Windows Firewall settings on both machines");
+                    _pluginLog?.Error($"[WebRTC] 💡   - Verify router port forwarding for TURN server");
+                    _pluginLog?.Error($"[WebRTC] 💡   - Try disabling antivirus temporarily");
+                    OnPeerDisconnected?.Invoke(peer);
+                }
+                
+                _pluginLog?.Info($"[WebRTC] 🕰️ Connection monitor finished for {peerId}");
             });
             
             return peer;
@@ -657,7 +722,7 @@ namespace FyteClub.WebRTC
                     // CRITICAL: Prevent duplicate answer processing
                     if (peer.AnswerProcessed)
                     {
-                        _pluginLog?.Warning($"[WebRTC] ⚠️ Answer already processed for {peerId}, ignoring duplicate");
+                        _pluginLog?.Info($"[WebRTC] ⚠️ Answer already processed for {peerId}, ignoring duplicate");
                         return;
                     }
                     peer.AnswerProcessed = true;
@@ -694,6 +759,8 @@ namespace FyteClub.WebRTC
                             Content = answerSdp
                         });
                         _pluginLog?.Info($"[WebRTC] ✅ REMOTE ANSWER SET for offerer {peerId}");
+                        // Now that the remote answer is applied, flush any queued ICE candidates
+                        _ = Task.Run(async () => await ProcessPendingIceCandidates(peerId));
                     }
                     catch (Exception ex)
                     {
@@ -733,14 +800,12 @@ namespace FyteClub.WebRTC
                     {
                         if (_hostingUuids.Contains(peerId))
                         {
-                            // For hosted UUIDs, we need to detect if this is our own candidate
-                            // Look for patterns that indicate this came from our own connection
-                            // Since we can't easily get the local ufrag, we'll use a different approach:
-                            // If we're the host and we see candidates immediately after publishing our offer,
-                            // and no answer has been received yet, these are likely our own candidates
+                            // Host path: before the remote answer is processed, queue incoming ICE
+                            // candidates instead of dropping them. They may be from the remote joiner.
                             if (!peer.AnswerProcessed)
                             {
-                                _pluginLog?.Info($"[WebRTC] 🔄 Ignoring ICE candidate for hosted UUID {peerId} - no answer received yet (likely own candidate)");
+                                _pluginLog?.Info($"[WebRTC] ⏳ Host awaiting answer; queuing ICE candidate for {peerId}");
+                                QueueIceCandidate(peerId, candidate);
                                 return;
                             }
                         }
@@ -795,31 +860,36 @@ namespace FyteClub.WebRTC
         
         private void QueueIceCandidate(string peerId, IceCandidate candidate)
         {
-            _pendingIceCandidates.AddOrUpdate(peerId, 
+            var queue = _pendingIceCandidates.AddOrUpdate(peerId, 
                 new Queue<IceCandidate>(new[] { candidate }),
-                (key, queue) => { queue.Enqueue(candidate); return queue; });
-            _pluginLog?.Info($"[WebRTC] 📦 Queued ICE candidate for {peerId}");
+                (key, q) => { q.Enqueue(candidate); return q; });
+            _pluginLog?.Info($"[WebRTC] 📦 Queued ICE candidate for {peerId} (queue size now: {queue.Count})");
         }
         
         private async Task ProcessPendingIceCandidates(string peerId)
         {
             if (_pendingIceCandidates.TryRemove(peerId, out var candidates) && _peers.TryGetValue(peerId, out var peer))
             {
-                _pluginLog?.Info($"[WebRTC] 📦 Processing {candidates.Count} pending ICE candidates for {peerId}");
+                var total = candidates.Count;
+                _pluginLog?.Info($"[WebRTC] 📦 Draining {total} queued ICE candidates for {peerId}");
+                var applied = 0;
+                var failed = 0;
                 while (candidates.Count > 0)
                 {
                     try
                     {
                         var candidate = candidates.Dequeue();
                         peer.PeerConnection.AddIceCandidate(candidate);
+                        applied++;
                         await Task.Delay(50); // Small delay between candidates
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog?.Error($"[WebRTC] Failed to process pending ICE candidate for {peerId}: {ex.Message}");
+                        failed++;
+                        _pluginLog?.Error($"[WebRTC] ❌ Failed to apply queued ICE candidate for {peerId}: {ex.Message}");
                     }
                 }
-                _pluginLog?.Info($"[WebRTC] ✅ Processed all pending ICE candidates for {peerId}");
+                _pluginLog?.Info($"[WebRTC] ✅ Drained queued ICE for {peerId}: applied={applied}, failed={failed}, total={total}");
             }
         }
 
@@ -872,6 +942,28 @@ namespace FyteClub.WebRTC
         public TurnServerManager GetTurnManager()
         {
             return _turnManager;
+        }
+        
+        public void ConfigureIceServers(List<IceServer> iceServers)
+        {
+            _pluginLog?.Info($"[WebRTC] Configuring {iceServers.Count} ICE servers dynamically");
+            
+            // Update the configuration for future peer connections
+            _config.IceServers.Clear();
+            foreach (var server in iceServers)
+            {
+                _config.IceServers.Add(server);
+                _pluginLog?.Info($"[WebRTC] Added ICE server: {string.Join(",", server.Urls)}");
+            }
+            
+            // Add default STUN servers if none provided
+            if (_config.IceServers.Count == 0)
+            {
+                _config.IceServers.Add(new IceServer { Urls = { "stun:stun.l.google.com:19302" } });
+                _pluginLog?.Info($"[WebRTC] Added default STUN server");
+            }
+            
+            _pluginLog?.Info($"[WebRTC] ICE server configuration updated with {_config.IceServers.Count} servers");
         }
         
         public void Dispose()

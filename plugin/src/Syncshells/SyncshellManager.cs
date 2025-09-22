@@ -193,7 +193,7 @@ namespace FyteClub
             return session;
         }
 
-        public async Task<string> GenerateInviteCode(string syncshellId, bool enableAutomated = true)
+        public async Task<string> GenerateInviteCode(string syncshellId, bool enableAutomated = true, FyteClub.TURN.TurnServerManager? turnManager = null)
         {
             var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
             if (syncshell == null) return string.Empty;
@@ -201,7 +201,7 @@ namespace FyteClub
             // Check if syncshell is stale (30+ days)
             if (syncshell.IsStale)
             {
-                return await CreateBootstrapCode(syncshellId);
+                return await CreateBootstrapCode(syncshellId, turnManager);
             }
             
             // Check if we already have P2P connections - use bootstrap mode
@@ -211,7 +211,7 @@ namespace FyteClub
             }
             
             // First connection - use manual exchange
-            return await GenerateManualInviteCode(syncshellId);
+            return await GenerateNostrInviteCode(syncshellId, turnManager);
         }
         
         public async Task<string> CreateBootstrapCode(string syncshellId, FyteClub.TURN.TurnServerManager? turnManager = null)
@@ -521,7 +521,7 @@ namespace FyteClub
             
             foreach (var (syncshellId, startTime) in _pendingConnections)
             {
-                if ((now - startTime).TotalSeconds > CONNECTION_TIMEOUT_SECONDS)
+                if (!string.IsNullOrEmpty(syncshellId) && (now - startTime).TotalSeconds > CONNECTION_TIMEOUT_SECONDS)
                 {
                     timedOut.Add(syncshellId);
                 }
@@ -529,13 +529,16 @@ namespace FyteClub
             
             foreach (var syncshellId in timedOut)
             {
-                SecureLogger.LogWarning("Connection timeout for syncshell");
-                _pendingConnections.Remove(syncshellId);
-                
-                if (_webrtcConnections.TryGetValue(syncshellId, out var connection))
+                if (!string.IsNullOrEmpty(syncshellId))
                 {
-                    connection.Dispose();
-                    _webrtcConnections.Remove(syncshellId);
+                    SecureLogger.LogWarning("Connection timeout for syncshell");
+                    _pendingConnections.Remove(syncshellId);
+                    
+                    if (_webrtcConnections.TryGetValue(syncshellId, out var connection))
+                    {
+                        connection.Dispose();
+                        _webrtcConnections.Remove(syncshellId);
+                    }
                 }
             }
         }
@@ -589,14 +592,27 @@ namespace FyteClub
                         return;
                     }
                     
-                    // Handle player mod data - store in deduped cache
+                    // Handle player mod data - store in deduped cache AND fire event
                     if (parsedData.TryGetValue("playerId", out var playerIdObj))
                     {
                         var playerId = playerIdObj.ToString();
                         if (!string.IsNullOrEmpty(playerId))
                         {
+                            // Don't process our own mod data
+                            var localPlayerName = GetLocalPlayerName();
+                            if (playerId == localPlayerName)
+                            {
+                                SecureLogger.LogInfo("Skipping own mod data for player: {0}", playerId);
+                                return;
+                            }
+                            
                             StoreReceivedModDataInCache(playerId, parsedData);
                             SecureLogger.LogInfo("Stored P2P mod data in cache for player: {0}", playerId);
+                            
+                            // Fire event to trigger ProcessReceivedModData in plugin
+                            var jsonElement = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(modData);
+                            OnModDataReceived?.Invoke(playerId, jsonElement);
+                            Console.WriteLine($"🎯 FIRED OnModDataReceived event for player: {playerId}");
                         }
                     }
                 }
@@ -885,6 +901,26 @@ namespace FyteClub
                 {
                     SecureLogger.LogInfo("Successfully joined syncshell '{0}' via Nostr invite", name);
                     
+                    // Extract TURN server info from invite if available
+                    var turnServers = new List<FyteClub.TURN.TurnServerInfo>();
+                    if (nostrInvite.TryGetProperty("turnServer", out var turnServerProperty) && turnServerProperty.ValueKind != System.Text.Json.JsonValueKind.Null)
+                    {
+                        var turnUrl = turnServerProperty.GetProperty("url").GetString() ?? "";
+                        var turnUsername = turnServerProperty.GetProperty("username").GetString() ?? "";
+                        var turnPassword = turnServerProperty.GetProperty("password").GetString() ?? "";
+                        
+                        if (!string.IsNullOrEmpty(turnUrl))
+                        {
+                            turnServers.Add(new FyteClub.TURN.TurnServerInfo
+                            {
+                                Url = turnUrl,
+                                Username = turnUsername,
+                                Password = turnPassword
+                            });
+                            SecureLogger.LogInfo("JOINER: Extracted TURN server from invite: {0}", turnUrl);
+                        }
+                    }
+                    
                     // Create WebRTC connection and process Nostr offer
                     var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                     await connection.InitializeAsync();
@@ -897,6 +933,13 @@ namespace FyteClub
                     // Use RobustWebRTCConnection to handle Nostr signaling
                     if (connection is WebRTC.RobustWebRTCConnection robustConnection)
                     {
+                        // Configure TURN servers from invite before creating answer
+                        if (turnServers.Count > 0)
+                        {
+                            robustConnection.ConfigureTurnServers(turnServers);
+                            SecureLogger.LogInfo("JOINER: Configured {0} TURN servers from invite", turnServers.Count);
+                        }
+                        
                         // Create nostr offer URI for the connection
                         var relayParam = string.Join(",", relays);
                         var nostrOfferUri = $"nostr://offer?uuid={uuid}&relays={Uri.EscapeDataString(relayParam)}";
@@ -1115,6 +1158,22 @@ namespace FyteClub
             return _webrtcConnections.TryGetValue(syncshellId, out var connection) ? connection : null;
         }
         
+        private bool _modDataHandlerWired = false;
+        
+        public void WireUpModDataHandler(Action<string, System.Text.Json.JsonElement> handler)
+        {
+            if (!_modDataHandlerWired)
+            {
+                OnModDataReceived += handler;
+                _modDataHandlerWired = true;
+                SecureLogger.LogInfo("Wired up mod data handler in SyncshellManager");
+            }
+            else
+            {
+                SecureLogger.LogInfo("Mod data handler already wired up, skipping");
+            }
+        }
+        
         // Separate mod data mapping from network phonebook
         private readonly Dictionary<string, PlayerModEntry> _playerModData = new();
         
@@ -1135,13 +1194,48 @@ namespace FyteClub
         
         public void UpdatePlayerModData(string playerName, object? componentData, object? recipeData)
         {
-            _playerModData[playerName] = new PlayerModEntry
+            try
             {
-                PlayerName = playerName,
-                ComponentData = componentData,
-                RecipeData = recipeData,
-                LastUpdated = DateTime.UtcNow
-            };
+                var incomingJson = System.Text.Json.JsonSerializer.Serialize(recipeData);
+                var incomingHash = SyncshellHashing.ComputeStableHash(incomingJson);
+
+                if (_playerModData.TryGetValue(playerName, out var existing))
+                {
+                    var existingJson = System.Text.Json.JsonSerializer.Serialize(existing.RecipeData);
+                    var existingHash = SyncshellHashing.ComputeStableHash(existingJson);
+                    if (existingHash == incomingHash)
+                    {
+                        SecureLogger.LogDebug("Mod data unchanged for {0}, skipping cache update", playerName);
+                        return; // No changes; skip update
+                    }
+                    else
+                    {
+                        SecureLogger.LogDebug("Mod data changed for {0}: {1} -> {2}", playerName, existingHash, incomingHash);
+                    }
+                }
+
+                _playerModData[playerName] = new PlayerModEntry
+                {
+                    PlayerName = playerName,
+                    ComponentData = componentData,
+                    RecipeData = recipeData,
+                    LastUpdated = DateTime.UtcNow,
+                    LastHash = incomingHash
+                };
+                SecureLogger.LogInfo("Updated cache for {0} from mod data (changed)", playerName);
+            }
+            catch (Exception ex)
+            {
+                SecureLogger.LogWarning("Failed to dedupe UpdatePlayerModData for {0}: {1}", playerName, ex.Message);
+                // Fallback: store without dedupe
+                _playerModData[playerName] = new PlayerModEntry
+                {
+                    PlayerName = playerName,
+                    ComponentData = componentData,
+                    RecipeData = recipeData,
+                    LastUpdated = DateTime.UtcNow
+                };
+            }
         }
         
         public void AddToPhonebook(string playerName, string syncshellId)
@@ -1194,21 +1288,18 @@ namespace FyteClub
                     };
                     hostConnection.OnDisconnected += () => {
                         Console.WriteLine($"Host P2P connection lost for {syncshellId}");
-                        _webrtcConnections.Remove(syncshellId + "_host");
+                        _webrtcConnections.Remove(syncshellId);
                     };
                     
-                    // Store host connection
-                    var hostConnectionKey = syncshellId + "_host";
-                    _webrtcConnections[hostConnectionKey] = hostConnection;
+                    // Store host connection using syncshellId as key for GetWebRTCConnection
+                    _webrtcConnections[syncshellId] = hostConnection;
                     
                     // Register host connection
                     if (!_syncshellConnectionRegistry.ContainsKey(syncshellId))
                     {
                         _syncshellConnectionRegistry[syncshellId] = new List<string>();
                     }
-                    _syncshellConnectionRegistry[syncshellId].Add(hostConnectionKey);
-                    
-                    // Host connection ready for P2P
+                    _syncshellConnectionRegistry[syncshellId].Add(syncshellId);
                     
                     SecureLogger.LogInfo("Syncshell {0} initialized as host with {1} members", syncshellId, syncshell.Members.Count);
                 }
@@ -1217,6 +1308,23 @@ namespace FyteClub
             {
                 SecureLogger.LogError("Failed to initialize syncshell {0} as host: {1}", syncshellId, ex.Message);
             }
+        }
+        
+        // Event to notify plugin when mod data is received
+        public event Action<string, System.Text.Json.JsonElement>? OnModDataReceived;
+        
+        private string GetLocalPlayerName()
+        {
+            // This should be set by the plugin during initialization
+            return _localPlayerName ?? "";
+        }
+        
+        private string _localPlayerName = "";
+        
+        public void SetLocalPlayerName(string playerName)
+        {
+            _localPlayerName = playerName;
+            SecureLogger.LogInfo("Set local player name: {0}", playerName);
         }
         
         public async Task<bool> EstablishInitialConnection(string syncshellId, string inviteCode)
@@ -1359,7 +1467,7 @@ namespace FyteClub
                     {
                         type = "phonebook_response",
                         syncshellId = syncshellId,
-                        members = new List<object>(), // Simplified phonebook response
+                        players = new List<object>(), // Simplified phonebook response (compat with RobustWebRTCConnection)
                         timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                     };
                     
@@ -1454,6 +1562,7 @@ namespace FyteClub
         public void Dispose()
         {
             if (_disposed) return;
+            _disposed = true; // Mark as disposed immediately to prevent re-entry
             
             try
             {
@@ -1461,53 +1570,46 @@ namespace FyteClub
                 _uptimeTimer?.Dispose();
                 _connectionTimeoutTimer?.Dispose();
                 
-                // Dispose all WebRTC connections with timeout
-                var connectionDisposeTask = Task.Run(() =>
-                {
-                    foreach (var connection in _webrtcConnections.Values)
-                    {
-                        try
-                        {
-                            connection.Dispose();
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Error disposing WebRTC connection: {ex.Message}");
-                        }
-                    }
-                });
+                // Force dispose all WebRTC connections immediately
+                var connections = _webrtcConnections.Values.ToList();
+                _webrtcConnections.Clear(); // Clear immediately to prevent new operations
                 
-                // Wait max 5 seconds for connections to dispose
-                if (!connectionDisposeTask.Wait(5000))
+                foreach (var connection in connections)
                 {
-                    Console.WriteLine("Warning: WebRTC connection disposal timed out");
+                    try
+                    {
+                        // Force immediate disposal without waiting
+                        connection.Dispose();
+                    }
+                    catch
+                    {
+                        // Ignore disposal errors to prevent hanging
+                    }
                 }
                 
-                _webrtcConnections.Clear();
                 _pendingConnections.Clear();
                 _issuedTokens.Clear();
                 _syncshellConnectionRegistry.Clear();
                 
-                // Dispose sessions
-                foreach (var session in _sessions.Values)
+                // Force dispose sessions immediately
+                var sessions = _sessions.Values.ToList();
+                _sessions.Clear();
+                
+                foreach (var session in sessions)
                 {
                     try
                     {
                         session.Dispose();
                     }
-                    catch (Exception ex)
+                    catch
                     {
-                        Console.WriteLine($"Error disposing session: {ex.Message}");
+                        // Ignore disposal errors to prevent hanging
                     }
                 }
-                _sessions.Clear();
-                
-                _disposed = true;
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"Error during SyncshellManager disposal: {ex.Message}");
-                _disposed = true; // Mark as disposed even if cleanup failed
+                // Ignore all disposal errors to prevent hanging
             }
         }
     }
@@ -1518,6 +1620,25 @@ namespace FyteClub
         public object? ComponentData { get; set; }
         public object? RecipeData { get; set; }
         public DateTime LastUpdated { get; set; }
+        public string? LastHash { get; set; }
+    }
+
+    public static class SyncshellHashing
+    {
+        public static string ComputeStableHash(string? input)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(input)) return string.Empty;
+                using var sha256 = System.Security.Cryptography.SHA256.Create();
+                var bytes = System.Text.Encoding.UTF8.GetBytes(input);
+                return Convert.ToHexString(sha256.ComputeHash(bytes));
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
     }
 
     public enum JoinResult

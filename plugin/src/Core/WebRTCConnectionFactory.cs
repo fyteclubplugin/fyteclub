@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
@@ -10,10 +11,16 @@ namespace FyteClub
     {
         private static bool? _nativeAvailable;
         private static IPluginLog? _pluginLog;
+        private static Func<Task<string>>? _localPlayerNameResolver;
 
         public static void Initialize(IPluginLog pluginLog)
         {
             _pluginLog = pluginLog;
+        }
+
+        public static void SetLocalPlayerNameResolver(Func<Task<string>> resolver)
+        {
+            _localPlayerNameResolver = resolver;
         }
 
         public static async Task<IWebRTCConnection> CreateConnectionAsync(FyteClub.TURN.TurnServerManager? turnManager = null)
@@ -27,6 +34,12 @@ namespace FyteClub
             try
             {
                 var robustConnection = new WebRTC.RobustWebRTCConnection(_pluginLog);
+
+                // Wire the local player name resolver if provided
+                if (_localPlayerNameResolver != null)
+                {
+                    robustConnection.SetLocalPlayerNameResolver(_localPlayerNameResolver);
+                }
                 
                 // Configure TURN servers if available
                 if (turnManager != null)
@@ -57,8 +70,28 @@ namespace FyteClub
             
             if (_nativeAvailable.Value)
             {
-                _pluginLog?.Info("WebRTC: Using LibWebRTCConnection (native fallback without TURN)");
-                return new LibWebRTCConnection(_pluginLog);
+                var libConnection = new LibWebRTCConnection(_pluginLog);
+                
+                // Configure TURN servers for fallback connection too
+                if (turnManager != null)
+                {
+                    var availableServers = GetAvailableTurnServers(turnManager);
+                    if (availableServers.Count > 0)
+                    {
+                        libConnection.ConfigureTurnServers(availableServers);
+                        _pluginLog?.Info($"WebRTC: Using LibWebRTCConnection with {availableServers.Count} TURN servers");
+                    }
+                    else
+                    {
+                        _pluginLog?.Info("WebRTC: Using LibWebRTCConnection (STUN only - no TURN servers available)");
+                    }
+                }
+                else
+                {
+                    _pluginLog?.Info("WebRTC: Using LibWebRTCConnection (STUN only - no TURN manager)");
+                }
+                
+                return libConnection;
             }
             else
             {

@@ -110,6 +110,8 @@ namespace FyteClub
             // Initialize WebRTC factory
             LibWebRTCConnection.PluginDirectory = pluginInterface.AssemblyLocation.Directory?.FullName;
             WebRTCConnectionFactory.Initialize(pluginLog);
+            // Provide local player name resolver to RobustWebRTCConnection via factory
+            WebRTCConnectionFactory.SetLocalPlayerNameResolver(async () => _clientState.LocalPlayer?.Name?.TextValue ?? "");
 
             // Initialize services
             _modSystemIntegration = new FyteClubModIntegration(pluginInterface, pluginLog, objectTable, framework);
@@ -184,7 +186,7 @@ namespace FyteClub
             
 
             
-            _pluginLog.Info("FyteClub v4.5.5 initialized - P2P mod sharing with syncshells");
+            _pluginLog.Info("FyteClub v4.5.8 initialized - P2P mod sharing with distributed TURN servers");
         }
 
         private void InitializeClientCache()
@@ -228,6 +230,12 @@ namespace FyteClub
                 var localPlayer = _clientState.LocalPlayer;
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 var isLocalPlayerValid = localPlayer != null && !string.IsNullOrEmpty(localPlayerName);
+                
+                // Update local player name for self-filtering if it changed
+                if (isLocalPlayerValid)
+                {
+                    _syncshellManager.SetLocalPlayerName(localPlayerName!);
+                }
                 
                 _mediator.ProcessQueue();
                 _playerDetection.ScanForPlayers();
@@ -292,11 +300,11 @@ namespace FyteClub
                         if (obj?.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player && 
                             obj is Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player)
                         {
-                            var playerName = obj.Name.ToString();
+                            var playerName = obj.Name?.ToString();
                             if (!string.IsNullOrEmpty(playerName))
                             {
                                 var worldName = player.HomeWorld.IsValid ? player.HomeWorld.Value.Name.ToString() : "Unknown";
-                                var playerId = $"{playerName}@{worldName}";
+                                var playerId = $"{playerName}@{worldName ?? "Unknown"}";
                                 allVisiblePlayers.Add(playerId);
                             }
                         }
@@ -355,7 +363,7 @@ namespace FyteClub
                 if (_clientCache != null)
                 {
                     var cachedMods = await _clientCache.GetCachedPlayerMods(playerName);
-                    if (cachedMods?.RecipeData != null)
+                    if (cachedMods != null)
                     {
                         await ApplyPlayerModsFromCache(playerName, cachedMods);
                         _loadingStates[playerName] = LoadingState.Complete;
@@ -403,7 +411,9 @@ namespace FyteClub
                     var nearbyPlayers = new List<PlayerSnapshot>();
                     foreach (var obj in _objectTable)
                     {
-                        if (obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player && obj.Name.TextValue != _clientState.LocalPlayer?.Name.TextValue)
+                        if (obj?.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player && 
+                            obj.Name?.TextValue != _clientState.LocalPlayer?.Name?.TextValue &&
+                            !string.IsNullOrEmpty(obj.Name?.TextValue))
                         {
                             nearbyPlayers.Add(new PlayerSnapshot
                             {
@@ -888,7 +898,7 @@ namespace FyteClub
                     var reconstructedPlayerInfo = new AdvancedPlayerInfo
                     {
                         PlayerName = playerName,
-                        Mods = modData.ComponentData as List<string> ?? new List<string>(),
+                        Mods = (modData.ComponentData as List<string>) ?? new List<string>(),
                         GlamourerDesign = modData.RecipeData?.ToString()
                     };
                     
@@ -952,11 +962,13 @@ namespace FyteClub
                 SaveConfiguration();
                 _pluginLog.Info($"[DEBUG] SaveConfiguration() called");
                 
+                // Wire up P2P message handling BEFORE initializing as host
+                _pluginLog.Info($"[DEBUG] About to wire up P2P message handling for syncshell {syncshell.Id}");
+                WireUpP2PMessageHandling(syncshell.Id);
+                _pluginLog.Info($"[DEBUG] P2P message handling wired up for syncshell {syncshell.Id}");
+                
                 // Initialize the syncshell as ready to accept P2P connections
                 await _syncshellManager.InitializeAsHost(syncshell.Id);
-                
-                // Wire up P2P message handling
-                WireUpP2PMessageHandling(syncshell.Id);
                 
                 _pluginLog.Info($"[DEBUG] FyteClubPlugin.CreateSyncshell SUCCESS - returning syncshell");
                 return syncshell;
@@ -1013,15 +1025,28 @@ namespace FyteClub
             SaveConfiguration();
         }
 
+        public Configuration GetConfiguration()
+        {
+            return _pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        }
+        
+        public void UpdateTurnServerPort(int newPort)
+        {
+            var config = GetConfiguration();
+            config.TurnServerPort = newPort;
+            _pluginInterface.SavePluginConfig(config);
+        }
+        
         public void SaveConfiguration()
         {
+            var existingConfig = GetConfiguration();
             var config = new Configuration 
             { 
                 Syncshells = _syncshellManager.GetSyncshells(),
                 BlockedUsers = _blockedUsers.Keys.ToList(),
                 RecentlySyncedUsers = _recentlySyncedUsers.Keys.ToList(),
                 EnableTurnHosting = _turnManager?.IsHostingEnabled ?? false,
-                TurnServerPort = _turnManager?.LocalServer?.Port ?? 3478
+                TurnServerPort = existingConfig.TurnServerPort // Preserve configured port, not running port
             };
             _pluginInterface.SavePluginConfig(config);
         }
@@ -1218,8 +1243,8 @@ namespace FyteClub
                 _ = Task.Run(async () => {
                     if (_turnManager != null)
                     {
-                        await _turnManager.EnableHostingAsync();
-                        _pluginLog.Info("[TURN] Auto-enabled hosting from saved configuration");
+                        await _turnManager.EnableHostingAsync(config.TurnServerPort);
+                        _pluginLog.Info($"[TURN] Auto-enabled hosting on port {config.TurnServerPort} from saved configuration");
                     }
                 });
             }
@@ -1236,6 +1261,22 @@ namespace FyteClub
             {
                 var outfitHash = CalculateModDataHash(playerInfo);
                 
+                _pluginLog.Info($"📤 [MOD SHARING] Preparing to share mods for {playerName}:");
+                _pluginLog.Info($"📤 [MOD SHARING]   - Mods to share: {playerInfo.Mods?.Count ?? 0}");
+                if (playerInfo.Mods?.Count > 0)
+                {
+                    for (int i = 0; i < Math.Min(5, playerInfo.Mods.Count); i++)
+                    {
+                        _pluginLog.Info($"📤 [MOD SHARING]     [{i}]: {playerInfo.Mods[i]}");
+                    }
+                    if (playerInfo.Mods.Count > 5)
+                    {
+                        _pluginLog.Info($"📤 [MOD SHARING]     ... and {playerInfo.Mods.Count - 5} more");
+                    }
+                }
+                _pluginLog.Info($"📤 [MOD SHARING]   - Glamourer: {(string.IsNullOrEmpty(playerInfo.GlamourerDesign) ? "None" : "Present")}");
+                _pluginLog.Info($"📤 [MOD SHARING]   - Hash: {outfitHash?[..8] ?? "none"}");
+                
                 var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
                 foreach (var syncshell in activeSyncshells)
                 {
@@ -1243,6 +1284,7 @@ namespace FyteClub
                     {
                         var modData = new
                         {
+                            type = "mod_data",
                             playerId = playerName,
                             playerName = playerName,
                             outfitHash = outfitHash,
@@ -1255,15 +1297,24 @@ namespace FyteClub
                         };
 
                         var json = JsonSerializer.Serialize(modData);
+                        _pluginLog.Info($"📤 [MOD SHARING] Serialized JSON size: {json.Length} characters");
+                        _pluginLog.Info($"📤 [MOD SHARING] Sending to syncshell: {syncshell.Name}");
+                        
                         await _syncshellManager.SendModData(syncshell.Id, json);
+                        
+                        _pluginLog.Info($"📤 [MOD SHARING] Successfully sent mod data to {syncshell.Name}");
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog.Warning($"FyteClub: Failed to send mods to syncshell {syncshell.Name}: {ex.Message}");
+                        _pluginLog.Warning($"📤 [MOD SHARING] Failed to send mods to syncshell {syncshell.Name}: {ex.Message}");
                     }
                 }
                 
                 _hasPerformedInitialUpload = true;
+            }
+            else
+            {
+                _pluginLog.Warning($"📤 [MOD SHARING] No player info collected for {playerName} - nothing to share");
             }
         }
 
@@ -1455,7 +1506,25 @@ namespace FyteClub
                 // Cancel all operations first
                 _cancellationTokenSource.Cancel();
                 
-                // Unsubscribe from mod system events
+                // Remove framework handlers immediately
+                _framework.Update -= OnFrameworkUpdate;
+                _pluginInterface.UiBuilder.Draw -= _windowSystem.Draw;
+                _pluginInterface.UiBuilder.OpenConfigUi -= () => _configWindow.Toggle();
+                _commandManager.RemoveHandler(CommandName);
+                _windowSystem.RemoveAllWindows();
+                
+                // Force immediate disposal without waiting
+                try { _turnManager?.Dispose(); } catch { }
+                try { _syncshellManager?.Dispose(); } catch { }
+                try { _modSyncOrchestrator?.Dispose(); } catch { }
+                try { _clientCache?.Dispose(); } catch { }
+                try { _componentCache?.Dispose(); } catch { }
+                try { _syncQueueProcessor?.Dispose(); } catch { }
+                try { _syncProcessingSemaphore?.Dispose(); } catch { }
+                try { _httpClient?.Dispose(); } catch { }
+                try { _cancellationTokenSource.Dispose(); } catch { }
+                
+                // Unsubscribe from mod system events (best effort)
                 try
                 {
                     _penumbraModSettingChanged?.Unsubscribe((string _) => OnModSystemChanged());
@@ -1464,50 +1533,9 @@ namespace FyteClub
                     _heelsOffsetChanged?.Unsubscribe(() => OnModSystemChanged());
                     _honorificChanged?.Unsubscribe(() => OnModSystemChanged());
                 }
-                catch (Exception ex)
-                {
-                    _pluginLog.Warning($"Error unsubscribing from mod events: {ex.Message}");
-                }
-                
-                // Remove framework handlers
-                _framework.Update -= OnFrameworkUpdate;
-                _pluginInterface.UiBuilder.Draw -= _windowSystem.Draw;
-                _pluginInterface.UiBuilder.OpenConfigUi -= () => _configWindow.Toggle();
-                _commandManager.RemoveHandler(CommandName);
-                _windowSystem.RemoveAllWindows();
-                
-                // Dispose components with timeout protection
-                var disposeTask = Task.Run(() =>
-                {
-                    try
-                    {
-                        _turnManager?.Dispose();
-                        _syncshellManager?.Dispose();
-                        _modSyncOrchestrator?.Dispose();
-                        _clientCache?.Dispose();
-                        _componentCache?.Dispose();
-                        _syncQueueProcessor?.Dispose();
-                        _syncProcessingSemaphore?.Dispose();
-                        _httpClient?.Dispose();
-                    }
-                    catch (Exception ex)
-                    {
-                        _pluginLog.Warning($"Error disposing components: {ex.Message}");
-                    }
-                });
-                
-                // Wait max 3 seconds for disposal
-                if (!disposeTask.Wait(3000))
-                {
-                    _pluginLog.Warning("Plugin disposal timed out - some resources may not be cleaned up");
-                }
-                
-                _cancellationTokenSource.Dispose();
+                catch { }
             }
-            catch (Exception ex)
-            {
-                _pluginLog.Error($"Error during plugin disposal: {ex.Message}");
-            }
+            catch { }
         }
 
         // Cache methods
@@ -1515,15 +1543,98 @@ namespace FyteClub
         {
             if (cachedMods != null)
             {
+                // Attempt component-based reconstruction if available
                 if (_componentCache != null && cachedMods.ComponentData != null)
                 {
                     await _componentCache.ApplyComponentToPlayer(playerName, cachedMods.ComponentData);
                 }
-                if (_clientCache != null && cachedMods.RecipeData != null)
+                else if (_componentCache != null)
                 {
-                    await _clientCache.ApplyRecipeToPlayer(playerName, cachedMods.RecipeData);
+                    // Fallback: try reconstructing from any stored recipe for this player
+                    var reconstructed = await _componentCache.GetCachedAppearanceRecipe(playerName);
+                    if (reconstructed != null)
+                    {
+                        await _modSystemIntegration.ApplyPlayerMods(reconstructed, playerName);
+                    }
+                }
+
+                // Fallback to client-cache content if present
+                if (_clientCache != null && (cachedMods.RecipeData != null || (cachedMods.Mods?.Count > 0)))
+                {
+                    await ApplyModsFromClientCache(playerName, cachedMods);
                 }
                 _pluginLog.Info($"Applied cached mods for {playerName}");
+            }
+        }
+
+        // Apply mods using data from the client cache (recipe or reconstructed minimal info)
+        private async Task ApplyModsFromClientCache(string playerName, CachedPlayerMods cachedMods)
+        {
+            try
+            {
+                // Prefer full AdvancedPlayerInfo if available
+                if (cachedMods.RecipeData is AdvancedPlayerInfo apiInfo)
+                {
+                    await _modSystemIntegration.ApplyPlayerMods(apiInfo, playerName);
+                    return;
+                }
+
+                // If RecipeData is JSON, try to deserialize to AdvancedPlayerInfo
+                if (cachedMods.RecipeData is System.Text.Json.JsonElement jsonElement)
+                {
+                    try
+                    {
+                        var deserialized = jsonElement.Deserialize<AdvancedPlayerInfo>(new System.Text.Json.JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true
+                        });
+                        if (deserialized != null)
+                        {
+                            await _modSystemIntegration.ApplyPlayerMods(deserialized, playerName);
+                            return;
+                        }
+                    }
+                    catch { /* ignore and continue to fallback */ }
+                }
+                else if (cachedMods.RecipeData is string jsonStr && !string.IsNullOrWhiteSpace(jsonStr))
+                {
+                    try
+                    {
+                        var deserialized = System.Text.Json.JsonSerializer.Deserialize<AdvancedPlayerInfo>(jsonStr, new System.Text.Json.JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true
+                        });
+                        if (deserialized != null)
+                        {
+                            await _modSystemIntegration.ApplyPlayerMods(deserialized, playerName);
+                            return;
+                        }
+                    }
+                    catch { /* ignore and continue to fallback */ }
+                }
+
+                // Minimal fallback: use cached mod names (may be limited if paths are unknown)
+                if (cachedMods.Mods != null && cachedMods.Mods.Count > 0)
+                {
+                    var minimal = new AdvancedPlayerInfo
+                    {
+                        PlayerName = playerName,
+                        Mods = cachedMods.Mods
+                            .Select(m => m.ModInfo?.ModName)
+                            .Where(n => !string.IsNullOrEmpty(n))
+                            .Distinct()
+                            .ToList()!
+                    };
+
+                    await _modSystemIntegration.ApplyPlayerMods(minimal, playerName);
+                    return;
+                }
+
+                _pluginLog.Debug($"Client-cache had no usable recipe for {playerName}");
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"Client-cache apply failed for {playerName}: {ex.Message}");
             }
         }
 
@@ -1642,7 +1753,10 @@ namespace FyteClub
             if (_componentCache != null)
             {
                 var componentStats = _componentCache.GetCacheStats();
-                parts.Add($"Components: {componentStats.ComponentCount}, Recipes: {componentStats.RecipeCount}");
+                // Prefer new naming TotalComponents/TotalRecipes, fallback to legacy if zeros
+                var components = componentStats.TotalComponents != 0 ? componentStats.TotalComponents : componentStats.ComponentCount;
+                var recipes = componentStats.TotalRecipes != 0 ? componentStats.TotalRecipes : componentStats.RecipeCount;
+                parts.Add($"Components: {components}, Recipes: {recipes}");
             }
             
             return string.Join(" | ", parts);
@@ -1758,8 +1872,25 @@ namespace FyteClub
             }
         }
         
-        private void WireUpP2PMessageHandling(string syncshellId)
+        public void WireUpP2PMessageHandling(string syncshellId)
         {
+            _pluginLog.Info($"[P2P] ✅ Wiring up message handling for syncshell {syncshellId}");
+            
+            // Set local player name for filtering
+            var localPlayerName = _clientState.LocalPlayer?.Name?.TextValue;
+            if (!string.IsNullOrEmpty(localPlayerName))
+            {
+                _syncshellManager.SetLocalPlayerName(localPlayerName);
+            }
+            
+            // Wire up the SyncshellManager event handler (only once)
+            _syncshellManager.WireUpModDataHandler(async (playerName, modData) => {
+                _pluginLog.Info($"[P2P] 🎯 EVENT FIRED: Processing mod data for: {playerName}");
+                _pluginLog.Info($"[P2P] 🎯 EVENT FIRED: ModData type: {modData.ValueKind}, Raw text length: {modData.GetRawText().Length}");
+                await ProcessReceivedModData(playerName, modData);
+            });
+            
+            // Also try to wire up RobustWebRTCConnection events if available
             var connection = _syncshellManager.GetWebRTCConnection(syncshellId);
             if (connection is RobustWebRTCConnection robustConnection)
             {
@@ -1772,62 +1903,134 @@ namespace FyteClub
                     SaveConfiguration();
                 };
                 
-                robustConnection.OnModDataReceived += async (playerName, modData) => {
-                    _pluginLog.Info($"[P2P] Processing mod data for: {playerName}");
-                    await ProcessReceivedModData(playerName, modData);
-                };
+                _pluginLog.Info($"[P2P] 🎯 IMMEDIATE: RobustWebRTCConnection events wired up for syncshell {syncshellId}");
             }
+            
+            _pluginLog.Info($"[P2P] ✅ Message handling successfully wired up for syncshell {syncshellId}");
         }
         
         private async Task ProcessReceivedModData(string playerName, JsonElement modData)
         {
             try
             {
-                // Extract mod components
-                var mods = modData.TryGetProperty("mods", out var modsProperty) ? 
-                    modsProperty.EnumerateArray().Select(m => m.GetString()).Where(s => !string.IsNullOrEmpty(s)).ToList() : 
-                    new List<string>();
-                    
+                _pluginLog.Info($"🎯 [P2P MOD PROCESSING] Processing received mod data for {playerName}");
+                _pluginLog.Info($"🎯 [P2P MOD PROCESSING] Raw JSON size: {modData.GetRawText().Length} characters");
+                
+                // Log the structure of the received data
+                _pluginLog.Info($"🎯 [P2P MOD PROCESSING] JSON properties available:");
+                foreach (var property in modData.EnumerateObject())
+                {
+                    var valueType = property.Value.ValueKind.ToString();
+                    var valuePreview = property.Value.ValueKind == JsonValueKind.Array ? 
+                        $"Array[{property.Value.GetArrayLength()}]" : 
+                        property.Value.ToString();
+                    if (valuePreview.Length > 50) valuePreview = valuePreview[..50] + "...";
+                    _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   - {property.Name}: {valueType} = {valuePreview}");
+                }
+                
+                // Extract mod components with detailed logging
+                var mods = new List<string>();
+                if (modData.TryGetProperty("mods", out var modsProperty))
+                {
+                    _pluginLog.Info($"🎯 [P2P MOD PROCESSING] Found 'mods' property with {modsProperty.GetArrayLength()} items");
+                    var modIndex = 0;
+                    foreach (var mod in modsProperty.EnumerateArray())
+                    {
+                        var modPath = mod.GetString();
+                        if (!string.IsNullOrEmpty(modPath))
+                        {
+                            mods.Add(modPath);
+                            if (modIndex < 5) // Log first 5 mods for debugging
+                            {
+                                _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   [{modIndex}]: {modPath}");
+                            }
+                        }
+                        else
+                        {
+                            _pluginLog.Warning($"🎯 [P2P MOD PROCESSING] Empty mod path at index {modIndex}");
+                        }
+                        modIndex++;
+                    }
+                    if (mods.Count > 5)
+                    {
+                        _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   ... and {mods.Count - 5} more mods");
+                    }
+                }
+                else
+                {
+                    _pluginLog.Warning($"🎯 [P2P MOD PROCESSING] No 'mods' property found in received data");
+                }
+                
                 var glamourerDesign = modData.TryGetProperty("glamourerDesign", out var glamProperty) ? 
                     glamProperty.GetString() : null;
+                    
+                var customizePlusProfile = modData.TryGetProperty("customizePlusProfile", out var customizeProperty) ? 
+                    customizeProperty.GetString() : null;
+                    
+                var simpleHeelsOffset = modData.TryGetProperty("simpleHeelsOffset", out var heelsProperty) ? 
+                    (float?)heelsProperty.GetSingle() : null;
+                    
+                var honorificTitle = modData.TryGetProperty("honorificTitle", out var honorificProperty) ? 
+                    honorificProperty.GetString() : null;
                     
                 var outfitHash = modData.TryGetProperty("outfitHash", out var hashProperty) ? 
                     hashProperty.GetString() : null;
                 
-                // Create player info
+                _pluginLog.Info($"🎯 [P2P MOD PROCESSING] EXTRACTION SUMMARY for {playerName}:");
+                _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   - Mods extracted: {mods.Count}");
+                _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   - Glamourer: {!string.IsNullOrEmpty(glamourerDesign)}");
+                _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   - Customize+: {!string.IsNullOrEmpty(customizePlusProfile)}");
+                _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   - Heels: {simpleHeelsOffset}");
+                _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   - Honorific: {!string.IsNullOrEmpty(honorificTitle)}");
+                _pluginLog.Info($"🎯 [P2P MOD PROCESSING]   - Hash: {outfitHash?[..8] ?? "none"}");
+                
+                // Create comprehensive player inforehensive player info
                 var playerInfo = new AdvancedPlayerInfo
                 {
                     PlayerName = playerName,
                     Mods = mods,
-                    GlamourerDesign = glamourerDesign
+                    GlamourerData = glamourerDesign,
+                    CustomizePlusData = customizePlusProfile,
+                    SimpleHeelsOffset = simpleHeelsOffset,
+                    HonorificTitle = honorificTitle
                 };
                 
                 // Store in caches
                 if (_componentCache != null && !string.IsNullOrEmpty(outfitHash))
                 {
                     await _componentCache.StoreAppearanceRecipe(playerName, outfitHash, playerInfo);
+                    _pluginLog.Info($"[P2P] Stored appearance recipe in component cache for {playerName}");
                 }
                 
                 if (_clientCache != null)
                 {
                     _clientCache.UpdateRecipeForPlayer(playerName, playerInfo);
+                    _pluginLog.Info($"[P2P] Updated client cache for {playerName}");
                 }
                 
-                // Apply mods and redraw
+                // Apply mods with enhanced logging
+                _pluginLog.Info($"🎯 [P2P MOD PROCESSING] Applying mods to {playerName} via mod integration system...");
                 var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, playerName);
                 if (success)
                 {
-                    _pluginLog.Info($"[P2P] Applied and cached mods for: {playerName}");
+                    _pluginLog.Info($"🎯 [P2P MOD PROCESSING] ✅ Successfully applied and cached mods for: {playerName}");
                     _loadingStates[playerName] = LoadingState.Complete;
                     _recentlySyncedUsers.TryAdd(playerName, 0);
+                    SaveConfiguration(); // Save to persist recently synced users
                     
                     // Trigger redraw
+                    _pluginLog.Info($"🎯 [P2P MOD PROCESSING] Triggering character redraw for {playerName}");
                     _redrawCoordinator.RedrawCharacterIfFound(playerName);
+                }
+                else
+                {
+                    _pluginLog.Warning($"🎯 [P2P MOD PROCESSING] ❌ Failed to apply mods for {playerName} - mod integration returned false");
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"[P2P] Failed to process mod data for {playerName}: {ex.Message}");
+                _pluginLog.Error($"🎯 [P2P MOD PROCESSING] Failed to process mod data for {playerName}: {ex.Message}");
+                _pluginLog.Error($"🎯 [P2P MOD PROCESSING] Stack trace: {ex.StackTrace}");
             }
         }
 
@@ -1852,6 +2055,11 @@ namespace FyteClub
         private string _turnTestStatus = "";
         private bool _isTurnTesting = false;
         private Vector4 _turnStatusColor = new(1, 1, 1, 1);
+        private bool _showSetupGuide = false;
+        private string _localIP = "";
+        private string _routerIP = "";
+        private string _portInputText = "";
+
 
         public ConfigWindow(FyteClubPlugin plugin) : base("FyteClub - P2P Mod Sharing")
         {
@@ -1864,6 +2072,8 @@ namespace FyteClub
             
             _enableTurnHosting = _plugin._turnManager.IsHostingEnabled;
         }
+        
+
 
         public override void Draw()
         {
@@ -1963,12 +2173,23 @@ namespace FyteClub
                                     // Wait a moment for WebRTC processing to complete
                                     await Task.Delay(1000);
                                     
-                                    // Answer code handling removed - using Nostr signaling
+                                                    // Answer code handling removed - using Nostr signaling
                                     
                                     // Establish initial P2P connection with host
                                     _plugin._pluginLog.Info($"About to establish P2P connection with code: {capturedCode}");
                                     await _plugin.EstablishInitialP2PConnection(capturedCode);
                                     _plugin._pluginLog.Info("P2P connection establishment completed");
+                                    
+                                    // Wire up P2P message handling after connection is established
+                                    var syncshells = _plugin.GetSyncshells();
+                                    var joinedSyncshell = syncshells.LastOrDefault();
+                                    if (joinedSyncshell != null)
+                                    {
+                                        _plugin._pluginLog.Info($"[P2P] Wiring up message handling for joined syncshell {joinedSyncshell.Id}");
+                                        // Wait a moment for WebRTC connection to be fully established
+                                        await Task.Delay(2000);
+                                        _plugin.WireUpP2PMessageHandling(joinedSyncshell.Id);
+                                    }
                                     break;
                                 case JoinResult.AlreadyJoined:
                                     _plugin._pluginLog.Info("You are already in this syncshell");
@@ -2016,7 +2237,7 @@ namespace FyteClub
                 {
                     try
                     {
-                        var testConnection = WebRTCConnectionFactory.CreateConnectionAsync(_turnManager).Result;
+                        var testConnection = WebRTCConnectionFactory.CreateConnectionAsync(_plugin._turnManager).Result;
                         testConnection.Dispose();
                         _webrtcAvailable = true;
                     }
@@ -2182,7 +2403,147 @@ namespace FyteClub
         private void DrawCacheTab()
         {
             ImGui.Text("Cache Statistics:");
-            ImGui.Text(_plugin.GetCacheStatsDisplay());
+
+            // Build display from actual cache instances
+            var clientStats = _plugin.ClientCache?.GetCacheStats();
+            var compSummary = _plugin.ComponentCache != null ? _componentCacheSummary() : "Component cache not initialized";
+
+            if (clientStats != null)
+            {
+                ImGui.Text($"Players: {clientStats.TotalPlayers}");
+                ImGui.Text($"Mods: {clientStats.TotalMods}");
+                ImGui.Text($"Size: {clientStats.TotalSizeBytes / 1024.0 / 1024.0:0.##} MB");
+                ImGui.Text($"Hit Rate: {clientStats.CacheHitRate:P0}");
+            }
+            else
+            {
+                ImGui.Text("Client cache not initialized");
+            }
+
+            ImGui.Text(compSummary);
+
+            // ---- Per-player cache view ----
+            ImGui.Separator();
+            ImGui.Text("Per-Player Cache:");
+            if (_plugin.ClientCache != null)
+            {
+                // Lazy init UI state
+                _playerFilter ??= string.Empty;
+                _selectedPlayer ??= string.Empty;
+
+                ImGui.InputText("Filter##playerCacheFilter", ref _playerFilter, 100);
+                ImGui.SameLine();
+                ImGui.Text("Sort by:");
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(140);
+                var sortLabels = new string[] { "Updated", "Size", "Mods", "Player" };
+                ImGui.Combo("##playerSort", ref _playerSortIndex, sortLabels, sortLabels.Length);
+                ImGui.SameLine();
+                ImGui.Checkbox("Desc", ref _playerSortDesc);
+                var summaries = _plugin.ClientCache.GetPlayerSummaries();
+                if (!string.IsNullOrEmpty(_playerFilter))
+                {
+                    summaries = summaries
+                        .Where(s => s.PlayerId.Contains(_playerFilter, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                }
+                // Apply sort
+                IOrderedEnumerable<FyteClub.ClientModCache.PlayerCacheSummary> ordered = _playerSortIndex switch
+                {
+                    1 => (_playerSortDesc ? summaries.OrderByDescending(s => s.TotalSizeBytes) : summaries.OrderBy(s => s.TotalSizeBytes)),
+                    2 => (_playerSortDesc ? summaries.OrderByDescending(s => s.ModCount) : summaries.OrderBy(s => s.ModCount)),
+                    3 => (_playerSortDesc ? summaries.OrderByDescending(s => s.PlayerId) : summaries.OrderBy(s => s.PlayerId)),
+                    _ => (_playerSortDesc ? summaries.OrderByDescending(s => s.LastUpdated) : summaries.OrderBy(s => s.LastUpdated)),
+                };
+
+                if (ImGui.BeginTable("PlayerCacheTable", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable))
+                {
+                    ImGui.TableSetupColumn("Player");
+                    ImGui.TableSetupColumn("Mods");
+                    ImGui.TableSetupColumn("Size (MB)");
+                    ImGui.TableSetupColumn("Last Updated");
+                    ImGui.TableSetupColumn("Actions");
+                    ImGui.TableHeadersRow();
+
+                    foreach (var s in ordered)
+                    {
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        if (ImGui.Selectable(s.PlayerId, _selectedPlayer == s.PlayerId))
+                        {
+                            _selectedPlayer = s.PlayerId;
+                        }
+                        ImGui.TableNextColumn();
+                        ImGui.Text(s.ModCount.ToString());
+                        ImGui.TableNextColumn();
+                        ImGui.Text($"{s.TotalSizeBytes / 1024.0 / 1024.0:0.##}");
+                        ImGui.TableNextColumn();
+                        ImGui.Text(s.LastUpdated.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
+                        ImGui.TableNextColumn();
+                        if (ImGui.SmallButton($"Clear##{s.PlayerId}"))
+                        {
+                            var pid = s.PlayerId; // capture
+                            _ = Task.Run(async () => await _plugin.ClientCache.ClearPlayerCache(pid));
+                        }
+                    }
+                    ImGui.EndTable();
+                }
+
+                // Details panel
+                if (!string.IsNullOrEmpty(_selectedPlayer))
+                {
+                    var detail = _plugin.ClientCache.GetPlayerDetail(_selectedPlayer);
+                    if (detail != null)
+                    {
+                        ImGui.Separator();
+                        ImGui.Text($"Details for {_selectedPlayer} (mods: {detail.Mods.Count})");
+
+                        if (ImGui.BeginTable("PlayerDetailTable", 7, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable))
+                        {
+                            ImGui.TableSetupColumn("Name");
+                            ImGui.TableSetupColumn("Hash");
+                            ImGui.TableSetupColumn("Size (KB)");
+                            ImGui.TableSetupColumn("First Seen");
+                            ImGui.TableSetupColumn("Last Accessed");
+                            ImGui.TableSetupColumn("Refs");
+                            ImGui.TableSetupColumn("Config");
+                            ImGui.TableHeadersRow();
+
+                            foreach (var m in detail.Mods.OrderByDescending(m => m.LastAccessed))
+                            {
+                                ImGui.TableNextRow();
+                                ImGui.TableNextColumn(); ImGui.Text(m.Name);
+                                ImGui.TableNextColumn();
+                                ImGui.Text(m.ContentHash);
+                                ImGui.SameLine();
+                                if (ImGui.SmallButton($"Copy##{m.ContentHash}"))
+                                {
+                                    ImGui.SetClipboardText(m.ContentHash);
+                                }
+                                ImGui.TableNextColumn(); ImGui.Text($"{m.Size / 1024.0:0.##}");
+                                ImGui.TableNextColumn(); ImGui.Text(m.FirstSeen.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
+                                ImGui.TableNextColumn(); ImGui.Text(m.LastAccessed.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
+                                ImGui.TableNextColumn(); ImGui.Text(m.ReferenceCount.ToString());
+                                ImGui.TableNextColumn(); ImGui.Text(m.HasConfig ? "Yes" : "No");
+                            }
+                            ImGui.EndTable();
+                        }
+        
+                        // Export helpers
+                        if (ImGui.SmallButton("Copy Player Detail JSON"))
+                        {
+                            var json = _plugin.ClientCache.GetPlayerDetailJson(_selectedPlayer);
+                            ImGui.SetClipboardText(json);
+                        }
+                        ImGui.SameLine();
+                        if (ImGui.SmallButton("Copy Minimal Recipe"))
+                        {
+                            var recipe = _plugin.ClientCache.GetPlayerRecipeJson(_selectedPlayer) ?? "{}";
+                            ImGui.SetClipboardText(recipe);
+                        }
+                    }
+                }
+            }
             
             ImGui.Separator();
             if (ImGui.Button("Log Cache Stats"))
@@ -2207,8 +2568,11 @@ namespace FyteClub
                 ImGui.Text("Are you sure you want to clear all cached mod data?");
                 if (ImGui.Button("Yes"))
                 {
-                    _plugin.ClientCache?.ClearAllCache();
-                    _plugin.ComponentCache?.ClearAllCache();
+                    _ = Task.Run(async () =>
+                    {
+                        await (_plugin.ClientCache?.ClearAllCache() ?? Task.CompletedTask);
+                        await (_plugin.ComponentCache?.ClearAllCache() ?? Task.CompletedTask);
+                    });
                     ImGui.CloseCurrentPopup();
                 }
                 ImGui.SameLine();
@@ -2217,6 +2581,48 @@ namespace FyteClub
                     ImGui.CloseCurrentPopup();
                 }
                 ImGui.EndPopup();
+            }
+        }
+
+        // UI state for cache tab
+        private string _playerFilter = string.Empty;
+        private string _selectedPlayer = string.Empty;
+        private int _playerSortIndex = 0; // 0=Updated,1=Size,2=Mods,3=Player
+        private bool _playerSortDesc = true;
+
+        private string _componentCacheSummary()
+        {
+            try
+            {
+                var stats = _plugin.ComponentCache?.GetStats();
+                if (stats == null) return "Component cache not initialized";
+                return $"Components: {stats.TotalComponents}, Recipes: {stats.TotalRecipes}, Size: {stats.TotalSizeBytes / 1024.0 / 1024.0:0.##} MB";
+            }
+            catch
+            {
+                return "Component cache stats unavailable";
+            }
+        }
+
+        private void LogCacheStatistics()
+        {
+            try
+            {
+                var client = _plugin.ClientCache?.GetCacheStats();
+                if (client != null)
+                {
+                    _plugin._pluginLog.Info($"[Cache] Players={client.TotalPlayers}, Mods={client.TotalMods}, Size={client.TotalSizeBytes} bytes, HitRate={client.CacheHitRate:P2}");
+                }
+
+                var comp = _plugin.ComponentCache?.GetStats();
+                if (comp != null)
+                {
+                    _plugin._pluginLog.Info($"[ComponentCache] Components={comp.TotalComponents}, Recipes={comp.TotalRecipes}, Size={comp.TotalSizeBytes} bytes");
+                }
+            }
+            catch (Exception ex)
+            {
+                _plugin._pluginLog.Warning($"Failed to log cache statistics: {ex.Message}");
             }
         }
         
@@ -2249,13 +2655,82 @@ namespace FyteClub
             // Update state from manager
             _enableTurnHosting = turnManager.IsHostingEnabled;
             
+            // Port configuration
+            var config = _plugin.GetConfiguration();
+            var configuredPort = config.TurnServerPort;
+            var runningPort = turnManager.LocalServer?.Port;
+            
+            ImGui.Text($"Configured Port: {configuredPort}");
+            if (runningPort.HasValue && runningPort != configuredPort)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(new Vector4(1, 0.6f, 0.2f, 1), $"(Running: {runningPort})");
+            }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Change Port"))
+            {
+                ImGui.OpenPopup("Configure Port");
+                _portInputText = configuredPort.ToString();
+            }
+            
+            if (ImGui.BeginPopup("Configure Port"))
+            {
+                ImGui.Text("Enter port number:");
+                ImGui.InputText("##port", ref _portInputText, 10);
+                
+                ImGui.SameLine();
+                if (ImGui.Button("Apply"))
+                {
+                    if (int.TryParse(_portInputText, out var newPort) && newPort >= 1024 && newPort <= 65535)
+                    {
+                        _plugin.UpdateTurnServerPort(newPort);
+                        
+                        // Restart TURN hosting if currently enabled
+                        if (turnManager.IsHostingEnabled)
+                        {
+                            _ = Task.Run(async () => {
+                                turnManager.DisableHosting();
+                                await Task.Delay(500);
+                                await turnManager.EnableHostingAsync(newPort);
+                                _plugin._pluginLog.Info($"[TURN] Restarted hosting on new port {newPort}");
+                            });
+                        }
+                        else
+                        {
+                            _plugin._pluginLog.Info($"[TURN] Port changed to {newPort} - will use on next hosting start");
+                        }
+                        
+                        ImGui.CloseCurrentPopup();
+                    }
+                    else
+                    {
+                        _plugin._pluginLog.Warning($"[TURN] Invalid port: {_portInputText}. Must be 1024-65535");
+                    }
+                }
+                
+                ImGui.Spacing();
+                ImGui.TextWrapped("Recommended ranges:");
+                ImGui.BulletText("47000-49999: Gaming/P2P applications");
+                ImGui.BulletText("Avoid: 49152-65535 (Windows ephemeral)");
+                
+                if (ImGui.Button("Use Smart Default (49000)"))
+                {
+                    _portInputText = "49000";
+                }
+                
+                ImGui.EndPopup();
+            }
+            
+            ImGui.Spacing();
+            
             // Hosting controls
             if (ImGui.Checkbox("Enable Routing Server", ref _enableTurnHosting))
             {
                 _ = Task.Run(async () => {
                     if (_enableTurnHosting)
                     {
-                        var success = await turnManager.EnableHostingAsync();
+                        var config = _plugin.GetConfiguration();
+                        var success = await turnManager.EnableHostingAsync(config.TurnServerPort);
                         if (!success)
                         {
                             _enableTurnHosting = false;
@@ -2329,35 +2804,129 @@ namespace FyteClub
                 {
                     _ = Task.Run(async () => {
                         _isTurnTesting = true;
-                        _turnTestStatus = "Testing local port availability...";
+                        _turnTestStatus = "Running comprehensive connectivity test...";
                         _turnStatusColor = new Vector4(1, 1, 0.3f, 1);
+                        
+                        var results = new List<string>();
+                        var hasErrors = false;
                         
                         try
                         {
-                            // Test local port availability
-                            using var udpTest = new System.Net.Sockets.UdpClient(3478);
-                            _turnTestStatus = "Testing external connectivity...";
+                            var testPort = turnManager.LocalServer?.Port ?? 49878;
+                            var server = turnManager.LocalServer;
                             
-                            // Test external connectivity using TURN server's method
-                            var testServer = new FyteClub.TURN.SyncshellTurnServer(_plugin._pluginLog);
-                            var isExternallyAccessible = await testServer.TestExternalConnectivity();
-                            testServer.Dispose();
-                            
-                            if (isExternallyAccessible)
+                            // 1. Check if TURN server is enabled
+                            if (!turnManager.IsHostingEnabled)
                             {
-                                _turnTestStatus = "✅ Full connectivity test passed - ready to host!";
-                                _turnStatusColor = new Vector4(0.3f, 1, 0.3f, 1);
+                                results.Add("❌ TURN hosting is disabled");
+                                hasErrors = true;
                             }
                             else
                             {
-                                _turnTestStatus = "⚠️ Local port OK, but external access may be blocked\nCheck router port forwarding for UDP 3478";
+                                results.Add("✅ TURN hosting is enabled");
+                            }
+                            
+                            // 2. Check if server is running
+                            if (server == null)
+                            {
+                                results.Add("❌ TURN server is not running");
+                                hasErrors = true;
+                            }
+                            else
+                            {
+                                results.Add($"✅ TURN server running on port {server.Port}");
+                                results.Add($"✅ External IP detected: {server.ExternalIP}");
+                            }
+                            
+                            // 3. Check if port is actually listening
+                            var isListening = false;
+                            try
+                            {
+                                var process = new System.Diagnostics.Process
+                                {
+                                    StartInfo = new System.Diagnostics.ProcessStartInfo
+                                    {
+                                        FileName = "netstat",
+                                        Arguments = "-an",
+                                        UseShellExecute = false,
+                                        RedirectStandardOutput = true,
+                                        CreateNoWindow = true
+                                    }
+                                };
+                                process.Start();
+                                var output = await process.StandardOutput.ReadToEndAsync();
+                                process.WaitForExit();
+                                
+                                if (output.Contains($"UDP    0.0.0.0:{testPort}") || output.Contains($"UDP    *:{testPort}"))
+                                {
+                                    results.Add($"✅ Port {testPort} is listening locally");
+                                    isListening = true;
+                                }
+                                else
+                                {
+                                    results.Add($"❌ Port {testPort} is NOT listening locally");
+                                    hasErrors = true;
+                                }
+                            }
+                            catch
+                            {
+                                results.Add("⚠️ Could not check if port is listening");
+                            }
+                            
+                            // 4. Test TURN server response
+                            if (isListening && server != null)
+                            {
+                                try
+                                {
+                                    using var testClient = new System.Net.Sockets.UdpClient();
+                                    testClient.Client.ReceiveTimeout = 3000;
+                                    
+                                    // Send STUN binding request to our own server
+                                    var stunRequest = new byte[] { 0x00, 0x01, 0x00, 0x00, 0x21, 0x12, 0xA4, 0x42, 
+                                                                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+                                                                 0x00, 0x00, 0x00, 0x00 };
+                                    
+                                    await testClient.SendAsync(stunRequest, stunRequest.Length, "127.0.0.1", server.Port);
+                                    var response = await testClient.ReceiveAsync();
+                                    
+                                    if (response.Buffer.Length >= 20 && response.Buffer[0] == 0x01 && response.Buffer[1] == 0x01)
+                                    {
+                                        results.Add("✅ TURN server responding to STUN requests");
+                                    }
+                                    else
+                                    {
+                                        results.Add($"⚠️ TURN server response invalid (got {response.Buffer.Length} bytes)");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    results.Add($"❌ TURN server not responding: {ex.Message}");
+                                    hasErrors = true;
+                                }
+                                
+                                results.Add($"💡 Manual external test: https://www.ipvoid.com/udp-port-scan/");
+                                results.Add($"   IP: {server.ExternalIP} Port: {server.Port}");
+                            }
+                            
+                            // 5. Summary
+                            if (!hasErrors && isListening)
+                            {
+                                results.Add("✅ All local checks passed! Your TURN server is working.");
+                                results.Add("💡 If WebRTC still fails, check router port forwarding.");
+                                _turnStatusColor = new Vector4(0.3f, 1, 0.3f, 1);
+                            }
+                            else if (hasErrors)
+                            {
+                                results.Add("❌ Issues found - check setup guide below");
+                                _turnStatusColor = new Vector4(1, 0.3f, 0.3f, 1);
+                            }
+                            else
+                            {
+                                results.Add("⚠️ Partial success - may need router configuration");
                                 _turnStatusColor = new Vector4(1, 0.6f, 0.2f, 1);
                             }
-                        }
-                        catch (System.Net.Sockets.SocketException)
-                        {
-                            _turnTestStatus = "❌ Port 3478 is not available or blocked locally";
-                            _turnStatusColor = new Vector4(1, 0.3f, 0.3f, 1);
+                            
+                            _turnTestStatus = string.Join("\n", results);
                         }
                         catch (Exception ex)
                         {
@@ -2372,19 +2941,110 @@ namespace FyteClub
                 }
             }
             
+            
+            
             ImGui.SameLine();
+            if (ImGui.Button("Setup Guide"))
+            {
+                _showSetupGuide = !_showSetupGuide;
+            }
+            
             if (_isTurnTesting)
             {
+                ImGui.SameLine();
                 ImGui.TextColored(new Vector4(1, 1, 0.3f, 1), "Testing...");
             }
-            else if (!string.IsNullOrEmpty(_turnTestStatus))
+            
+            if (!string.IsNullOrEmpty(_turnTestStatus))
             {
-                ImGui.TextWrapped(_turnTestStatus);
-                if (_turnTestStatus.Contains("port forwarding"))
+                ImGui.Spacing();
+                ImGui.TextColored(_turnStatusColor, _turnTestStatus);
+            }
+            
+            if (_showSetupGuide)
+            {
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.TextColored(new Vector4(1, 1, 0.3f, 1), "🔧 Complete Setup Guide");
+                
+                var port = turnManager.LocalServer?.Port ?? 49878;
+                
+                // Get network info
+                if (string.IsNullOrEmpty(_localIP) || string.IsNullOrEmpty(_routerIP))
                 {
-                    ImGui.Spacing();
-                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 1, 1), 
-                        "💡 Tip: Forward UDP port 3478 to this PC's IP in your router settings");
+                    try
+                    {
+                        var host = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName());
+                        _localIP = host.AddressList.FirstOrDefault(ip => ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)?.ToString() ?? "192.168.1.100";
+                        
+                        // Get actual default gateway
+                        foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                        {
+                            if (ni.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up && ni.NetworkInterfaceType != System.Net.NetworkInformation.NetworkInterfaceType.Loopback)
+                            {
+                                var gateway = ni.GetIPProperties().GatewayAddresses.FirstOrDefault()?.Address;
+                                if (gateway != null && gateway.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                                {
+                                    _routerIP = gateway.ToString();
+                                    break;
+                                }
+                            }
+                        }
+                        if (string.IsNullOrEmpty(_routerIP)) _routerIP = "192.168.1.1"; // fallback
+                    }
+                    catch { _localIP = "192.168.1.100"; _routerIP = "192.168.1.1"; }
+                }
+                
+                ImGui.Text("Step 1: Fix Windows Firewall");
+                ImGui.BulletText("Press Win+R, type 'cmd', press Ctrl+Shift+Enter (run as admin)");
+                ImGui.BulletText("Copy and paste these commands:");
+                
+                var commands = $"netsh advfirewall firewall add rule name=\"FyteClub {port}\" dir=in action=allow protocol=UDP localport={port}";
+                
+                if (ImGui.Button("Copy Firewall Commands"))
+                {
+                    ImGui.SetClipboardText(commands);
+                }
+                ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "(copied to clipboard)");
+                
+                ImGui.Spacing();
+                ImGui.Text("Step 2: Configure Router Port Forwarding");
+                ImGui.BulletText($"Open your router admin page: http://{_routerIP}");
+                if (ImGui.Button($"Copy Router Address: {_routerIP}"))
+                {
+                    ImGui.SetClipboardText(_routerIP);
+                }
+                ImGui.BulletText("Login (usually admin/admin or check router label)");
+                ImGui.BulletText("Find 'Port Forwarding' settings (usually in Advanced section)");
+                ImGui.BulletText("On Netgear Orbi: look for 'Add Custom Service' button");
+                ImGui.BulletText($"Forward UDP port {port} to your PC: {_localIP}");
+                
+                if (ImGui.Button($"Copy Your PC IP: {_localIP}"))
+                {
+                    ImGui.SetClipboardText(_localIP);
+                }
+                ImGui.SameLine();
+                if (ImGui.Button($"Copy Port: {port}"))
+                {
+                    ImGui.SetClipboardText(port.ToString());
+                }
+                
+                ImGui.Spacing();
+                ImGui.TextColored(new Vector4(0.3f, 1, 0.3f, 1), "Step 3: Test Connection");
+                ImGui.BulletText("Click 'Test Connectivity' button above after completing steps 1-2");
+                
+                ImGui.Spacing();
+                ImGui.TextColored(new Vector4(1, 0.6f, 0.2f, 1), "Still blocked? Try these:");
+                ImGui.BulletText("Restart your router after adding port forwarding");
+                ImGui.BulletText("Check if your ISP blocks incoming connections (CGNAT)");
+                ImGui.BulletText("Try disabling Windows Defender temporarily");
+                ImGui.BulletText("Some routers need 'Enable' checkbox for port forwarding rules");
+                
+                ImGui.Spacing();
+                if (ImGui.Button("Hide Guide"))
+                {
+                    _showSetupGuide = false;
                 }
             }
             
@@ -2411,8 +3071,7 @@ namespace FyteClub
                 }
                 else
                 {
-                    ImGui.TextColored(new Vector4(1, 1, 0.3f, 1), 
-                        "💡 Encourage friends to enable hosting for better connectivity");
+                    ImGui.TextColored(new Vector4(1, 1, 0.3f, 1), "No other routing servers detected yet");
                 }
             }
             else
@@ -2433,7 +3092,7 @@ namespace FyteClub
         public List<string> BlockedUsers { get; set; } = new();
         public List<string> RecentlySyncedUsers { get; set; } = new();
         public bool EnableTurnHosting { get; set; } = false;
-        public int TurnServerPort { get; set; } = 3478;
+        public int TurnServerPort { get; set; } = 49000; // Default to safe range
     }
 
     public class PlayerSnapshot

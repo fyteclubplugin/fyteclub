@@ -19,12 +19,12 @@ namespace FyteClub.TURN
             _pluginLog = pluginLog;
         }
 
-        public async Task<bool> EnableHostingAsync()
+        public async Task<bool> EnableHostingAsync(int preferredPort = 49000)
         {
             if (IsHostingEnabled) return true;
 
             LocalServer = new SyncshellTurnServer(_pluginLog);
-            var success = await LocalServer.StartAsync();
+            var success = await LocalServer.StartAsync(preferredPort);
             
             if (success)
             {

@@ -39,6 +39,7 @@ namespace FyteClub.WebRTC
         {
             if (_clients.Count > 0) return;
 
+            var connectedCount = 0;
             foreach (var relay in _relays)
             {
                 try
@@ -47,16 +48,34 @@ namespace FyteClub.WebRTC
                     
                     client.EventsReceived += (sender, payload) =>
                     {
-                        // payload is (string subscriptionId, NostrEvent[] events)
-                        var (_, evs) = payload;
-                        foreach (var ev in evs)
+                        try
                         {
-                            ProcessEvent(ev);
+                            var (_, evs) = payload;
+                            foreach (var ev in evs)
+                            {
+                                ProcessEvent(ev);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _log?.Warning($"[NNostr] Error processing events from {relay}: {ex.Message}");
                         }
                     };
 
-                    await client.ConnectAndWaitUntilConnected();
+                    // Add connection timeout and retry
+                    var connectTask = client.ConnectAndWaitUntilConnected();
+                    var timeoutTask = Task.Delay(5000); // 5 second timeout
+                    
+                    if (await Task.WhenAny(connectTask, timeoutTask) == timeoutTask)
+                    {
+                        _log?.Warning($"[NNostr] Connection timeout to {relay}");
+                        client.Dispose();
+                        continue;
+                    }
+                    
+                    await connectTask; // Ensure connection completed successfully
                     _clients.Add(client);
+                    connectedCount++;
                     _log?.Info($"[NNostr] Connected to {relay}");
                 }
                 catch (Exception ex)
@@ -65,15 +84,22 @@ namespace FyteClub.WebRTC
                 }
             }
 
-            if (_clients.Count == 0)
+            if (connectedCount == 0)
             {
                 throw new InvalidOperationException("No Nostr relays available");
             }
-            _log?.Info($"[NNostr] Connected to {_clients.Count}/{_relays.Length} relays");
+            _log?.Info($"[NNostr] Connected to {connectedCount}/{_relays.Length} relays");
         }
+
+        // Expose a public start to ensure relay connections before publish/subscribe
+        public Task StartAsync() => EnsureStartedAsync();
 
         private void ProcessEvent(NostrEvent ev)
         {
+            _log?.Info($"[NNostr] 🔍 RAW EVENT: ID={ev.Id}, Kind={ev.Kind}, Content={ev.Content?.Substring(0, Math.Min(50, ev.Content?.Length ?? 0))}...");
+            _log?.Info($"[NNostr] 🔍 EVENT TAGS: {string.Join(", ", ev.Tags?.Select(t => $"{t.TagIdentifier}:{string.Join("|", t.Data ?? new List<string>())}") ?? new string[0])}");
+            _log?.Info($"[NNostr] 🔍 SUBSCRIBED UUIDs: {string.Join(", ", _uuids)}");
+            
             // Deduplication + self-event filter
             if (!string.IsNullOrEmpty(ev.Id))
             {
@@ -82,14 +108,18 @@ namespace FyteClub.WebRTC
                 {
                     if (_ownEventIds.Contains(ev.Id))
                     {
-                        _log?.Debug($"[NNostr] Skipping self event {ev.Id}");
+                        _log?.Info($"[NNostr] ⏭️ Skipping self event {ev.Id}");
                         return;
                     }
                 }
 
                 lock (_processedEventIds)
                 {
-                    if (_processedEventIds.Contains(ev.Id)) return;
+                    if (_processedEventIds.Contains(ev.Id))
+                    {
+                        _log?.Info($"[NNostr] ⏭️ Skipping already processed event {ev.Id}");
+                        return;
+                    }
                     _processedEventIds.Add(ev.Id);
                     if (_processedEventIds.Count > 2048)
                     {
@@ -129,22 +159,37 @@ namespace FyteClub.WebRTC
                     }
                 }
 
-                if (matchedUuid == null) return;
+                if (matchedUuid == null)
+                {
+                    _log?.Info($"[NNostr] ❌ NO UUID MATCH for event {ev.Id} - not processing");
+                    return;
+                }
 
                 var json = ev.Content ?? string.Empty;
+                _log?.Info($"[NNostr] ✅ UUID MATCHED: {matchedUuid} for event {ev.Id}");
+                
                 var doc = JsonSerializer.Deserialize<JsonElement>(json);
-                if (!doc.TryGetProperty("type", out var typeEl)) return;
+                if (!doc.TryGetProperty("type", out var typeEl))
+                {
+                    _log?.Warning($"[NNostr] ❌ No 'type' property in event content: {json}");
+                    return;
+                }
                 var type = typeEl.GetString();
 
-                _log?.Info($"[NNostr] Received {type} for UUID {matchedUuid}");
-                _log?.Info($"[NNostr] Event ID: {ev.Id}, Kind: {ev.Kind}, Content: {json.Substring(0, Math.Min(100, json.Length))}...");
+                _log?.Info($"[NNostr] 📨 PROCESSING {type} for UUID {matchedUuid}");
+                _log?.Info($"[NNostr] 📨 Event ID: {ev.Id}, Kind: {ev.Kind}, Content: {json.Substring(0, Math.Min(100, json.Length))}...");
 
                 if (string.Equals(type, "offer", StringComparison.OrdinalIgnoreCase))
                 {
                     if (doc.TryGetProperty("sdp", out var sdpEl))
                     {
                         var sdp = sdpEl.GetString() ?? string.Empty;
+                        _log?.Info($"[NNostr] 🎯 FIRING OnOfferReceived for UUID {matchedUuid}, SDP length: {sdp.Length}");
                         OnOfferReceived?.Invoke(matchedUuid, sdp);
+                    }
+                    else
+                    {
+                        _log?.Warning($"[NNostr] ❌ Offer event missing 'sdp' property: {json}");
                     }
                 }
                 else if (string.Equals(type, "answer", StringComparison.OrdinalIgnoreCase))
@@ -152,6 +197,7 @@ namespace FyteClub.WebRTC
                     if (doc.TryGetProperty("sdp", out var sdpEl))
                     {
                         var sdp = sdpEl.GetString() ?? string.Empty;
+                        _log?.Info($"[NNostr] 🎯 FIRING OnAnswerReceived for UUID {matchedUuid}, SDP length: {sdp.Length}");
                         OnAnswerReceived?.Invoke(matchedUuid, sdp);
                     }
                 }
@@ -212,9 +258,14 @@ namespace FyteClub.WebRTC
 
             var iceFilter = new NostrSubscriptionFilter
             {
-                ReferencedEventIds = new[] { uuid },
+                Kinds = new[] { 1 }, // Regular notes for ICE candidates
                 Since = DateTimeOffset.UtcNow.AddMinutes(-2),
                 Limit = 100
+            };
+            // Add #e tag filter for ICE candidates
+            iceFilter.ExtensionData = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["#e"] = System.Text.Json.JsonSerializer.SerializeToElement(new[] { uuid })
             };
 
             var filters = new[] { offerFilter, answerFilter, iceFilter };
@@ -251,16 +302,29 @@ namespace FyteClub.WebRTC
                 throw new InvalidOperationException("Invalid private key for signing");
             await ev.ComputeIdAndSignAsync(ecKey);
 
-            foreach (var client in _clients.ToArray())
+            var publishTasks = _clients.ToArray().Select(async client =>
             {
                 try
                 {
                     await client.PublishEvent(ev);
+                    return true;
                 }
                 catch (Exception ex)
                 {
                     _log?.Warning($"[NNostr] Failed to publish offer to relay: {ex.Message}");
+                    return false;
                 }
+            });
+            
+            var results = await Task.WhenAll(publishTasks);
+            var successCount = results.Count(r => r);
+            if (successCount == 0)
+            {
+                _log?.Error($"[NNostr] Failed to publish offer to any relay");
+            }
+            else
+            {
+                _log?.Info($"[NNostr] Published offer to {successCount}/{_clients.Count} relays");
             }
             if (!string.IsNullOrEmpty(ev.Id))
             {
@@ -301,16 +365,29 @@ namespace FyteClub.WebRTC
                 throw new InvalidOperationException("Invalid private key for signing");
             await ev.ComputeIdAndSignAsync(ecKey);
 
-            foreach (var client in _clients.ToArray())
+            var publishTasks = _clients.ToArray().Select(async client =>
             {
                 try
                 {
                     await client.PublishEvent(ev);
+                    return true;
                 }
                 catch (Exception ex)
                 {
                     _log?.Warning($"[NNostr] Failed to publish answer to relay: {ex.Message}");
+                    return false;
                 }
+            });
+            
+            var results = await Task.WhenAll(publishTasks);
+            var successCount = results.Count(r => r);
+            if (successCount == 0)
+            {
+                _log?.Error($"[NNostr] Failed to publish answer to any relay");
+            }
+            else
+            {
+                _log?.Info($"[NNostr] Published answer to {successCount}/{_clients.Count} relays");
             }
             if (!string.IsNullOrEmpty(ev.Id))
             {
@@ -460,11 +537,32 @@ namespace FyteClub.WebRTC
 
         public void Dispose()
         {
-            foreach (var client in _clients)
+            try
             {
-                client?.Dispose();
+                // Clear event handlers first to prevent further processing
+                OnOfferReceived = null;
+                OnAnswerReceived = null;
+                OnIceCandidateReceived = null;
+                OnRepublishRequested = null;
+                
+                // Dispose clients with proper exception handling
+                foreach (var client in _clients.ToArray())
+                {
+                    try
+                    {
+                        client?.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        _log?.Warning($"[NNostr] Error disposing client: {ex.Message}");
+                    }
+                }
+                _clients.Clear();
             }
-            _clients.Clear();
+            catch (Exception ex)
+            {
+                _log?.Error($"[NNostr] Error during disposal: {ex.Message}");
+            }
         }
     }
 }

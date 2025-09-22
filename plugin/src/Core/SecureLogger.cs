@@ -63,6 +63,22 @@ namespace FyteClub
             }
         }
         
+        public static void LogDebug(string message, params object[] args)
+        {
+            var sanitizedMessage = SanitizeLogInput(message);
+            var sanitizedArgs = args?.Select(arg => SanitizeLogInput(arg?.ToString() ?? "")).ToArray() ?? new string[0];
+            
+            try
+            {
+                var formatted = string.Format(sanitizedMessage, sanitizedArgs);
+                _pluginLog?.Debug($"[SECURE] {formatted}");
+            }
+            catch (FormatException)
+            {
+                _pluginLog?.Debug($"[SECURE] {sanitizedMessage}");
+            }
+        }
+        
         private static string SanitizeLogInput(string input)
         {
             if (string.IsNullOrEmpty(input)) return string.Empty;

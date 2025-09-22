@@ -61,12 +61,8 @@ namespace FyteClub
             if (!_playerCache.TryGetValue(playerId, out var playerEntry))
                 return null;
 
-            // Check if cache is expired
-            if (DateTime.UtcNow - playerEntry.LastUpdated > TimeSpan.FromHours(MOD_EXPIRY_HOURS))
-            {
-                _pluginLog.Debug($"Cache expired for {playerId}");
-                return null;
-            }
+            // Do not expire cache entries – return whatever we have
+            // This matches the expectation that cache should never expire
 
             try
             {
@@ -104,11 +100,20 @@ namespace FyteClub
                 if (cachedMods.Count > 0)
                 {
                     _pluginLog.Info($"Cache HIT for {playerId}: {cachedMods.Count} mods loaded from cache");
+
+                    // Best-effort: attach a minimal 'recipe-like' payload so higher layers can apply
+                    var recipeLike = new {
+                        type = "client-cache",
+                        player = playerId,
+                        mods = cachedMods.Select(m => new { name = m.ModInfo.ModName, hash = m.ContentHash }).ToList()
+                    };
+
                     return new CachedPlayerMods
                     {
                         PlayerId = playerId,
                         Mods = cachedMods,
-                        CacheTimestamp = playerEntry.LastUpdated
+                        CacheTimestamp = playerEntry.LastUpdated,
+                        RecipeData = recipeLike
                     };
                 }
             }
@@ -233,6 +238,89 @@ namespace FyteClub
             };
         }
 
+        // ---- UI helpers for per-player cache inspection ----
+        public class PlayerCacheSummary
+        {
+            public string PlayerId { get; set; } = string.Empty;
+            public int ModCount { get; set; }
+            public long TotalSizeBytes { get; set; }
+            public DateTime LastUpdated { get; set; }
+            public string ServerTimestamp { get; set; } = string.Empty;
+        }
+
+        public class PlayerModSummary
+        {
+            public string ContentHash { get; set; } = string.Empty;
+            public string Name { get; set; } = string.Empty;
+            public long Size { get; set; }
+            public DateTime FirstSeen { get; set; }
+            public DateTime LastAccessed { get; set; }
+            public int ReferenceCount { get; set; }
+            public bool HasConfig { get; set; }
+        }
+
+        public class PlayerCacheDetail
+        {
+            public string PlayerId { get; set; } = string.Empty;
+            public DateTime LastUpdated { get; set; }
+            public string ServerTimestamp { get; set; } = string.Empty;
+            public List<PlayerModSummary> Mods { get; set; } = new();
+        }
+
+        public List<PlayerCacheSummary> GetPlayerSummaries()
+        {
+            var list = new List<PlayerCacheSummary>();
+            var snapshot = _playerCache.ToArray();
+            foreach (var kv in snapshot)
+            {
+                var entry = kv.Value;
+                long size = 0;
+                foreach (var m in entry.ModReferences)
+                {
+                    if (_modMetadata.TryGetValue(m.ContentHash, out var info))
+                        size += info.Size;
+                }
+                list.Add(new PlayerCacheSummary
+                {
+                    PlayerId = entry.PlayerId,
+                    ModCount = entry.ModReferences.Count,
+                    TotalSizeBytes = size,
+                    LastUpdated = entry.LastUpdated,
+                    ServerTimestamp = entry.ServerTimestamp
+                });
+            }
+            return list;
+        }
+
+        public PlayerCacheDetail? GetPlayerDetail(string playerId)
+        {
+            if (!_playerCache.TryGetValue(playerId, out var entry)) return null;
+            var detail = new PlayerCacheDetail
+            {
+                PlayerId = entry.PlayerId,
+                LastUpdated = entry.LastUpdated,
+                ServerTimestamp = entry.ServerTimestamp
+            };
+            foreach (var m in entry.ModReferences)
+            {
+                var s = new PlayerModSummary
+                {
+                    ContentHash = m.ContentHash,
+                    Name = m.ModName,
+                    HasConfig = File.Exists(Path.Combine(_metadataDir, $"{playerId}_{m.ContentHash}.config"))
+                };
+                if (_modMetadata.TryGetValue(m.ContentHash, out var info))
+                {
+                    s.Size = info.Size;
+                    s.FirstSeen = info.FirstSeen;
+                    s.LastAccessed = info.LastAccessed;
+                    s.ReferenceCount = info.ReferenceCount;
+                }
+                detail.Mods.Add(s);
+            }
+            return detail;
+        }
+
         /// <summary>
         /// Clear cache for specific player (useful for testing or when player changes mods frequently).
         /// </summary>
@@ -252,6 +340,45 @@ namespace FyteClub
                 
                 await SaveCacheManifest();
                 _pluginLog.Info($"Cleared cache for {playerId}");
+            }
+        }
+
+        /// <summary>
+        /// Clear all client cache (mods, metadata, and manifest).
+        /// </summary>
+        public async Task ClearAllCache()
+        {
+            try
+            {
+                _playerCache.Clear();
+                _modMetadata.Clear();
+
+                // Delete content and metadata files
+                if (Directory.Exists(_contentDir))
+                {
+                    foreach (var file in Directory.GetFiles(_contentDir))
+                    {
+                        File.Delete(file);
+                    }
+                }
+                if (Directory.Exists(_metadataDir))
+                {
+                    foreach (var file in Directory.GetFiles(_metadataDir))
+                    {
+                        File.Delete(file);
+                    }
+                }
+                
+                // Remove manifest
+                if (File.Exists(_manifestPath))
+                    File.Delete(_manifestPath);
+
+                await SaveCacheManifest();
+                _pluginLog.Info("Cleared ALL client mod cache");
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Failed to clear all client cache: {ex.Message}");
             }
         }
 
@@ -552,26 +679,8 @@ namespace FyteClub
             };
         }
 
-        public void ClearAllCache()
-        {
-            try
-            {
-                _playerCache.Clear();
-                _modMetadata.Clear();
-                
-                if (Directory.Exists(_contentDir))
-                    Directory.Delete(_contentDir, true);
-                if (Directory.Exists(_metadataDir))
-                    Directory.Delete(_metadataDir, true);
-                
-                InitializeCache();
-                _pluginLog.Info("All cache data cleared");
-            }
-            catch (Exception ex)
-            {
-                _pluginLog.Error($"Error clearing cache: {ex.Message}");
-            }
-        }
+        // Removed duplicate synchronous ClearAllCache() to avoid signature conflicts.
+        // Please use the async ClearAllCache() method above.
 
         public void Dispose()
         {

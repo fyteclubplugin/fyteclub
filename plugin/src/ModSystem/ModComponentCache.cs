@@ -178,6 +178,66 @@ namespace FyteClub
         }
 
         /// <summary>
+        /// Clear all component and recipe cache.
+        /// </summary>
+        public async Task ClearAllCache()
+        {
+            try
+            {
+                _components.Clear();
+                _recipes.Clear();
+
+                if (Directory.Exists(_componentsDir))
+                {
+                    foreach (var file in Directory.GetFiles(_componentsDir))
+                    {
+                        File.Delete(file);
+                    }
+                }
+                if (Directory.Exists(_recipesDir))
+                {
+                    foreach (var file in Directory.GetFiles(_recipesDir))
+                    {
+                        File.Delete(file);
+                    }
+                }
+
+                if (File.Exists(_manifestPath))
+                    File.Delete(_manifestPath);
+
+                // No manifest to save; state is reflected by cleared directories
+                _pluginLog.Info("[ComponentCache] Cleared ALL component and recipe cache");
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"[ComponentCache] Failed to clear all cache: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Return high-level stats for UI display.
+        /// </summary>
+        public ComponentCacheStats GetStats()
+        {
+            try
+            {
+                var totalSize = Directory.GetFiles(_componentsDir).Sum(f => new FileInfo(f).Length) +
+                                Directory.GetFiles(_recipesDir).Sum(f => new FileInfo(f).Length);
+                return new ComponentCacheStats
+                {
+                    TotalComponents = _components.Count,
+                    TotalRecipes = _recipes.Count,
+                    TotalSizeBytes = totalSize
+                };
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"[ComponentCache] Failed to compute stats: {ex.Message}");
+                return new ComponentCacheStats();
+            }
+        }
+
+        /// <summary>
         /// Store an individual mod component for reuse across multiple appearances.
         /// Public method for phonebook integration.
         /// </summary>
@@ -249,6 +309,24 @@ namespace FyteClub
                     .OrderByDescending(r => r.LastAccessed)
                     .FirstOrDefault();
                 
+                if (playerRecipes == null)
+                {
+                    // Attempt loading any on-disk recipe for player if not in memory
+                    var recipeFiles = Directory.GetFiles(_recipesDir, $"{playerName}_*.json");
+                    var latest = recipeFiles.OrderByDescending(f => new FileInfo(f).LastWriteTimeUtc).FirstOrDefault();
+                    if (!string.IsNullOrEmpty(latest))
+                    {
+                        var recipeJson = await File.ReadAllTextAsync(latest);
+                        var loaded = JsonSerializer.Deserialize<AppearanceRecipe>(recipeJson);
+                        if (loaded != null)
+                        {
+                            var key = $"{playerName}:{loaded.AppearanceHash}";
+                            _recipes[key] = loaded;
+                            playerRecipes = loaded;
+                        }
+                    }
+                }
+                
                 if (playerRecipes == null) return null;
                 
                 return await GetAppearanceFromRecipe(playerName, playerRecipes.AppearanceHash);
@@ -286,12 +364,7 @@ namespace FyteClub
                     _recipes[recipeKey] = recipe;
                 }
 
-                // Check if recipe is expired
-                if (DateTime.UtcNow - recipe.Created > TimeSpan.FromHours(RECIPE_EXPIRY_HOURS))
-                {
-                    _pluginLog.Debug($"Recipe expired for {recipeKey}");
-                    return null;
-                }
+                // Do not expire recipes; cache should not expire
 
                 // Reconstruct the appearance from components
                 var playerInfo = new AdvancedPlayerInfo
@@ -625,26 +698,8 @@ namespace FyteClub
             };
         }
 
-        public void ClearAllCache()
-        {
-            try
-            {
-                _components.Clear();
-                _recipes.Clear();
-                
-                if (Directory.Exists(_componentsDir))
-                    Directory.Delete(_componentsDir, true);
-                if (Directory.Exists(_recipesDir))
-                    Directory.Delete(_recipesDir, true);
-                
-                InitializeCache();
-                _pluginLog.Info("All component cache data cleared");
-            }
-            catch (Exception ex)
-            {
-                _pluginLog.Error($"Error clearing component cache: {ex.Message}");
-            }
-        }
+        // Removed duplicate synchronous ClearAllCache() to avoid signature conflicts.
+        // Please use the async ClearAllCache() method above.
 
         public void Dispose()
         {
@@ -705,8 +760,14 @@ namespace FyteClub
     /// </summary>
     public class ComponentCacheStats
     {
+        // Legacy property names (backward compatibility)
         public int ComponentCount { get; set; }
         public int RecipeCount { get; set; }
+
+        // Preferred property names used by UI and producers
+        public int TotalComponents { get; set; }
+        public int TotalRecipes { get; set; }
+
         public long TotalSizeBytes { get; set; }
         public DateTime LastCleanup { get; set; }
     }
