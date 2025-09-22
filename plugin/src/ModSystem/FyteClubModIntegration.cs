@@ -14,6 +14,7 @@ using System.Text.Json;
 using Penumbra.Api.Enums;
 using Penumbra.Api.IpcSubscribers;
 using Glamourer.Api.IpcSubscribers;
+using FyteClub.ModSystem.Advanced;
 
 namespace FyteClub
 {
@@ -30,6 +31,10 @@ namespace FyteClub
         private readonly Dictionary<string, string> _appliedModHashes = new();
         private readonly Dictionary<string, DateTime> _lastApplicationTime = new();
         private readonly TimeSpan _minReapplicationInterval = TimeSpan.FromMinutes(5); // Prevent spam re-applications
+        
+        // Advanced mod system components
+        private readonly StagedModApplicator _stagedApplicator;
+        private readonly CharacterChangeDetector _changeDetector;
         
         // FyteClub's unique lock code for Glamourer (0x46797465 = "Fyte" in ASCII)
         private const uint FYTECLUB_GLAMOURER_LOCK = 0x46797465;
@@ -80,6 +85,9 @@ namespace FyteClub
             _pluginLog = pluginLog;
             _objectTable = objectTable;
             _framework = framework;
+            
+            // Initialize advanced mod system components
+            _changeDetector = new CharacterChangeDetector();
             
             InitializeModSystemIPC();
         }
@@ -295,6 +303,182 @@ namespace FyteClub
             }
         }
 
+        // Advanced mod application using staged approach
+        public async Task<bool> ApplyPlayerModsAdvanced(ICharacter character, Dictionary<string, object> modData)
+        {
+            if (character?.Address == IntPtr.Zero)
+            {
+                _pluginLog.Warning("Invalid character for advanced mod application");
+                return false;
+            }
+
+            _pluginLog.Info($"🎯 [ADVANCED MOD APPLICATION] Starting for {character.Name}");
+
+            try
+            {
+                // Wait for character to stop being drawn
+                await WaitForDrawingComplete(character);
+
+                // Stage 1: Apply Penumbra mods (file replacements)
+                if (modData.ContainsKey("penumbra"))
+                {
+                    _pluginLog.Debug($"🎯 [STAGE 1] Applying Penumbra mods for {character.Name}");
+                    await ApplyPenumbraStage(character, modData["penumbra"]);
+                }
+
+                // Stage 2: Apply Glamourer data
+                if (modData.ContainsKey("glamourer"))
+                {
+                    _pluginLog.Debug($"🎯 [STAGE 2] Applying Glamourer data for {character.Name}");
+                    await ApplyGlamourerStage(character, modData["glamourer"]);
+                }
+
+                // Stage 3: Apply other plugins
+                if (modData.ContainsKey("customizePlus"))
+                {
+                    _pluginLog.Debug($"🎯 [STAGE 3] Applying CustomizePlus data for {character.Name}");
+                    await ApplyCustomizePlusStage(character, modData["customizePlus"]);
+                }
+
+                // Final: Wait for all changes to complete
+                await WaitForDrawingComplete(character);
+
+                _pluginLog.Info($"✅ Advanced mod application completed for {character.Name}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error(ex, $"❌ Advanced mod application failed for {character.Name}");
+                return false;
+            }
+        }
+
+        private async Task WaitForDrawingComplete(ICharacter character)
+        {
+            const int maxWaitMs = 10000; // 10 seconds max
+            const int checkIntervalMs = 100;
+            int totalWaitMs = 0;
+
+            while (totalWaitMs < maxWaitMs)
+            {
+                if (!_changeDetector.IsBeingDrawn(character))
+                {
+                    break;
+                }
+
+                await Task.Delay(checkIntervalMs);
+                totalWaitMs += checkIntervalMs;
+            }
+
+            if (totalWaitMs >= maxWaitMs)
+            {
+                _pluginLog.Warning($"Timeout waiting for character drawing to complete: {character.Name}");
+            }
+        }
+
+        private async Task ApplyPenumbraStage(ICharacter character, object penumbraData)
+        {
+            if (penumbraData is not Dictionary<string, object> data) return;
+
+            var collectionName = $"FyteClub_{character.Name}_{character.ObjectIndex}";
+            
+            if (_penumbraCreateTemporaryCollection != null)
+            {
+                var createResult = _penumbraCreateTemporaryCollection.Invoke("FyteClub", collectionName, out var collectionId);
+                if (createResult == PenumbraApiEc.Success && collectionId != Guid.Empty)
+                {
+                    try
+                    {
+                        // Assign to character
+                        await _penumbraAssignTemporaryCollection?.Invoke(collectionId, character.ObjectIndex, false);
+
+                        // Apply file replacements
+                        if (data.ContainsKey("fileReplacements"))
+                        {
+                            var fileReplacements = ProcessFileReplacements(data["fileReplacements"]);
+                            await _penumbraAddTemporaryMod?.Invoke("FyteClub_Files", collectionId, fileReplacements, "", 0);
+                        }
+
+                        // Wait for application
+                        await Task.Delay(500);
+                    }
+                    finally
+                    {
+                        // Clean up temporary collection
+                        await _penumbraRemoveTemporaryCollection?.Invoke(collectionId);
+                    }
+                }
+            }
+        }
+
+        private async Task ApplyGlamourerStage(ICharacter character, object glamourerData)
+        {
+            if (glamourerData is not string data || string.IsNullOrEmpty(data)) return;
+            if (data == "active") return; // Skip placeholder
+
+            try
+            {
+                Convert.FromBase64String(data); // Validate base64
+                _glamourerApplyAll?.Invoke(data, character.ObjectIndex, FYTECLUB_GLAMOURER_LOCK);
+                await WaitForDrawingComplete(character);
+            }
+            catch (FormatException)
+            {
+                _pluginLog.Warning($"Invalid base64 Glamourer data for {character.Name}");
+            }
+        }
+
+        private async Task ApplyCustomizePlusStage(ICharacter character, object customizePlusData)
+        {
+            if (customizePlusData is not string data || string.IsNullOrEmpty(data)) return;
+
+            try
+            {
+                var characterIndex = (ushort)character.ObjectIndex;
+                var activeProfile = _customizePlusGetActiveProfile?.InvokeFunc(characterIndex);
+                
+                if (activeProfile?.Item1 == 0 && activeProfile?.Item2.HasValue == true)
+                {
+                    _pluginLog.Debug($"Applied Customize+ data for {character.Name}");
+                }
+                
+                await Task.Delay(200);
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Debug($"Failed to apply Customize+ data: {ex.Message}");
+            }
+        }
+
+        private Dictionary<string, string> ProcessFileReplacements(object fileReplacementsData)
+        {
+            var result = new Dictionary<string, string>();
+
+            if (fileReplacementsData is List<string> mods)
+            {
+                foreach (var mod in mods)
+                {
+                    // Skip .imc files
+                    if (mod.EndsWith(".imc", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    if (mod.Contains('|'))
+                    {
+                        var parts = mod.Split('|', 2);
+                        if (parts.Length == 2)
+                        {
+                            result[parts[0]] = parts[1];
+                        }
+                    }
+                    else
+                    {
+                        result[mod] = mod;
+                    }
+                }
+            }
+
+            return result;
+        }
+
         // Intelligent mod application with state comparison and caching
         public async Task<bool> ApplyPlayerMods(AdvancedPlayerInfo playerInfo, string playerName)
         {
@@ -331,23 +515,19 @@ namespace FyteClub
 
                 _pluginLog.Info($"FyteClub: Applying new mod configuration for {playerName}");
                 
-                // Find the character object and apply the mods for real
-                // Schedule this for the framework thread since ObjectTable access requires it
-                await _framework.RunOnFrameworkThread(() =>
+                // Find the character and apply mods using advanced system
+                await _framework.RunOnFrameworkThread(async () =>
                 {
                     var character = FindCharacterByName(playerName);
                     if (character != null)
                     {
-                        _pluginLog.Info($"FyteClub: Found character {character.Name}, applying mods...");
-                        ApplyAdvancedPlayerInfo(character, playerInfo);
-                        _pluginLog.Info($"FyteClub: Applied mods to character {character.Name}");
+                        _pluginLog.Info($"FyteClub: Found character {character.Name}, applying mods with advanced system...");
                         
-                        // Trigger redraw on the framework thread as well
-                        if (IsPenumbraAvailable)
-                        {
-                            _pluginLog.Info($"FyteClub: Triggering redraw for {character.Name} after mod sync");
-                            RedrawCharacter(character);
-                        }
+                        // Convert to new format and use advanced application
+                        var modData = ConvertPlayerInfoToModData(playerInfo);
+                        await ApplyPlayerModsAdvanced(character, modData);
+                        
+                        _pluginLog.Info($"FyteClub: Applied mods to character {character.Name}");
                     }
                     else
                     {
@@ -446,6 +626,47 @@ namespace FyteClub
             // Remove any session-specific identifiers that might change between restarts
             // This is a simple approach - could be enhanced based on actual data formats
             return normalized;
+        }
+
+        private Dictionary<string, object> ConvertPlayerInfoToModData(AdvancedPlayerInfo playerInfo)
+        {
+            var modData = new Dictionary<string, object>();
+
+            // Convert Penumbra mods
+            if (playerInfo.Mods?.Count > 0)
+            {
+                var penumbraData = new Dictionary<string, object>
+                {
+                    ["fileReplacements"] = playerInfo.Mods
+                };
+                modData["penumbra"] = penumbraData;
+            }
+
+            // Convert Glamourer data
+            if (!string.IsNullOrEmpty(playerInfo.GlamourerData) && playerInfo.GlamourerData != "active")
+            {
+                modData["glamourer"] = playerInfo.GlamourerData;
+            }
+
+            // Convert CustomizePlus data
+            if (!string.IsNullOrEmpty(playerInfo.CustomizePlusData))
+            {
+                modData["customizePlus"] = playerInfo.CustomizePlusData;
+            }
+
+            // Convert SimpleHeels data
+            if (playerInfo.SimpleHeelsOffset.HasValue && playerInfo.SimpleHeelsOffset.Value != 0.0f)
+            {
+                modData["simpleHeels"] = playerInfo.SimpleHeelsOffset.Value;
+            }
+
+            // Convert Honorific data
+            if (!string.IsNullOrEmpty(playerInfo.HonorificTitle) && playerInfo.HonorificTitle != "active")
+            {
+                modData["honorific"] = playerInfo.HonorificTitle;
+            }
+
+            return modData;
         }
 
         public void ClearPlayerModCache(string playerName)
