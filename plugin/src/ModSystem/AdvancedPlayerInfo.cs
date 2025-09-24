@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace FyteClub
 {
@@ -30,6 +31,7 @@ namespace FyteClub
         // Mod information
         public List<string> Mods { get; set; } = new();
         public string? ActiveCollection { get; set; }
+        public string? ManipulationData { get; set; } // Penumbra meta manipulations (mod configurations)
         public string? GlamourerDesign { get; set; }
         public string? GlamourerData { get; set; } // Additional field for full Glamourer data
         public string? CustomizePlusProfile { get; set; }
@@ -52,6 +54,7 @@ namespace FyteClub
         public int ApplyCount { get; set; } = 0;
         
         // Connection information
+        [JsonIgnore]
         public IntPtr GameObjectAddress { get; set; } = IntPtr.Zero;
         public uint WorldId { get; set; }
         public float Distance { get; set; }

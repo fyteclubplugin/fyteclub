@@ -18,6 +18,8 @@ namespace FyteClub.TURN
         public string Username { get; private set; }
         public string Password { get; private set; }
         public int ActiveConnections { get; private set; }
+        public int TotalConnections { get; private set; }
+        public long BytesRelayed { get; private set; }
         
         private UdpClient? _udpServer;
         private CancellationTokenSource? _cancellationTokenSource;
@@ -36,28 +38,41 @@ namespace FyteClub.TURN
             Password = GenerateCredential();
         }
 
-        public async Task<bool> StartAsync(int preferredPort = 49000)
+        public async Task<bool> StartAsync(int configuredPort = 49000)
         {
             if (IsRunning) return true;
 
             try
             {
-                Port = await FindAvailablePort(preferredPort);
-                _udpServer = new UdpClient(Port);
+                // Force close any existing socket on this port first
+                await ForceCloseExistingSocket(configuredPort);
+                
+                _udpServer = new UdpClient();
+                
+                // Enable socket reuse options to handle unclean shutdowns
+                _udpServer.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                _udpServer.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ExclusiveAddressUse, false);
+                
+                // Bind to the port
+                _udpServer.Client.Bind(new IPEndPoint(IPAddress.Any, configuredPort));
+                
+                Port = configuredPort;
                 ExternalIP = await GetExternalIP();
                 _cancellationTokenSource = new CancellationTokenSource();
                 
                 _ = Task.Run(() => RunTurnServer(_cancellationTokenSource.Token));
-                _ = Task.Run(() => AutoConfigureNetwork());
                 _ = Task.Run(() => BroadcastLoadInfo(_cancellationTokenSource.Token));
                 
                 IsRunning = true;
-                _pluginLog?.Info($"[TURN] Server started on {ExternalIP}:{Port}");
-                
-                // Give firewall config time to complete
-                await Task.Delay(1000);
+                _pluginLog?.Info($"[TURN] Server started on {ExternalIP}:{Port} with socket reuse enabled");
                 
                 return true;
+            }
+            catch (SocketException ex)
+            {
+                _pluginLog?.Error($"[TURN] Cannot bind to configured port {configuredPort}: {ex.Message}");
+                _pluginLog?.Error($"[TURN] Port may be in use or blocked. Check port forwarding rules.");
+                return false;
             }
             catch (Exception ex)
             {
@@ -215,6 +230,8 @@ namespace FyteClub.TURN
                 }
                 
                 ActiveConnections = _activeClients.Count;
+                TotalConnections++;
+                BytesRelayed += data.Length;
                 
                 // Only enforce limits if alternative servers are available
                 var hasAlternatives = HasAvailableAlternativeServers();
@@ -428,23 +445,9 @@ namespace FyteClub.TURN
             return response;
         }
 
-        private async Task AutoConfigureNetwork()
-        {
-            await Task.Delay(100);
-            _pluginLog?.Info($"[TURN] Auto-configuring network for port {Port}");
-            
-            // Check and configure Windows Firewall
-            await ConfigureWindowsFirewall();
-            
-            // Test external accessibility
-            var isExternallyAccessible = await TestExternalConnectivity();
-            if (!isExternallyAccessible)
-            {
-                _pluginLog?.Warning($"[TURN] Port {Port} may not be externally accessible - check router port forwarding");
-            }
-        }
+        // Removed automatic network configuration - firewall rules should only be created with user consent
         
-        private async Task ConfigureWindowsFirewall()
+        public async Task ConfigureWindowsFirewall()
         {
             try
             {
@@ -490,35 +493,15 @@ namespace FyteClub.TURN
                     var udpOutput = await udpProcess.StandardOutput.ReadToEndAsync();
                     await udpProcess.WaitForExitAsync();
                     
-                    // Create TCP firewall rule
-                    var tcpCommand = $"netsh advfirewall firewall add rule name=\"FyteClub TURN {Port} TCP\" dir=in action=allow protocol=TCP localport={Port}";
-                    var tcpProcess = new System.Diagnostics.Process
+                    if (udpProcess.ExitCode == 0)
                     {
-                        StartInfo = new System.Diagnostics.ProcessStartInfo
-                        {
-                            FileName = "cmd.exe",
-                            Arguments = $"/c {tcpCommand}",
-                            UseShellExecute = false,
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true,
-                            CreateNoWindow = true
-                        }
-                    };
-                    
-                    tcpProcess.Start();
-                    var tcpOutput = await tcpProcess.StandardOutput.ReadToEndAsync();
-                    await tcpProcess.WaitForExitAsync();
-                    
-                    if (udpProcess.ExitCode == 0 && tcpProcess.ExitCode == 0)
-                    {
-                        _pluginLog?.Info($"[TURN] Windows Firewall rules created successfully (UDP + TCP)");
+                        _pluginLog?.Info($"[TURN] Windows Firewall rule created successfully (UDP only)");
                     }
                     else
                     {
                         _pluginLog?.Error($"[TURN] ❌ FIREWALL BLOCKED - WebRTC will fail!");
                         _pluginLog?.Error($"[TURN] Run as Administrator OR manually execute:");
                         _pluginLog?.Error($"[TURN] netsh advfirewall firewall add rule name=\"FyteClub TURN {Port}\" dir=in action=allow protocol=UDP localport={Port}");
-                        _pluginLog?.Error($"[TURN] netsh advfirewall firewall add rule name=\"FyteClub TURN {Port} TCP\" dir=in action=allow protocol=TCP localport={Port}");
                     }
                 }
                 else
@@ -745,13 +728,21 @@ namespace FyteClub.TURN
                 // Cancel all background tasks immediately
                 _cancellationTokenSource?.Cancel();
                 
-                // Close UDP server immediately
-                _udpServer?.Close();
-                _udpServer?.Dispose();
+                // Non-blocking UDP server disposal
+                Task.Run(() => {
+                    try
+                    {
+                        _udpServer?.Close();
+                        _udpServer?.Dispose();
+                    }
+                    catch { }
+                });
                 _udpServer = null;
                 
                 // Best effort client notification without blocking
-                try { NotifyClientsOfShutdown(); } catch { }
+                Task.Run(() => {
+                    try { NotifyClientsOfShutdown(); } catch { }
+                });
             }
             catch { }
         }
@@ -798,7 +789,7 @@ namespace FyteClub.TURN
                     {
                         try
                         {
-                            await _udpServer?.SendAsync(loadPacket, loadPacket.Length, host, port);
+                            if (_udpServer != null) await _udpServer.SendAsync(loadPacket, loadPacket.Length, host, port);
                         }
                         catch { /* Ignore failed broadcasts */ }
                     }
@@ -888,7 +879,7 @@ namespace FyteClub.TURN
             {
                 try
                 {
-                    await _udpServer?.SendAsync(lookupPacket, lookupPacket.Length, host, port);
+                    if (_udpServer != null) await _udpServer.SendAsync(lookupPacket, lookupPacket.Length, host, port);
                 }
                 catch { /* Ignore failed lookups */ }
             }
@@ -1008,14 +999,81 @@ namespace FyteClub.TURN
             catch { /* Ignore redirect failures */ }
         }
 
+        public void ConfigureFirewall()
+        {
+            _ = Task.Run(ConfigureWindowsFirewall);
+        }
+
+        private async Task ForceCloseExistingSocket(int port)
+        {
+            try
+            {
+                // Kill any processes using this port
+                var process = new System.Diagnostics.Process
+                {
+                    StartInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "netstat",
+                        Arguments = $"-ano | findstr :{port}",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        CreateNoWindow = true
+                    }
+                };
+                
+                process.Start();
+                var output = await process.StandardOutput.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                
+                var lines = output.Split('\n');
+                foreach (var line in lines)
+                {
+                    if (line.Contains($":{port}") && line.Contains("UDP"))
+                    {
+                        var parts = line.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length > 0 && int.TryParse(parts[^1], out var pid))
+                        {
+                            try
+                            {
+                                var existingProcess = System.Diagnostics.Process.GetProcessById(pid);
+                                if (existingProcess.ProcessName.Contains("FyteClub") || existingProcess.ProcessName.Contains("XIVLauncher"))
+                                {
+                                    _pluginLog?.Info($"[TURN] Killing previous FyteClub process using port {port} (PID: {pid})");
+                                    existingProcess.Kill();
+                                    existingProcess.WaitForExit(1000);
+                                }
+                            }
+                            catch { /* Ignore if process already gone */ }
+                        }
+                    }
+                }
+                
+                // Wait a moment for the port to be released
+                await Task.Delay(500);
+            }
+            catch (Exception ex)
+            {
+                _pluginLog?.Debug($"[TURN] Could not force close existing socket: {ex.Message}");
+            }
+        }
+        
         public void Dispose()
         {
             try
             {
                 IsRunning = false;
                 _cancellationTokenSource?.Cancel();
-                _udpServer?.Close();
-                _udpServer?.Dispose();
+                
+                // Immediate socket closure with proper cleanup
+                try
+                {
+                    _udpServer?.Client?.Shutdown(SocketShutdown.Both);
+                    _udpServer?.Close();
+                    _udpServer?.Dispose();
+                }
+                catch { }
+                
+                _udpServer = null;
                 _cancellationTokenSource?.Dispose();
             }
             catch { }
