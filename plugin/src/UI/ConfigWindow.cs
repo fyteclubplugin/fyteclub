@@ -318,9 +318,15 @@ namespace FyteClub.UI
             
             ImGui.Separator();
             ImGui.Text("Debug:");
-            if (ImGui.Button("Test Chunking Protocol"))
+            if (ImGui.Button("Test Streaming Protocol"))
             {
-                _ = Task.Run(() => _plugin.TestChunkingProtocol());
+                _ = Task.Run(() => _plugin.TestStreamingProtocol());
+            }
+            
+            ImGui.SameLine();
+            if (ImGui.Button("Test File Transfer"))
+            {
+                _ = Task.Run(() => _plugin.TestFileTransfer());
             }
             
             ImGui.SameLine();

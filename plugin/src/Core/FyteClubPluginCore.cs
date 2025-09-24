@@ -540,7 +540,143 @@ namespace FyteClub.Core
         }
         
         /// <summary>
-        /// Test the chunking protocol with real mod data
+        /// Test the new streaming protocol with real mod data
+        /// </summary>
+        public async Task TestStreamingProtocol()
+        {
+            try
+            {
+                ModularLogger.LogAlways(LogModule.Core, "🧪 Starting streaming protocol test...");
+                
+                if (_modSyncOrchestrator == null)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ P2P orchestrator not available");
+                    return;
+                }
+                
+                // Get local player name
+                var localPlayerName = await _framework.RunOnFrameworkThread(() => _clientState?.LocalPlayer?.Name?.TextValue);
+                if (string.IsNullOrEmpty(localPlayerName))
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ Local player not found");
+                    return;
+                }
+                
+                // Test complete round-trip with streaming
+                await _modSyncOrchestrator.TestCompleteRoundTrip(localPlayerName);
+                
+                ModularLogger.LogAlways(LogModule.Core, "✅ Streaming protocol test completed");
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.Core, "❌ Streaming test failed: {0}", ex.Message);
+            }
+        }
+        
+        /// <summary>
+        /// Test direct file transfer capabilities
+        /// </summary>
+        public async Task TestFileTransfer()
+        {
+            try
+            {
+                ModularLogger.LogAlways(LogModule.Core, "🧪 Starting file transfer test...");
+                
+                if (_modSystemIntegration == null)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ Mod system integration not available");
+                    return;
+                }
+                
+                // Get local player name
+                var localPlayerName = await _framework.RunOnFrameworkThread(() => _clientState?.LocalPlayer?.Name?.TextValue);
+                if (string.IsNullOrEmpty(localPlayerName))
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ Local player not found");
+                    return;
+                }
+                
+                // Get current mod data to find files
+                var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(localPlayerName);
+                if (playerInfo?.Mods?.Count > 0)
+                {
+                    // Find first mod file to test with
+                    foreach (var modPath in playerInfo.Mods.Take(3))
+                    {
+                        if (modPath.Contains('|'))
+                        {
+                            var parts = modPath.Split('|', 2);
+                            if (parts.Length == 2 && System.IO.File.Exists(parts[0]))
+                            {
+                                var fileInfo = new System.IO.FileInfo(parts[0]);
+                                ModularLogger.LogAlways(LogModule.Core, "📁 Testing file: {0} ({1} bytes)", parts[1], fileInfo.Length);
+                                
+                                // Test streaming this file
+                                await TestSingleFileStream(parts[0], parts[1]);
+                                break;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ No mod files found to test");
+                }
+                
+                ModularLogger.LogAlways(LogModule.Core, "✅ File transfer test completed");
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.Core, "❌ File transfer test failed: {0}", ex.Message);
+            }
+        }
+        
+        /// <summary>
+        /// Test streaming a single file
+        /// </summary>
+        private async Task TestSingleFileStream(string localPath, string gamePath)
+        {
+            try
+            {
+                var fileTransfer = new P2PFileTransfer(_pluginLog);
+                var receivedData = new List<byte[]>();
+                var totalReceived = 0L;
+                
+                ModularLogger.LogAlways(LogModule.Core, "📁 Streaming file: {0}", gamePath);
+                
+                // Stream the file
+                await fileTransfer.SendFileStream(localPath, async (chunk) =>
+                {
+                    receivedData.Add(chunk);
+                    totalReceived += chunk.Length;
+                    
+                    if (receivedData.Count % 100 == 0)
+                    {
+                        ModularLogger.LogAlways(LogModule.Core, "📁 Received {0} chunks, {1} bytes", receivedData.Count, totalReceived);
+                    }
+                });
+                
+                var originalSize = new System.IO.FileInfo(localPath).Length;
+                ModularLogger.LogAlways(LogModule.Core, "📁 Stream complete: {0} chunks, {1}/{2} bytes", 
+                    receivedData.Count, totalReceived, originalSize);
+                
+                if (totalReceived == originalSize)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "✅ File streaming successful - sizes match");
+                }
+                else
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ File streaming failed - size mismatch");
+                }
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.Core, "❌ Single file stream test failed: {0}", ex.Message);
+            }
+        }
+        
+        /// <summary>
+        /// Test the chunking protocol with real mod data (legacy)
         /// </summary>
         public async Task TestChunkingProtocol()
         {
@@ -629,12 +765,11 @@ namespace FyteClub.Core
                 _modSyncOrchestrator.UnregisterPeer(testPeerId);
                 _modSyncOrchestrator.UnregisterPeer(testPeerId + "_receiver");
                 
-                ModularLogger.LogAlways(LogModule.Core, "✅ Chunking protocol test completed");
+                ModularLogger.LogAlways(LogModule.Core, "✅ Legacy chunking protocol test completed");
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.Core, "❌ Chunking test failed: {0}", ex.Message);
-                ModularLogger.LogAlways(LogModule.Core, "Stack trace: {0}", ex.StackTrace);
+                ModularLogger.LogAlways(LogModule.Core, "❌ Legacy chunking test failed: {0}", ex.Message);
             }
         }
         
