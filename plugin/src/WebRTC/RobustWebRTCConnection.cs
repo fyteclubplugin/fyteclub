@@ -108,12 +108,12 @@ namespace FyteClub.WebRTC
                         };
                     }
                     
-                    // Simplified data channel monitoring
+                    // Optimized data channel monitoring with faster checks
                     _ = Task.Run(async () => {
                         _pluginLog?.Info($"⏳ [WebRTC] Monitoring data channel for {peer.PeerId}");
                         
-                        // Wait up to 15 seconds with less frequent checks
-                        for (int i = 0; i < 15; i++)
+                        // Wait up to 10 seconds with more frequent initial checks
+                        for (int i = 0; i < 20; i++) // 20 checks over 10 seconds
                         {
                             if (peer.DataChannel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
                             {
@@ -122,7 +122,9 @@ namespace FyteClub.WebRTC
                                 OnConnected?.Invoke();
                                 return;
                             }
-                            await Task.Delay(1000); // Check every second
+                            // Progressive delay: check more frequently at start
+                            var delay = i < 10 ? 300 : 700; // 300ms for first 10 checks, then 700ms
+                            await Task.Delay(delay);
                         }
                         
                         // Timeout - trigger anyway as connection might still work
@@ -272,15 +274,17 @@ namespace FyteClub.WebRTC
                     };
                 }
                 
-                // Simplified re-publish logic
+                // Optimized re-publish logic for faster connection establishment
                 _ = Task.Run(async () =>
                 {
                     var republishCount = 0;
-                    var maxAttempts = 10; // 1 minute total
+                    var maxAttempts = 8; // Reduced from 10 to 8 attempts
                     
                     while (!answerReceived && !connectionEstablished && republishCount < maxAttempts)
                     {
-                        await Task.Delay(6000); // Re-publish every 6 seconds
+                        // Progressive delay: start fast, then slow down
+                        var delay = republishCount < 3 ? 2000 : 4000; // 2s for first 3, then 4s
+                        await Task.Delay(delay);
                         
                         if (!answerReceived && !connectionEstablished)
                         {
@@ -435,9 +439,9 @@ namespace FyteClub.WebRTC
                     _pluginLog?.Info($"[WebRTC] JOINER: Subscribed, HandleOffer will process offers automatically");
                     Console.WriteLine($"[JOINER] Subscribed, HandleOffer will process offers automatically");
 
-                    // Send republish request
+                    // Send republish request faster for quicker connection
                     _ = Task.Run(async () => {
-                        await Task.Delay(3000); // Wait 3s first
+                        await Task.Delay(1000); // Reduced from 3s to 1s
                         try
                         {
                             await nostr.SendRepublishRequestAsync(uuid);

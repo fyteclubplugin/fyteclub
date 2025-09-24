@@ -422,6 +422,66 @@ namespace FyteClub
         }
 
         /// <summary>
+        /// Apply player mods directly from AdvancedPlayerInfo (for P2P protocol)
+        /// </summary>
+        public async Task<ModApplicationResult> ApplyPlayerMods(AdvancedPlayerInfo playerInfo)
+        {
+            try
+            {
+                _pluginLog.Info($"🎯 Applying mods for {playerInfo.PlayerName}: {playerInfo.Mods?.Count ?? 0} mods, glamourer: {playerInfo.GlamourerData?.Length ?? 0} chars");
+                
+                // Apply using the mod integration service directly
+                var success = await _modIntegration.ApplyPlayerMods(playerInfo, playerInfo.PlayerName);
+                
+                if (success)
+                {
+                    _pluginLog.Info($"✅ Successfully applied mods for {playerInfo.PlayerName}");
+                    
+                    // Update applied state tracking
+                    var stateHash = GenerateStateHash(playerInfo);
+                    _appliedStates[playerInfo.PlayerName] = new AppliedModState
+                    {
+                        PlayerId = playerInfo.PlayerName,
+                        StateHash = stateHash,
+                        ApplicationTime = DateTime.UtcNow,
+                        TransactionId = Guid.NewGuid().ToString("N")[..8]
+                    };
+                    
+                    return new ModApplicationResult
+                    {
+                        Success = true,
+                        ComponentsProcessed = (playerInfo.Mods?.Count ?? 0) + 
+                                            (!string.IsNullOrEmpty(playerInfo.GlamourerData) ? 1 : 0) +
+                                            (!string.IsNullOrEmpty(playerInfo.CustomizePlusData) ? 1 : 0) +
+                                            (playerInfo.SimpleHeelsOffset != 0 ? 1 : 0) +
+                                            (!string.IsNullOrEmpty(playerInfo.HonorificTitle) ? 1 : 0)
+                    };
+                }
+                else
+                {
+                    _pluginLog.Warning($"❌ Failed to apply mods for {playerInfo.PlayerName}");
+                    return new ModApplicationResult { Success = false, ErrorMessage = "Mod integration failed" };
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"💥 Error applying mods for {playerInfo.PlayerName}: {ex.Message}");
+                return new ModApplicationResult { Success = false, ErrorMessage = ex.Message };
+            }
+        }
+        
+        /// <summary>
+        /// Generate a state hash for AdvancedPlayerInfo
+        /// </summary>
+        private string GenerateStateHash(AdvancedPlayerInfo playerInfo)
+        {
+            var content = $"{string.Join("|", playerInfo.Mods ?? new List<string>())}|{playerInfo.GlamourerData}|{playerInfo.CustomizePlusData}|{playerInfo.SimpleHeelsOffset}|{playerInfo.HonorificTitle}";
+            using var sha256 = System.Security.Cryptography.SHA256.Create();
+            var hash = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(content));
+            return Convert.ToHexString(hash)[..16];
+        }
+
+        /// <summary>
         /// Check if a player's mods need updating based on state hash.
         /// </summary>
         public bool NeedsUpdate(string playerId, string stateHash)

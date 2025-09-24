@@ -114,8 +114,13 @@ namespace FyteClub.Core
             _syncshellManager = new SyncshellManager(_pluginLog);
             _turnManager = new FyteClub.TURN.TurnServerManager(_pluginLog);
             
+            // Wire up mod data received handler
+            _syncshellManager.OnModDataReceived += OnReceivedModData;
+            
             // Initialize P2P mod sync integration
-            _p2pModSyncIntegration = new P2PModSyncIntegration(_pluginLog, _modSystemIntegration);
+            _p2pModSyncIntegration = new P2PModSyncIntegration(_pluginLog, _modSystemIntegration, _syncshellManager);
+            
+            ModularLogger.LogDebug(LogModule.Core, "Wired up OnModDataReceived handler for automatic mod application");
             
             // CRITICAL: Defer local player name setup to framework thread
             _framework.RunOnFrameworkThread(() =>
@@ -335,13 +340,42 @@ namespace FyteClub.Core
         {
             if (_modSystemIntegration != null)
             {
-                _modSyncOrchestrator = new EnhancedP2PModSyncOrchestrator(_pluginLog, _modSystemIntegration);
+                _modSyncOrchestrator = new EnhancedP2PModSyncOrchestrator(_pluginLog, _modSystemIntegration, _syncshellManager);
                 
                 // Wire up the P2P integration with the orchestrator
                 if (_p2pModSyncIntegration != null)
                 {
                     _p2pModSyncIntegration.RegisterOrchestrator(_modSyncOrchestrator);
                 }
+                
+                // CRITICAL: Wire enhanced orchestrator directly to OnModDataReceived for mod application
+                _syncshellManager.OnModDataReceived += async (playerName, modData) =>
+                {
+                    try
+                    {
+                        ModularLogger.LogAlways(LogModule.Core, "🎯 Enhanced orchestrator received mod data for {0}", playerName);
+                        
+                        // Convert JsonElement to AdvancedPlayerInfo
+                        var playerInfo = ConvertJsonToPlayerInfo(modData, playerName);
+                        if (playerInfo != null)
+                        {
+                            // Create a ModDataResponse for the enhanced orchestrator
+                            var response = new FyteClub.ModSystem.ModDataResponse
+                            {
+                                PlayerName = playerName,
+                                PlayerInfo = playerInfo,
+                                DataHash = FyteClub.ModSystem.P2PModProtocol.CalculateDataHash(playerInfo, new Dictionary<string, TransferableFile>())
+                            };
+                            
+                            // Trigger the enhanced orchestrator's mod application
+                            await _modSyncOrchestrator.HandleReceivedModData(response);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        ModularLogger.LogAlways(LogModule.Core, "Error in enhanced orchestrator mod data handler: {0}", ex.Message);
+                    }
+                };
                 
                 ModularLogger.LogDebug(LogModule.Core, "P2P mod sync orchestrator initialized");
                 
@@ -419,13 +453,25 @@ namespace FyteClub.Core
                 var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
                 if (playerInfo != null)
                 {
+                    ModularLogger.LogAlways(LogModule.Core, "Retrieved player info with {0} mods", playerInfo.Mods?.Count ?? 0);
+                    
+                    // Debug: Log the actual mods being cached
+                    if (playerInfo.Mods?.Count > 0)
+                    {
+                        ModularLogger.LogAlways(LogModule.Core, "First few mods being cached:");
+                        for (int i = 0; i < Math.Min(3, playerInfo.Mods.Count); i++)
+                        {
+                            ModularLogger.LogAlways(LogModule.Core, "  [{0}]: {1}", i, playerInfo.Mods[i]);
+                        }
+                    }
+                    
                     var componentData = new
                     {
-                        mods = playerInfo.Mods,
-                        glamourerDesign = playerInfo.GlamourerDesign,
-                        customizePlusProfile = playerInfo.CustomizePlusProfile,
-                        simpleHeelsOffset = playerInfo.SimpleHeelsOffset,
-                        honorificTitle = playerInfo.HonorificTitle
+                        mods = playerInfo.Mods ?? new List<string>(),
+                        glamourerDesign = playerInfo.GlamourerData ?? "",
+                        customizePlusProfile = playerInfo.CustomizePlusData ?? "",
+                        simpleHeelsOffset = playerInfo.SimpleHeelsOffset ?? 0.0f,
+                        honorificTitle = playerInfo.HonorificTitle ?? ""
                     };
                     
                     var modDataDict = new Dictionary<string, object>
@@ -434,16 +480,33 @@ namespace FyteClub.Core
                         ["playerId"] = playerName,
                         ["playerName"] = playerName,
                         ["mods"] = playerInfo.Mods ?? new List<string>(),
-                        ["glamourerDesign"] = playerInfo.GlamourerDesign ?? "",
-                        ["customizePlusProfile"] = playerInfo.CustomizePlusProfile ?? "",
+                        ["glamourerDesign"] = playerInfo.GlamourerData ?? "",
+                        ["customizePlusProfile"] = playerInfo.CustomizePlusData ?? "",
                         ["simpleHeelsOffset"] = playerInfo.SimpleHeelsOffset ?? 0.0f,
                         ["honorificTitle"] = playerInfo.HonorificTitle ?? "",
                         ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                     };
                     
+                    ModularLogger.LogAlways(LogModule.Core, "About to cache: {0} mods, glamourer: {1}, customize+: {2}", 
+                        (playerInfo.Mods?.Count ?? 0), 
+                        !string.IsNullOrEmpty(playerInfo.GlamourerData),
+                        !string.IsNullOrEmpty(playerInfo.CustomizePlusData));
+                    
                     _syncshellManager.UpdatePlayerModData(playerName, componentData, modDataDict);
                     
-                    ModularLogger.LogAlways(LogModule.Core, "Cached {0} mods for local player {1}", playerInfo.Mods?.Count ?? 0, playerName);
+                    // Trigger full file transfer via P2P orchestrator (same as chaos button)
+                    if (_modSyncOrchestrator != null)
+                    {
+                        ModularLogger.LogAlways(LogModule.Core, "Triggering full file transfer for {0} via P2P orchestrator", playerName);
+                        await _modSyncOrchestrator.BroadcastPlayerMods(playerInfo);
+                        ModularLogger.LogAlways(LogModule.Core, "Full file transfer completed for {0}", playerName);
+                    }
+                    else
+                    {
+                        ModularLogger.LogAlways(LogModule.Core, "P2P orchestrator not available - only metadata cached");
+                    }
+                    
+                    ModularLogger.LogAlways(LogModule.Core, "Successfully cached {0} mods for local player {1}", playerInfo.Mods?.Count ?? 0, playerName);
                 }
                 else
                 {
@@ -453,6 +516,7 @@ namespace FyteClub.Core
             catch (Exception ex)
             {
                 ModularLogger.LogAlways(LogModule.Core, "Failed to cache local player mods: {0}", ex.Message);
+                ModularLogger.LogAlways(LogModule.Core, "Stack trace: {0}", ex.StackTrace);
             }
         }
 
@@ -460,11 +524,322 @@ namespace FyteClub.Core
         public bool HasPerformedInitialUpload => _hasPerformedInitialUpload;
         public ClientModCache? ClientCache => _clientCache;
         public ModComponentStorage? ComponentCache => _componentCache;
+        public SyncshellManager? SyncshellManager => _syncshellManager;
         public bool IsPenumbraAvailable => _modSystemIntegration?.IsPenumbraAvailable ?? false;
         public bool IsGlamourerAvailable => _modSystemIntegration?.IsGlamourerAvailable ?? false;
         public bool IsCustomizePlusAvailable => _modSystemIntegration?.IsCustomizePlusAvailable ?? false;
         public bool IsHeelsAvailable => _modSystemIntegration?.IsHeelsAvailable ?? false;
         public bool IsHonorificAvailable => _modSystemIntegration?.IsHonorificAvailable ?? false;
+        public IClientState ClientState => _clientState;
+        public IFramework Framework => _framework;
+        
+        // Public method for UI to force cache local mods
+        public async Task ForceCacheLocalPlayerMods(string playerName)
+        {
+            await CacheLocalPlayerMods(playerName);
+        }
+        
+        /// <summary>
+        /// Test the chunking protocol with real mod data
+        /// </summary>
+        public async Task TestChunkingProtocol()
+        {
+            try
+            {
+                ModularLogger.LogAlways(LogModule.Core, "🧪 Starting chunking protocol test...");
+                
+                if (_modSystemIntegration == null)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ Mod system integration not available");
+                    return;
+                }
+                
+                // Get local player name
+                var localPlayerName = await _framework.RunOnFrameworkThread(() => _clientState?.LocalPlayer?.Name?.TextValue);
+                if (string.IsNullOrEmpty(localPlayerName))
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ Local player not found");
+                    return;
+                }
+                
+                // Get current mod data
+                var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(localPlayerName);
+                if (playerInfo == null)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ No mod data found for {0}", localPlayerName);
+                    return;
+                }
+                
+                ModularLogger.LogAlways(LogModule.Core, "📦 Original data: {0} mods, glamourer: {1} chars", 
+                    playerInfo.Mods?.Count ?? 0, playerInfo.GlamourerData?.Length ?? 0);
+                
+                if (_modSyncOrchestrator == null)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ P2P orchestrator not available");
+                    return;
+                }
+                
+                // Create a test peer ID
+                var testPeerId = "test_chunking_" + Guid.NewGuid().ToString("N")[..8];
+                var receivedChunks = new List<byte[]>();
+                var chunkCount = 0;
+                
+                // Register a test peer that captures chunks
+                _modSyncOrchestrator.RegisterPeer(testPeerId, async (data) => {
+                    chunkCount++;
+                    receivedChunks.Add(data);
+                    ModularLogger.LogAlways(LogModule.Core, "📦 Captured chunk {0}: {1} bytes", chunkCount, data.Length);
+                    
+                    // Process the chunk through the orchestrator to test reassembly
+                    await _modSyncOrchestrator.ProcessIncomingMessage(testPeerId + "_receiver", data);
+                });
+                
+                ModularLogger.LogAlways(LogModule.Core, "📦 Registered test peer: {0}", testPeerId);
+                
+                // Register a receiver peer to test reassembly
+                _modSyncOrchestrator.RegisterPeer(testPeerId + "_receiver", async (data) => {
+                    ModularLogger.LogAlways(LogModule.Core, "📦 Receiver got data: {0} bytes (should not happen in chunking test)", data.Length);
+                });
+                
+                ModularLogger.LogAlways(LogModule.Core, "📦 Broadcasting mod data to test peer...");
+                
+                // Broadcast the mod data (this will chunk it)
+                await _modSyncOrchestrator.BroadcastPlayerMods(playerInfo);
+                
+                // Wait a moment for chunks to be processed
+                await Task.Delay(2000);
+                
+                ModularLogger.LogAlways(LogModule.Core, "📦 Test completed: {0} chunks captured", receivedChunks.Count);
+                
+                if (receivedChunks.Count > 0)
+                {
+                    var totalBytes = receivedChunks.Sum(c => c.Length);
+                    ModularLogger.LogAlways(LogModule.Core, "📦 Total chunked data: {0} bytes ({1:F1} KB)", totalBytes, totalBytes / 1024.0);
+                    
+                    // Test manual reassembly
+                    ModularLogger.LogAlways(LogModule.Core, "📦 Testing manual chunk reassembly...");
+                    await TestManualChunkReassembly(receivedChunks, playerInfo);
+                }
+                else
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ No chunks were captured - chunking may not be working");
+                }
+                
+                // Cleanup test peers
+                _modSyncOrchestrator.UnregisterPeer(testPeerId);
+                _modSyncOrchestrator.UnregisterPeer(testPeerId + "_receiver");
+                
+                ModularLogger.LogAlways(LogModule.Core, "✅ Chunking protocol test completed");
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.Core, "❌ Chunking test failed: {0}", ex.Message);
+                ModularLogger.LogAlways(LogModule.Core, "Stack trace: {0}", ex.StackTrace);
+            }
+        }
+        
+        /// <summary>
+        /// Test manual reassembly of chunks to verify data integrity
+        /// </summary>
+        private async Task TestManualChunkReassembly(List<byte[]> chunks, AdvancedPlayerInfo originalPlayerInfo)
+        {
+            try
+            {
+                ModularLogger.LogAlways(LogModule.Core, "🔧 Testing manual chunk reassembly with {0} chunks...", chunks.Count);
+                
+                // Try to identify chunk headers and reassemble
+                var chunkData = new Dictionary<int, byte[]>();
+                int expectedChunks = 0;
+                string? messageId = null;
+                
+                foreach (var chunk in chunks)
+                {
+                    try
+                    {
+                        // Check if this looks like a P2P protocol chunk
+                        if (chunk.Length < 10) continue;
+                        
+                        // Look for chunk header pattern
+                        var headerStr = System.Text.Encoding.UTF8.GetString(chunk, 0, Math.Min(100, chunk.Length));
+                        if (headerStr.Contains("CHUNK:"))
+                        {
+                            var parts = headerStr.Split(':');
+                            if (parts.Length >= 4)
+                            {
+                                messageId = parts[1];
+                                var chunkIndex = int.Parse(parts[2]);
+                                var totalChunks = int.Parse(parts[3]);
+                                expectedChunks = totalChunks;
+                                
+                                // Extract chunk data (after header)
+                                var headerEnd = headerStr.IndexOf(':', headerStr.IndexOf(':', headerStr.IndexOf(':', 6) + 1) + 1) + 1;
+                                var chunkPayload = new byte[chunk.Length - headerEnd];
+                                Array.Copy(chunk, headerEnd, chunkPayload, 0, chunkPayload.Length);
+                                
+                                chunkData[chunkIndex] = chunkPayload;
+                                ModularLogger.LogAlways(LogModule.Core, "🔧 Parsed chunk {0}/{1}: {2} bytes payload", chunkIndex + 1, totalChunks, chunkPayload.Length);
+                            }
+                        }
+                        else
+                        {
+                            ModularLogger.LogAlways(LogModule.Core, "🔧 Chunk doesn't match expected format: {0}...", headerStr[..Math.Min(50, headerStr.Length)]);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        ModularLogger.LogAlways(LogModule.Core, "🔧 Error parsing chunk: {0}", ex.Message);
+                    }
+                }
+                
+                if (chunkData.Count == expectedChunks && expectedChunks > 0)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "✅ All {0} chunks parsed successfully", expectedChunks);
+                    
+                    // Reassemble data
+                    var totalSize = chunkData.Values.Sum(c => c.Length);
+                    var reassembled = new byte[totalSize];
+                    int offset = 0;
+                    
+                    for (int i = 0; i < expectedChunks; i++)
+                    {
+                        if (chunkData.ContainsKey(i))
+                        {
+                            Array.Copy(chunkData[i], 0, reassembled, offset, chunkData[i].Length);
+                            offset += chunkData[i].Length;
+                        }
+                    }
+                    
+                    ModularLogger.LogAlways(LogModule.Core, "✅ Reassembled {0} bytes from chunks", reassembled.Length);
+                    
+                    // Try to deserialize and verify
+                    if (_modSyncOrchestrator != null)
+                    {
+                        // This would need access to the P2P protocol's deserialization method
+                        ModularLogger.LogAlways(LogModule.Core, "📦 Reassembly test completed - data integrity verification would need P2P protocol access");
+                    }
+                }
+                else
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ Chunk parsing failed: got {0} chunks, expected {1}", chunkData.Count, expectedChunks);
+                }
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.Core, "❌ Manual reassembly test failed: {0}", ex.Message);
+            }
+        }
+        
+        /// <summary>
+        /// Handle received mod data from other players and apply it
+        /// </summary>
+        private async void OnReceivedModData(string playerName, System.Text.Json.JsonElement modData)
+        {
+            try
+            {
+                ModularLogger.LogAlways(LogModule.Core, "🎯 Processing received mod data for {0}", playerName);
+                
+                if (_modSystemIntegration == null)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ Mod system integration not available");
+                    return;
+                }
+                
+                // Convert JsonElement to AdvancedPlayerInfo
+                var playerInfo = ConvertJsonToPlayerInfo(modData, playerName);
+                if (playerInfo == null)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ Failed to convert received data to player info");
+                    return;
+                }
+                
+                ModularLogger.LogAlways(LogModule.Core, "✅ Converted mod data: {0} mods, glamourer: {1}", 
+                    playerInfo.Mods?.Count ?? 0, !string.IsNullOrEmpty(playerInfo.GlamourerData));
+                
+                // Apply the mods to the target player
+                var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, playerName);
+                
+                if (success)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "✅ Successfully applied received mods to {0}", playerName);
+                }
+                else
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ Failed to apply received mods to {0}", playerName);
+                }
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.Core, "❌ Error processing received mod data for {0}: {1}", playerName, ex.Message);
+            }
+        }
+        
+        /// <summary>
+        /// Convert JsonElement to AdvancedPlayerInfo
+        /// </summary>
+        private AdvancedPlayerInfo? ConvertJsonToPlayerInfo(System.Text.Json.JsonElement modData, string playerName)
+        {
+            try
+            {
+                var playerInfo = new AdvancedPlayerInfo
+                {
+                    PlayerName = playerName,
+                    Mods = new List<string>(),
+                    GlamourerData = null,
+                    CustomizePlusData = null,
+                    SimpleHeelsOffset = 0.0f,
+                    HonorificTitle = null
+                };
+                
+                // Extract mods
+                if (modData.TryGetProperty("mods", out var modsElement) && modsElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    var mods = new List<string>();
+                    foreach (var mod in modsElement.EnumerateArray())
+                    {
+                        if (mod.ValueKind == System.Text.Json.JsonValueKind.String)
+                        {
+                            var modStr = mod.GetString();
+                            if (!string.IsNullOrEmpty(modStr))
+                            {
+                                mods.Add(modStr);
+                            }
+                        }
+                    }
+                    playerInfo.Mods = mods;
+                }
+                
+                // Extract glamourer data
+                if (modData.TryGetProperty("glamourerDesign", out var glamourerElement) && glamourerElement.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    playerInfo.GlamourerData = glamourerElement.GetString();
+                }
+                
+                // Extract customize+ data
+                if (modData.TryGetProperty("customizePlusProfile", out var customizeElement) && customizeElement.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    playerInfo.CustomizePlusData = customizeElement.GetString();
+                }
+                
+                // Extract heels offset
+                if (modData.TryGetProperty("simpleHeelsOffset", out var heelsElement) && heelsElement.ValueKind == System.Text.Json.JsonValueKind.Number)
+                {
+                    playerInfo.SimpleHeelsOffset = heelsElement.GetSingle();
+                }
+                
+                // Extract honorific title
+                if (modData.TryGetProperty("honorificTitle", out var honorificElement) && honorificElement.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    playerInfo.HonorificTitle = honorificElement.GetString();
+                }
+                
+                return playerInfo;
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.Core, "Error converting JsonElement to PlayerInfo: {0}", ex.Message);
+                return null;
+            }
+        }
 
         public void Dispose()
         {

@@ -39,8 +39,8 @@ namespace FyteClub.WebRTC
         {
             if (_clients.Count > 0) return;
 
-            var connectedCount = 0;
-            foreach (var relay in _relays)
+            // Connect to all relays in parallel for faster startup
+            var connectionTasks = _relays.Select(async relay =>
             {
                 try
                 {
@@ -61,37 +61,39 @@ namespace FyteClub.WebRTC
                             _log?.Warning($"[NNostr] Error processing events from {relay}: {ex.Message}");
                         }
                     };
-                    
-                    // Note: NNostr library doesn't expose connection events, 
-                    // so we handle errors via try-catch in the main connection logic
 
-                    // Add connection timeout and retry
+                    // Reduced timeout for faster connection establishment
                     var connectTask = client.ConnectAndWaitUntilConnected();
-                    var timeoutTask = Task.Delay(5000); // 5 second timeout
+                    var timeoutTask = Task.Delay(2000); // 2 second timeout per relay
                     
                     if (await Task.WhenAny(connectTask, timeoutTask) == timeoutTask)
                     {
                         _log?.Warning($"[NNostr] Connection timeout to {relay}");
                         client.Dispose();
-                        continue;
+                        return (NostrClient?)null;
                     }
                     
-                    await connectTask; // Ensure connection completed successfully
-                    _clients.Add(client);
-                    connectedCount++;
+                    await connectTask;
                     _log?.Info($"[NNostr] Connected to {relay}");
+                    return client;
                 }
                 catch (Exception ex)
                 {
                     _log?.Warning($"[NNostr] Failed to connect to {relay}: {ex.Message}");
+                    return (NostrClient?)null;
                 }
-            }
+            });
 
-            if (connectedCount == 0)
+            var results = await Task.WhenAll(connectionTasks);
+            var connectedClients = results.Where(c => c != null).Cast<NostrClient>().ToList();
+            
+            _clients.AddRange(connectedClients);
+            
+            if (_clients.Count == 0)
             {
                 throw new InvalidOperationException("No Nostr relays available");
             }
-            _log?.Info($"[NNostr] Connected to {connectedCount}/{_relays.Length} relays");
+            _log?.Info($"[NNostr] Connected to {_clients.Count}/{_relays.Length} relays");
         }
 
         // Expose a public start to ensure relay connections before publish/subscribe
@@ -305,11 +307,21 @@ namespace FyteClub.WebRTC
                 throw new InvalidOperationException("Invalid private key for signing");
             await ev.ComputeIdAndSignAsync(ecKey);
 
+            // Publish to relays in parallel with timeout
             var publishTasks = _clients.ToArray().Select(async client =>
             {
                 try
                 {
-                    await client.PublishEvent(ev);
+                    var publishTask = client.PublishEvent(ev);
+                    var timeoutTask = Task.Delay(1000, ct); // 1 second timeout per publish
+                    
+                    if (await Task.WhenAny(publishTask, timeoutTask) == timeoutTask)
+                    {
+                        _log?.Warning($"[NNostr] Publish timeout to relay");
+                        return false;
+                    }
+                    
+                    await publishTask;
                     return true;
                 }
                 catch (Exception ex)
@@ -368,11 +380,21 @@ namespace FyteClub.WebRTC
                 throw new InvalidOperationException("Invalid private key for signing");
             await ev.ComputeIdAndSignAsync(ecKey);
 
+            // Publish to relays in parallel with timeout
             var publishTasks = _clients.ToArray().Select(async client =>
             {
                 try
                 {
-                    await client.PublishEvent(ev);
+                    var publishTask = client.PublishEvent(ev);
+                    var timeoutTask = Task.Delay(1000, ct); // 1 second timeout per publish
+                    
+                    if (await Task.WhenAny(publishTask, timeoutTask) == timeoutTask)
+                    {
+                        _log?.Warning($"[NNostr] Publish timeout to relay");
+                        return false;
+                    }
+                    
+                    await publishTask;
                     return true;
                 }
                 catch (Exception ex)

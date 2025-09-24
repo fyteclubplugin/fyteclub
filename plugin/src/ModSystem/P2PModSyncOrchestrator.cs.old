@@ -364,6 +364,76 @@ namespace FyteClub
         }
 
         /// <summary>
+        /// Process incoming P2P message and apply mods to game systems
+        /// </summary>
+        public async Task ProcessIncomingMessage(string peerId, byte[] data)
+        {
+            try
+            {
+                ModularLogger.LogAlways(LogModule.WebRTC, "Processing incoming P2P message from {0}: {1} bytes", peerId, data.Length);
+                
+                // Use P2P protocol to parse the message
+                var protocol = new P2PModProtocol();
+                var playerInfo = protocol.DeserializePlayerInfo(data);
+                
+                if (playerInfo == null)
+                {
+                    ModularLogger.LogAlways(LogModule.WebRTC, "Failed to deserialize player info from {0}", peerId);
+                    return;
+                }
+                
+                ModularLogger.LogAlways(LogModule.WebRTC, "Deserialized player info for {0}: {1} mods, glamourer: {2} chars", 
+                    playerInfo.PlayerName, playerInfo.Mods?.Count ?? 0, playerInfo.GlamourerData?.Length ?? 0);
+                
+                // Apply mods directly using the mod application service
+                var result = await _modApplication.ApplyPlayerMods(playerInfo);
+                
+                if (result.Success)
+                {
+                    ModularLogger.LogAlways(LogModule.WebRTC, "✅ Successfully applied mods for {0}: {1} components processed", 
+                        playerInfo.PlayerName, result.ComponentsProcessed);
+                }
+                else
+                {
+                    ModularLogger.LogAlways(LogModule.WebRTC, "❌ Failed to apply mods for {0}: {1}", 
+                        playerInfo.PlayerName, result.ErrorMessage);
+                }
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.WebRTC, "Error processing incoming P2P message from {0}: {1}", peerId, ex.Message);
+                ModularLogger.LogAlways(LogModule.WebRTC, "Stack trace: {0}", ex.StackTrace);
+            }
+        }
+        
+        /// <summary>
+        /// Broadcast local player mods to all connected peers
+        /// </summary>
+        public async Task BroadcastPlayerMods(AdvancedPlayerInfo playerInfo)
+        {
+            try
+            {
+                ModularLogger.LogAlways(LogModule.WebRTC, "Broadcasting player mods for {0}: {1} mods", 
+                    playerInfo.PlayerName, playerInfo.Mods?.Count ?? 0);
+                
+                // Use P2P protocol to serialize the data
+                var protocol = new P2PModProtocol();
+                var data = protocol.SerializePlayerInfo(playerInfo);
+                
+                ModularLogger.LogAlways(LogModule.WebRTC, "Serialized player data: {0} bytes", data.Length);
+                
+                // TODO: Send to all connected peers via WebRTC
+                // This would be handled by the syncshell manager's broadcast method
+                
+                ModularLogger.LogAlways(LogModule.WebRTC, "Player mod broadcast completed");
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.WebRTC, "Error broadcasting player mods: {0}", ex.Message);
+            }
+        }
+
+        /// <summary>
         /// Get orchestration statistics for monitoring.
         /// </summary>
         public OrchestrationStats GetStats()

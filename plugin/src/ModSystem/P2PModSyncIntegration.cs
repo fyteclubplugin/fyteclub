@@ -20,11 +20,11 @@ namespace FyteClub.ModSystem
         private readonly Dictionary<string, RobustWebRTCConnection> _connections = new();
         private bool _disposed = false;
 
-        public P2PModSyncIntegration(IPluginLog pluginLog, FyteClubModIntegration modIntegration)
+        public P2PModSyncIntegration(IPluginLog pluginLog, FyteClubModIntegration modIntegration, SyncshellManager? syncshellManager = null)
         {
             _pluginLog = pluginLog;
             _modIntegration = modIntegration;
-            _orchestrator = new EnhancedP2PModSyncOrchestrator(pluginLog, modIntegration);
+            _orchestrator = new EnhancedP2PModSyncOrchestrator(pluginLog, modIntegration, syncshellManager);
             
             _pluginLog.Info("[P2PModSyncIntegration] Integration layer initialized");
         }

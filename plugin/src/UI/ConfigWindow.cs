@@ -318,6 +318,12 @@ namespace FyteClub.UI
             
             ImGui.Separator();
             ImGui.Text("Debug:");
+            if (ImGui.Button("Test Chunking Protocol"))
+            {
+                _ = Task.Run(() => _plugin.TestChunkingProtocol());
+            }
+            
+            ImGui.SameLine();
             if (ImGui.Button("Test Mod Detection (Self)"))
             {
                 _ = Task.Run(() => _plugin.TestModDetectionOnSelf());
@@ -373,7 +379,114 @@ namespace FyteClub.UI
 
         private void DrawCacheTab()
         {
-            ImGui.Text("Cache Statistics:");
+            // SyncshellManager Cache (Primary)
+            ImGui.Text("Player Mod Cache (P2P Sharing):");
+            if (_plugin.SyncshellManager != null)
+            {
+                var playerCount = 0;
+                var totalMods = 0;
+                
+                // Try to get local player name from ClientState directly (safer)
+                string? localPlayerName = null;
+                try
+                {
+                    localPlayerName = _plugin.ClientState?.LocalPlayer?.Name?.TextValue;
+                }
+                catch
+                {
+                    // Fallback: try to get from SyncshellManager's stored name
+                    localPlayerName = null;
+                }
+                
+                // Debug: Show what player name we're looking for
+                if (!string.IsNullOrEmpty(localPlayerName))
+                {
+                    ImGui.Text($"Looking for player: {localPlayerName}");
+                    
+                    var cachedData = _plugin.SyncshellManager.GetPlayerModData(localPlayerName);
+                    if (cachedData != null)
+                    {
+                        playerCount = 1;
+                        
+                        // Extract mod count from cached data - handle different data types
+                        if (cachedData.RecipeData is System.Text.Json.JsonElement element && element.ValueKind == System.Text.Json.JsonValueKind.Object)
+                        {
+                            if (element.TryGetProperty("mods", out var modsProperty) && modsProperty.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            {
+                                totalMods = modsProperty.GetArrayLength();
+                            }
+                        }
+                        else if (cachedData.RecipeData is Dictionary<string, object> dict)
+                        {
+                            if (dict.TryGetValue("mods", out var modsObj) && modsObj is List<string> modsList)
+                            {
+                                totalMods = modsList.Count;
+                            }
+                            else if (dict.TryGetValue("mods", out var modsObj2) && modsObj2 is System.Text.Json.JsonElement modsElement && modsElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            {
+                                totalMods = modsElement.GetArrayLength();
+                            }
+                        }
+                        
+                        ImGui.Text($"Players: {playerCount}");
+                        ImGui.Text($"Total Mods: {totalMods}");
+                        ImGui.Text($"Last Updated: {cachedData.LastUpdated:HH:mm:ss}");
+                        
+                        if (totalMods > 0)
+                        {
+                            ImGui.TextColored(new Vector4(0, 1, 0, 1), "✅ Local mods cached and ready for sharing");
+                        }
+                        else
+                        {
+                            ImGui.TextColored(new Vector4(1, 0.5f, 0, 1), "⚠️ No mods detected - check Penumbra");
+                        }
+                    }
+                    else
+                    {
+                        ImGui.Text("Players: 0");
+                        ImGui.Text("Total Mods: 0");
+                        ImGui.TextColored(new Vector4(1, 0, 0, 1), $"❌ No cached data for '{localPlayerName}'");
+                        
+                        // Debug: Show what players ARE in cache
+                        ImGui.Text("Debug: Checking cache contents...");
+                        if (ImGui.Button("Force Cache Local Mods"))
+                        {
+                            _ = Task.Run(async () => {
+                                try
+                                {
+                                    await _plugin.Framework.RunOnFrameworkThread(async () => {
+                                        var playerName = _plugin.ClientState?.LocalPlayer?.Name?.TextValue;
+                                        if (!string.IsNullOrEmpty(playerName))
+                                        {
+                                            ModularLogger.LogAlways(LogModule.Core, "Force caching mods for: {0}", playerName);
+                                            await _plugin.ForceCacheLocalPlayerMods(playerName);
+                                        }
+                                    });
+                                }
+                                catch (Exception ex)
+                                {
+                                    ModularLogger.LogAlways(LogModule.Core, "Force cache failed: {0}", ex.Message);
+                                }
+                            });
+                        }
+                    }
+                }
+                else
+                {
+                    ImGui.Text("Local player not detected - enter game world first");
+                    ImGui.Text("Players: 0");
+                    ImGui.Text("Total Mods: 0");
+                }
+            }
+            else
+            {
+                ImGui.Text("SyncshellManager not available");
+            }
+            
+            ImGui.Separator();
+            
+            // Legacy cache stats (for technical users)
+            ImGui.Text("Technical Cache Statistics:");
             ImGui.Text(_plugin.GetCacheStatsDisplay());
             
             ImGui.Separator();

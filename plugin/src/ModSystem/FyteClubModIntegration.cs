@@ -1863,6 +1863,40 @@ namespace FyteClub
         public void RedrawCharacterByName(string name) { }
         
         /// <summary>
+        /// Trigger redraw for a specific player after mod application
+        /// </summary>
+        public async Task TriggerPlayerRedraw(string playerName)
+        {
+            try
+            {
+                _pluginLog.Info($"[REDRAW] Triggering redraw for {playerName}");
+                
+                var character = await _framework.RunOnFrameworkThread(() => FindCharacterByName(playerName));
+                if (character != null)
+                {
+                    // Use Penumbra's redraw if available
+                    if (IsPenumbraAvailable && _penumbraRedraw != null)
+                    {
+                        _penumbraRedraw.Invoke(character.ObjectIndex, RedrawType.Redraw);
+                        _pluginLog.Info($"[REDRAW] Penumbra redraw triggered for {playerName}");
+                    }
+                    else
+                    {
+                        _pluginLog.Debug($"[REDRAW] Penumbra not available for redraw of {playerName}");
+                    }
+                }
+                else
+                {
+                    _pluginLog.Warning($"[REDRAW] Character {playerName} not found for redraw");
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"[REDRAW] Error triggering redraw for {playerName}: {ex.Message}");
+            }
+        }
+        
+        /// <summary>
         /// Get names of all nearby players for mod application targeting
         /// </summary>
         public async Task<List<string>> GetNearbyPlayerNames()

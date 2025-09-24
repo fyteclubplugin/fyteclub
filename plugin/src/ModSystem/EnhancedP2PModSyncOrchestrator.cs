@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
@@ -19,6 +20,7 @@ namespace FyteClub
         private readonly IPluginLog _pluginLog;
         private readonly P2PModProtocol _protocol;
         private readonly FyteClubModIntegration _modIntegration;
+        private readonly SyncshellManager? _syncshellManager;
         private readonly Dictionary<string, Func<byte[], Task>> _peerSendFunctions = new();
         
         // Active sync sessions
@@ -31,10 +33,12 @@ namespace FyteClub
 
         public EnhancedP2PModSyncOrchestrator(
             IPluginLog pluginLog,
-            FyteClubModIntegration modIntegration)
+            FyteClubModIntegration modIntegration,
+            SyncshellManager? syncshellManager = null)
         {
             _pluginLog = pluginLog;
             _modIntegration = modIntegration;
+            _syncshellManager = syncshellManager;
             _protocol = new P2PModProtocol(pluginLog);
             
             // Wire up protocol event handlers
@@ -43,6 +47,9 @@ namespace FyteClub
             _protocol.OnModApplicationRequested += HandleModApplicationRequest;
             _protocol.OnSyncComplete += HandleSyncComplete;
             _protocol.OnError += HandleError;
+            
+            // Wire up handler for received mod data responses (broadcasts)
+            _protocol.OnModDataReceived += HandleReceivedModData;
             
             _pluginLog.Info("[EnhancedP2PSync] Enhanced orchestrator initialized with full P2P protocol support");
         }
@@ -80,20 +87,36 @@ namespace FyteClub
         {
             try
             {
+                _pluginLog.Info($"[EnhancedP2PSync] 🔍 Processing {messageData.Length} bytes from {peerId}");
+                
                 var message = _protocol.DeserializeMessage(messageData);
                 if (message == null)
                 {
-                    // Don't log warning here as this is expected for legacy messages
-                    // The P2P integration will handle fallback to legacy format
+                    // Check if this might be a chunked message that's still being collected
+                    // In that case, null is expected and not an error
+                    if (messageData.Length > 5 && messageData[0] == 1) // Compressed message
+                    {
+                        _pluginLog.Debug($"[EnhancedP2PSync] 📦 Message from {peerId} returned null (likely chunked message still collecting)");
+                        return; // This is normal for chunked messages
+                    }
+                    
+                    _pluginLog.Warning($"[EnhancedP2PSync] ❌ Failed to deserialize message from {peerId} - {messageData.Length} bytes");
+                    
+                    // Log first few bytes for debugging
+                    var preview = messageData.Take(Math.Min(50, messageData.Length)).ToArray();
+                    var previewStr = string.Join(" ", preview.Select(b => b.ToString("X2")));
+                    _pluginLog.Warning($"[EnhancedP2PSync] 🔍 Message preview: {previewStr}");
                     return;
                 }
 
-                _pluginLog.Debug($"[EnhancedP2PSync] Processing {message.Type} from {peerId}");
+                _pluginLog.Info($"[EnhancedP2PSync] ✅ Successfully deserialized {message.Type} from {peerId}");
                 await _protocol.ProcessMessage(message);
+                _pluginLog.Info($"[EnhancedP2PSync] ✅ Completed processing {message.Type} from {peerId}");
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"[EnhancedP2PSync] Error processing message from {peerId}: {ex.Message}");
+                _pluginLog.Error($"[EnhancedP2PSync] ❌ Error processing message from {peerId}: {ex.Message}");
+                _pluginLog.Error($"[EnhancedP2PSync] Stack trace: {ex.StackTrace}");
             }
         }
 
@@ -179,8 +202,11 @@ namespace FyteClub
                     _pluginLog.Info($"[EnhancedP2PSync] Successfully applied mods for {response.PlayerName} from {peerId}");
                     _pluginLog.Info($"📥 [RECEIVE DEBUG] ✅ Mod application successful!");
                     
+                    // Trigger redraw for the player
+                    await TriggerPlayerRedraw(response.PlayerName);
+                    
                     // Send completion notification only if not a test
-                    if (peerId != "test-peer")
+                    if (peerId != "test-peer" && peerId != "broadcast")
                     {
                         await SendSyncComplete(peerId, response.PlayerName, response.FileReplacements.Count, 
                             response.FileReplacements.Values.Sum(f => f.Content.Length));
@@ -192,7 +218,7 @@ namespace FyteClub
                     _pluginLog.Warning($"📥 [RECEIVE DEBUG] ❌ Mod application failed!");
                     
                     // Send error only if not a test
-                    if (peerId != "test-peer")
+                    if (peerId != "test-peer" && peerId != "broadcast")
                     {
                         await SendError(peerId, "MOD_APPLICATION_FAILED", "Failed to apply received mods");
                     }
@@ -388,6 +414,84 @@ namespace FyteClub
         {
             _pluginLog.Warning($"[EnhancedP2PSync] Received error: {message.ErrorCode} - {message.ErrorDescription}");
         }
+        
+        /// <summary>
+        /// Handle received mod data responses (from broadcasts)
+        /// </summary>
+        public async Task HandleReceivedModData(ModDataResponse response)
+        {
+            try
+            {
+                _pluginLog.Info($"[EnhancedP2PSync] 🎯 RECEIVED BROADCAST MOD DATA for {response.PlayerName}");
+                _pluginLog.Info($"[EnhancedP2PSync] 📊 Data contains: {response.PlayerInfo.Mods?.Count ?? 0} mods, " +
+                               $"Glamourer: {!string.IsNullOrEmpty(response.PlayerInfo.GlamourerData)}, " +
+                               $"CustomizePlus: {!string.IsNullOrEmpty(response.PlayerInfo.CustomizePlusData)}");
+                
+                // Store in cache first
+                _pluginLog.Info($"[EnhancedP2PSync] 💾 Storing mod data in cache...");
+                await StoreReceivedModDataInCache(response);
+                
+                // Then apply the mods
+                _pluginLog.Info($"[EnhancedP2PSync] 🎨 Applying received mod data...");
+                await ProcessReceivedModData("broadcast", response);
+                
+                _pluginLog.Info($"[EnhancedP2PSync] ✅ Successfully processed broadcast mod data for {response.PlayerName}");
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"[EnhancedP2PSync] ❌ Error handling received mod data: {ex.Message}");
+                _pluginLog.Error($"[EnhancedP2PSync] Stack trace: {ex.StackTrace}");
+            }
+        }
+        
+        /// <summary>
+        /// Store received mod data in the cache system
+        /// </summary>
+        private async Task StoreReceivedModDataInCache(ModDataResponse response)
+        {
+            try
+            {
+                _pluginLog.Info($"[EnhancedP2PSync] Storing mod data in cache for {response.PlayerName}");
+                
+                // Extract component data for cache storage
+                var componentData = new
+                {
+                    mods = response.PlayerInfo.Mods ?? new List<string>(),
+                    glamourerDesign = response.PlayerInfo.GlamourerData ?? "",
+                    customizePlusProfile = response.PlayerInfo.CustomizePlusData ?? "",
+                    simpleHeelsOffset = response.PlayerInfo.SimpleHeelsOffset ?? 0.0f,
+                    honorificTitle = response.PlayerInfo.HonorificTitle ?? ""
+                };
+                
+                var modDataDict = new Dictionary<string, object>
+                {
+                    ["type"] = "mod_data",
+                    ["playerId"] = response.PlayerName,
+                    ["playerName"] = response.PlayerName,
+                    ["mods"] = response.PlayerInfo.Mods ?? new List<string>(),
+                    ["glamourerDesign"] = response.PlayerInfo.GlamourerData ?? "",
+                    ["customizePlusProfile"] = response.PlayerInfo.CustomizePlusData ?? "",
+                    ["simpleHeelsOffset"] = response.PlayerInfo.SimpleHeelsOffset ?? 0.0f,
+                    ["honorificTitle"] = response.PlayerInfo.HonorificTitle ?? "",
+                    ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                };
+                
+                // Store in SyncshellManager cache
+                if (_syncshellManager != null)
+                {
+                    _syncshellManager.UpdatePlayerModData(response.PlayerName, componentData, modDataDict);
+                    _pluginLog.Info($"[EnhancedP2PSync] Successfully cached {response.PlayerInfo.Mods?.Count ?? 0} mods for {response.PlayerName}");
+                }
+                else
+                {
+                    _pluginLog.Warning($"[EnhancedP2PSync] No SyncshellManager available for caching mod data");
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"[EnhancedP2PSync] Error storing mod data in cache: {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// Send sync completion notification
@@ -494,6 +598,33 @@ namespace FyteClub
                 }
             }
 
+            // Prepare files for transfer - same logic as HandleModDataRequest
+            var filePaths = new Dictionary<string, string>();
+            if (playerInfo.Mods?.Count > 0)
+            {
+                foreach (var modPath in playerInfo.Mods)
+                {
+                    if (modPath.Contains('|'))
+                    {
+                        var parts = modPath.Split('|', 2);
+                        if (parts.Length == 2)
+                        {
+                            filePaths[parts[1]] = parts[0]; // gamePath -> localPath
+                        }
+                    }
+                }
+            }
+            
+            _pluginLog.Info($"📁 [FILE TRANSFER DEBUG] Preparing {filePaths.Count} files for broadcast");
+            var transferableFiles = await _modIntegration._fileTransferSystem.PrepareFilesForTransfer(filePaths);
+            _pluginLog.Info($"📁 [FILE TRANSFER DEBUG] Successfully prepared {transferableFiles.Count} transferable files");
+            
+            var totalBytes = transferableFiles.Values.Sum(f => f.Content.Length);
+            _pluginLog.Info($"📁 [FILE TRANSFER DEBUG] Total file content: {totalBytes} bytes ({totalBytes / 1024.0:F1} KB)");
+
+            // Calculate data hash
+            var dataHash = P2PModProtocol.CalculateDataHash(playerInfo, transferableFiles);
+
             var tasks = new List<Task>();
             
             foreach (var kvp in _peerSendFunctions)
@@ -505,16 +636,16 @@ namespace FyteClub
                 {
                     try
                     {
-                        var message = new ModDataResponseMessage
+                        var message = new ModDataResponse
                         {
                             PlayerName = playerInfo.PlayerName,
-                            ModData = playerInfo,
-                            Hash = CalculatePlayerHash(playerInfo)
+                            DataHash = dataHash,
+                            PlayerInfo = playerInfo,
+                            FileReplacements = transferableFiles
                         };
 
-                        var data = _protocol.SerializeMessage(message);
-                        _pluginLog.Info($"📦 [P2P PACKAGE DEBUG] Sending {data.Length} bytes to peer {peerId}");
-                        await sendFunction(data);
+                        _pluginLog.Info($"📦 [P2P PACKAGE DEBUG] Sending message to peer {peerId}");
+                        await _protocol.SendChunkedMessage(message, sendFunction);
                         
                         _pluginLog.Debug($"[EnhancedP2PSync] Broadcast mods for {playerInfo.PlayerName} to {peerId}");
                     }
@@ -536,12 +667,7 @@ namespace FyteClub
             }
         }
 
-        private string CalculatePlayerHash(AdvancedPlayerInfo playerInfo)
-        {
-            // Simple hash calculation for now - can be enhanced later
-            var hashData = $"{playerInfo.PlayerName}_{playerInfo.Mods?.Count ?? 0}_{DateTime.UtcNow.Ticks}";
-            return hashData.GetHashCode().ToString("X8");
-        }
+
 
         /// <summary>
         /// Test the complete mod request/response flow including file transfer
@@ -665,6 +791,26 @@ namespace FyteClub
             }
         }
 
+        /// <summary>
+        /// Trigger redraw for a player after mod application
+        /// </summary>
+        private async Task TriggerPlayerRedraw(string playerName)
+        {
+            try
+            {
+                _pluginLog.Info($"[EnhancedP2PSync] Triggering redraw for {playerName}");
+                
+                // Use the mod integration to trigger redraw
+                await _modIntegration.TriggerPlayerRedraw(playerName);
+                
+                _pluginLog.Info($"[EnhancedP2PSync] Redraw triggered for {playerName}");
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"[EnhancedP2PSync] Error triggering redraw for {playerName}: {ex.Message}");
+            }
+        }
+        
         public void Dispose()
         {
             // Cancel all active sessions
