@@ -468,12 +468,13 @@ namespace FyteClub.Core
                         ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] CHAOS MODE ACTIVATED! Targeting {0} characters with {1} mods...", targets.Count, playerInfo.Mods.Count);
                         ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] Targets: {0}", string.Join(", ", targets));
                         
-                        // Apply your mods to everything in parallel
+                        // Apply your mods to everything in parallel - MAXIMUM SPEED
                         var tasks = targets.Select(async target =>
                         {
                             try
                             {
-                                var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, target);
+                                // Use forced bypass method for maximum speed and chaos
+                                var success = await _modSystemIntegration.ForceApplyPlayerModsBypassCollections(playerInfo, target);
                                 return new { Target = target, Success = success, Error = (string?)null };
                             }
                             catch (Exception ex)
@@ -691,9 +692,6 @@ namespace FyteClub.Core
                     var localPlayer = _clientState.LocalPlayer;
                     if (localPlayer == null) return allCharacters;
                     
-                    var localPosition = localPlayer.Position;
-                    const float maxDistance = 50.0f; // 50m proximity
-                    
                     try
                     {
                         foreach (var obj in _objectTable)
@@ -701,7 +699,7 @@ namespace FyteClub.Core
                             var name = obj.Name?.TextValue;
                             if (string.IsNullOrEmpty(name)) continue;
                             
-                            // Include players and any named characters (NPCs, etc.)
+                            // Include players and any named characters (NPCs, etc.) - NO DISTANCE LIMIT
                             bool isValidTarget = false;
                             if (obj is IPlayerCharacter)
                             {
@@ -711,20 +709,12 @@ namespace FyteClub.Core
                                      obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc ||
                                      obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion)
                             {
-                                // Only include NPCs and companions that can actually have appearance mods applied
                                 isValidTarget = true;
                             }
                             
                             if (isValidTarget)
                             {
-                                var dx = localPosition.X - obj.Position.X;
-                                var dy = localPosition.Y - obj.Position.Y;
-                                var dz = localPosition.Z - obj.Position.Z;
-                                var distance = (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
-                                if (distance <= maxDistance)
-                                {
-                                    allCharacters.Add(name);
-                                }
+                                allCharacters.Add(name);
                             }
                         }
                     }

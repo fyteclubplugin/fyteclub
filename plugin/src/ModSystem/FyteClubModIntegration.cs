@@ -245,59 +245,30 @@ namespace FyteClub
             });
         }
 
-        // Find a character in the object table by name
+        // Find a character in the object table by name - supports players AND NPCs
         private ICharacter? FindCharacterByName(string characterName)
         {
             try
             {
-                // Clean the character name (remove server suffix if present)
                 var cleanName = characterName.Contains('@') ? characterName.Split('@')[0] : characterName;
                 
-                _pluginLog.Info($"🔍 [CHARACTER LOOKUP] Searching for character: '{cleanName}'");
-                
-                // Access ObjectTable directly - if we're not on the framework thread, this will fail gracefully
                 try
                 {
-                    var allCharacters = new List<string>();
-                    ICharacter? foundCharacter = null;
-                    
                     foreach (var obj in _objectTable)
                     {
-                        if (obj is ICharacter character && character.Name?.TextValue != null)
+                        // Check all objects with names - players, NPCs, companions, etc.
+                        if (obj.Name?.TextValue != null && obj.Name.TextValue.Equals(cleanName, StringComparison.OrdinalIgnoreCase))
                         {
-                            allCharacters.Add($"{character.Name.TextValue} (Index: {character.ObjectIndex})");
-                            
-                            if (character.Name.TextValue.Equals(cleanName, StringComparison.OrdinalIgnoreCase))
+                            // Try to cast to ICharacter - this works for players, NPCs, companions
+                            if (obj is ICharacter character)
                             {
-                                foundCharacter = character;
+                                return character;
                             }
                         }
-                    }
-                    
-                    _pluginLog.Info($"🔍 [CHARACTER LOOKUP] Found {allCharacters.Count} total characters in object table:");
-                    foreach (var charInfo in allCharacters.Take(10)) // Show first 10
-                    {
-                        _pluginLog.Info($"🔍 [CHARACTER LOOKUP]   - {charInfo}");
-                    }
-                    if (allCharacters.Count > 10)
-                    {
-                        _pluginLog.Info($"🔍 [CHARACTER LOOKUP]   ... and {allCharacters.Count - 10} more");
-                    }
-                    
-                    if (foundCharacter != null)
-                    {
-                        _pluginLog.Info($"🔍 [CHARACTER LOOKUP] ✅ Found target character '{cleanName}' with ObjectIndex {foundCharacter.ObjectIndex}");
-                        return foundCharacter;
-                    }
-                    else
-                    {
-                        _pluginLog.Warning($"🔍 [CHARACTER LOOKUP] ❌ Character '{cleanName}' not found in object table");
-                        _pluginLog.Warning($"🔍 [CHARACTER LOOKUP] This means they are either out of range, not loaded, or the name doesn't match exactly");
                     }
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("main thread"))
                 {
-                    _pluginLog.Warning($"🔍 [CHARACTER LOOKUP] Cannot access ObjectTable from background thread for '{cleanName}' - character lookup skipped");
                     return null;
                 }
                 
@@ -305,7 +276,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"🔍 [CHARACTER LOOKUP] Error finding character '{characterName}': {ex.Message}");
+                _pluginLog.Error($"Error finding character '{characterName}': {ex.Message}");
                 return null;
             }
         }
@@ -497,34 +468,7 @@ namespace FyteClub
             try
             {
                 
-                _pluginLog.Info($"🔥 [APPLY DEBUG] ==================== ApplyPlayerMods START ====================");
-                _pluginLog.Info($"🔥 [APPLY DEBUG] Target player: {playerName}");
-                
-                // Calculate hash of the player's mod data
                 var modDataHash = CalculateModDataHash(playerInfo);
-                _pluginLog.Info($"🔥 [APPLY DEBUG] Mod data hash: {modDataHash[..12]}... (for deduplication)");
-                
-                // Debug: Log what data we received
-                _pluginLog.Info($"🔥 [APPLY DEBUG] Received mod data breakdown:");
-                _pluginLog.Info($"🔥 [APPLY DEBUG]   📁 Mods count: {playerInfo.Mods?.Count ?? 0}");
-                _pluginLog.Info($"🔥 [APPLY DEBUG]   👗 Glamourer: {(string.IsNullOrEmpty(playerInfo.GlamourerData) ? "None" : "Present")}");
-                _pluginLog.Info($"🔥 [APPLY DEBUG]   🎨 Customize+: {(string.IsNullOrEmpty(playerInfo.CustomizePlusData) ? "None" : "Present")}");
-                _pluginLog.Info($"🔥 [APPLY DEBUG]   👠 Heels: {playerInfo.SimpleHeelsOffset ?? 0.0f}");
-                _pluginLog.Info($"🔥 [APPLY DEBUG]   🏆 Honorific: {(string.IsNullOrEmpty(playerInfo.HonorificTitle) ? "None" : "Present")}");
-                
-                if (playerInfo.Mods?.Count > 0)
-                {
-                    _pluginLog.Info($"🔥 [APPLY DEBUG] First few mods:");
-                    for (int i = 0; i < Math.Min(3, playerInfo.Mods.Count); i++)
-                    {
-                        _pluginLog.Info($"🔥 [APPLY DEBUG]     [{i}]: {playerInfo.Mods[i]}");
-                    }
-                    if (playerInfo.Mods.Count > 3)
-                    {
-                        _pluginLog.Info($"🔥 [APPLY DEBUG]     ... and {playerInfo.Mods.Count - 3} more mods");
-                    }
-                }
-                _pluginLog.Info($"🔥 [APPLY DEBUG] Plugin availability: Penumbra={IsPenumbraAvailable}, Glamourer={IsGlamourerAvailable}");
                 
                 // TEMPORARILY DISABLED: Skip logic to force mod application for debugging
                 var shouldSkip = false; // ShouldSkipApplication(playerName, modDataHash);
@@ -537,87 +481,52 @@ namespace FyteClub
 
                 _pluginLog.Debug($"Proceeding with mod application");
                 
-                // PHASE 4: Ensure all mod operations on framework thread
-                _pluginLog.Info($"🔥 [APPLY DEBUG] Switching to framework thread for character operations...");
                 var success = false;
                 var errorMessage = "";
                 
                 try
                 {
-                    _pluginLog.Info($"🔥 [APPLY DEBUG] Now on framework thread - checking local player...");
-                    
-                    // CRITICAL: Never apply mods to local player - FyteClub only shows friends' mods
-                    _pluginLog.Info($"🔥 [APPLY DEBUG] Local player protection check: '{_localPlayerName}' (Index: {_localPlayerObjectIndex}), Target: '{playerName}'");
-                    
                     if (IsLocalPlayer(playerName))
                     {
-                        _pluginLog.Info($"🔥 [APPLY DEBUG] 🛡️ PROTECTED: Skipping local player {playerName} - FyteClub only applies mods to other players");
-                        _pluginLog.Info($"🔥 [APPLY DEBUG] 🛡️ FyteClub's job is to SHARE your mods with others, not apply them to you");
-                        success = true;
+                        success = true; // Skip local player
                     }
                     else
                     {
-                        _pluginLog.Info($"🔥 [APPLY DEBUG] Finding character '{playerName}' in object table...");
                         var character = await _framework.RunOnFrameworkThread(() => FindCharacterByName(playerName));
                         if (character != null)
                         {
-                            _pluginLog.Info($"🔥 [APPLY DEBUG] ✅ Found character: {character.Name} (ObjectIndex: {character.ObjectIndex})");
-                            _pluginLog.Info($"🔥 [APPLY DEBUG] Character position: X={character.Position.X:F1}, Y={character.Position.Y:F1}, Z={character.Position.Z:F1}");
-                            
-                            // Double-check: Never apply mods to local player by ObjectIndex
                             if (IsLocalPlayer(character))
                             {
-                                _pluginLog.Warning($"🔥 [APPLY DEBUG] 🛡️ DOUBLE PROTECTION: Character {character.Name} is local player by ObjectIndex - ABORTING");
-                                success = true; // Consider it "successful" to avoid retries
+                                success = true; // Skip local player by ObjectIndex
                             }
                             else
                             {
-                                // Apply mods with Mare's sophisticated redraw management
-                                _pluginLog.Info($"🔥 [APPLY DEBUG] ✅ Safe to apply - calling ApplyAdvancedPlayerInfo for character...");
                                 await ApplyAdvancedPlayerInfo(character, playerInfo);
-                                
-                                _pluginLog.Info($"🔥 [APPLY DEBUG] ✅ ApplyAdvancedPlayerInfo completed successfully");
                                 success = true;
                             }
                         }
                         else
                         {
-                            errorMessage = $"Character {playerName} not found in object table - they may be out of range or not loaded";
-                            _pluginLog.Warning($"🔥 [APPLY DEBUG] ⚠️ {errorMessage}");
-                            _pluginLog.Warning($"🔥 [APPLY DEBUG] SOLUTION: The character '{playerName}' needs to be within 50m range and loaded in the game world");
-                            _pluginLog.Warning($"🔥 [APPLY DEBUG] SOLUTION: Make sure both players are in the same zone and close to each other");
+                            errorMessage = $"Character {playerName} not found";
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    errorMessage = $"Framework thread error: {ex.Message}";
-                    _pluginLog.Error($"🔥 [APPLY DEBUG] ☠️ Framework thread exception: {errorMessage}");
-                    _pluginLog.Error($"🔥 [APPLY DEBUG] Stack trace: {ex.StackTrace}");
+                    errorMessage = ex.Message;
                 }
                 
-                if (!success)
+                if (success)
                 {
-                    _pluginLog.Error($"🔥 [APPLY DEBUG] ❌ Mod application FAILED: {errorMessage}");
-                    _pluginLog.Error($"🔥 [APPLY DEBUG] This means {playerName}'s mods will NOT be visible");
-                    return false;
+                    _appliedModHashes[playerName] = modDataHash;
+                    _lastApplicationTime[playerName] = DateTime.UtcNow;
                 }
                 
-                // Track successful application
-                _appliedModHashes[playerName] = modDataHash;
-                _lastApplicationTime[playerName] = DateTime.UtcNow;
-                
-                _pluginLog.Info($"🔥 [APPLY DEBUG] ✅ ApplyPlayerMods SUCCESS for {playerName}");
-                _pluginLog.Info($"🔥 [APPLY DEBUG] Mods should now be visible on {playerName} in-game");
-                _pluginLog.Info($"🔥 [APPLY DEBUG] ==================== ApplyPlayerMods END ====================");
-                return true;
+                return success;
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"🔥 [APPLY DEBUG] ☠️ ApplyPlayerMods EXCEPTION: {ex.Message}");
-                _pluginLog.Error($"🔥 [APPLY DEBUG] Stack trace: {ex.StackTrace}");
-                _pluginLog.Error($"🔥 [APPLY DEBUG] This is a critical failure - {playerName}'s mods will NOT be applied");
-                _pluginLog.Info($"🔥 [APPLY DEBUG] ==================== ApplyPlayerMods END (EXCEPTION) ====================");
+                _pluginLog.Error($"ApplyPlayerMods failed for {playerName}: {ex.Message}");
                 return false;
             }
         }
@@ -789,74 +698,39 @@ namespace FyteClub
             
             try
             {
-                _pluginLog.Debug($"ApplyAdvancedPlayerInfo START for {character.Name}");
-                
-                // CRITICAL: Apply Glamourer FIRST - this sets the base character appearance
+                // Apply Glamourer FIRST - this sets the base character appearance
                 if (IsGlamourerAvailable && !string.IsNullOrEmpty(playerInfo.GlamourerData))
                 {
-                    _pluginLog.Debug($"Applying Glamourer data FIRST (base character appearance)");
                     await ApplyGlamourerData(character, playerInfo.GlamourerData);
-                    _pluginLog.Debug($"Glamourer data applied");
-                }
-                else
-                {
-                    _pluginLog.Debug($"Skipping Glamourer - Available: {IsGlamourerAvailable}, Data: {!string.IsNullOrEmpty(playerInfo.GlamourerData)}");
                 }
                 
                 // Apply Penumbra mods AFTER Glamourer (texture/model replacements)
                 if (IsPenumbraAvailable && playerInfo.Mods?.Count > 0)
                 {
-                    _pluginLog.Debug($"Applying Penumbra mods AFTER Glamourer: {playerInfo.Mods.Count} files");
                     await ApplyPenumbraMods(character, playerInfo.Mods, playerInfo);
-                    _pluginLog.Debug($"Penumbra mods applied");
-                }
-                else
-                {
-                    _pluginLog.Debug($"Skipping Penumbra - Available: {IsPenumbraAvailable}, Mods: {playerInfo.Mods?.Count ?? 0}");
                 }
                 
                 // Apply Customize+ data (body scaling)
                 if (IsCustomizePlusAvailable && !string.IsNullOrEmpty(playerInfo.CustomizePlusData))
                 {
-                    _pluginLog.Debug($"Applying Customize+ data (body scaling)");
                     await ApplyCustomizePlusData(character, playerInfo.CustomizePlusData);
-                    _pluginLog.Debug($"Customize+ data applied");
-                }
-                else
-                {
-                    _pluginLog.Debug($"Skipping Customize+ - Available: {IsCustomizePlusAvailable}, Data: {!string.IsNullOrEmpty(playerInfo.CustomizePlusData)}");
                 }
                 
                 // Apply Simple Heels data (height adjustment)
                 if (IsHeelsAvailable && playerInfo.SimpleHeelsOffset.HasValue)
                 {
-                    _pluginLog.Debug($"Applying Simple Heels (height adjustment): {playerInfo.SimpleHeelsOffset.Value}");
                     await ApplyHeelsData(character, playerInfo.SimpleHeelsOffset.Value);
-                    _pluginLog.Debug($"Simple Heels applied");
-                }
-                else
-                {
-                    _pluginLog.Debug($"Skipping Simple Heels - Available: {IsHeelsAvailable}, Offset: {playerInfo.SimpleHeelsOffset}");
                 }
                 
                 // Apply Honorific title data (nameplate title)
                 if (IsHonorificAvailable && !string.IsNullOrEmpty(playerInfo.HonorificTitle))
                 {
-                    _pluginLog.Debug($"Applying Honorific title (nameplate)");
                     await ApplyHonorificData(character, playerInfo.HonorificTitle);
-                    _pluginLog.Debug($"Honorific title applied");
                 }
-                else
-                {
-                    _pluginLog.Debug($"Skipping Honorific - Available: {IsHonorificAvailable}, Title: {!string.IsNullOrEmpty(playerInfo.HonorificTitle)}");
-                }
-                
-                _pluginLog.Debug($"ApplyAdvancedPlayerInfo COMPLETED for {character.Name}");
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"ApplyAdvancedPlayerInfo EXCEPTION: {ex.Message}");
-                _pluginLog.Error($"Stack trace: {ex.StackTrace}");
+                _pluginLog.Error($"ApplyAdvancedPlayerInfo failed: {ex.Message}");
             }
         }
 
@@ -867,12 +741,10 @@ namespace FyteClub
                 var collectionName = $"FyteClub_{character.ObjectIndex}";
                 _pluginLog.Info($"Applying Penumbra mods to {character.Name}: {mods.Count} files");
                 
-                // Parse and validate mods using Mare's patterns
                 var (fileReplacements, metaManipulations) = ParseAndValidateMods(mods);
                 
                 if (fileReplacements.Count == 0 && metaManipulations.Count == 0)
                 {
-                    _pluginLog.Warning($"No valid mods to apply for {character.Name}");
                     return;
                 }
                 
@@ -885,40 +757,22 @@ namespace FyteClub
                     {
                         try
                         {
-                            // Create temporary collection
                             var collectionId = Guid.Empty;
                             var createResult = _penumbraCreateTemporaryCollection?.Invoke("FyteClub", collectionName, out collectionId);
                             
                             if (createResult != PenumbraApiEc.Success || collectionId == Guid.Empty)
                             {
-                                _pluginLog.Error($"Failed to create Penumbra collection: {createResult}");
                                 return;
                             }
                             
-                            // Apply Mare's sequential pattern
                             ApplyModsSequentially(collectionId, fileReplacements, metaManipulations);
                             
-                            // Apply meta manipulations if available
                             if (!string.IsNullOrEmpty(playerInfo.ManipulationData))
                             {
-                                var metaResult = _penumbraAddTemporaryMod?.Invoke("FyteClub_Meta", collectionId, new Dictionary<string, string>(), playerInfo.ManipulationData, 0);
-                                if (metaResult != PenumbraApiEc.Success)
-                                {
-                                    _pluginLog.Warning($"Failed to add meta manipulations: {metaResult}");
-                                }
+                                _penumbraAddTemporaryMod?.Invoke("FyteClub_Meta", collectionId, new Dictionary<string, string>(), playerInfo.ManipulationData, 0);
                             }
                             
-                            // Assign collection to character
-                            var assignResult = _penumbraAssignTemporaryCollection?.Invoke(collectionId, chara.ObjectIndex, forceAssignment: true);
-                            
-                            if (assignResult == PenumbraApiEc.Success)
-                            {
-                                _pluginLog.Info($"Successfully applied {fileReplacements.Count} files + {metaManipulations.Count} meta to {chara.Name}");
-                            }
-                            else
-                            {
-                                _pluginLog.Error($"Failed to assign collection to {chara.Name}: {assignResult}");
-                            }
+                            _penumbraAssignTemporaryCollection?.Invoke(collectionId, chara.ObjectIndex, forceAssignment: true);
                         }
                         catch (Exception ex)
                         {
@@ -1010,29 +864,18 @@ namespace FyteClub
         
         private void ApplyModsSequentially(Guid collectionId, Dictionary<string, string> fileReplacements, List<string> metaManipulations)
         {
-            // Remove existing mods
             _penumbraRemoveTemporaryMod?.Invoke("FyteClub_Files", collectionId, 0);
             _penumbraRemoveTemporaryMod?.Invoke("FyteClub_Meta", collectionId, 0);
             
-            // Add file replacements
             if (fileReplacements.Count > 0)
             {
-                var result = _penumbraAddTemporaryMod?.Invoke("FyteClub_Files", collectionId, fileReplacements, string.Empty, 0);
-                if (result != PenumbraApiEc.Success)
-                {
-                    _pluginLog.Warning($"Failed to add file replacements: {result}");
-                }
+                _penumbraAddTemporaryMod?.Invoke("FyteClub_Files", collectionId, fileReplacements, string.Empty, 0);
             }
             
-            // Add meta manipulations
             if (metaManipulations.Count > 0)
             {
                 var metaString = string.Join("\n", metaManipulations);
-                var result = _penumbraAddTemporaryMod?.Invoke("FyteClub_Meta", collectionId, new Dictionary<string, string>(), metaString, 0);
-                if (result != PenumbraApiEc.Success)
-                {
-                    _pluginLog.Warning($"Failed to add meta manipulations: {result}");
-                }
+                _penumbraAddTemporaryMod?.Invoke("FyteClub_Meta", collectionId, new Dictionary<string, string>(), metaString, 0);
             }
         }
 
