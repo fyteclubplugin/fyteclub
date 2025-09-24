@@ -391,24 +391,8 @@ namespace FyteClub.Core
                             if (_modSyncOrchestrator != null)
                                 await _modSyncOrchestrator.ProcessIncomingMessage(peerId, data);
                             
-                            // After processing incoming message, check if we should share our mods back
-                            var localPlayerName = await _framework.RunOnFrameworkThread(() => _clientState?.LocalPlayer?.Name?.TextValue);
-                            if (!string.IsNullOrEmpty(localPlayerName) && _modSystemIntegration != null)
-                            {
-                                try
-                                {
-                                    var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(localPlayerName);
-                                    if (playerInfo != null && playerInfo.Mods?.Count > 0 && _modSyncOrchestrator != null)
-                                    {
-                                        await _modSyncOrchestrator.BroadcastPlayerMods(playerInfo);
-                                        ModularLogger.LogDebug(LogModule.WebRTC, "Reciprocal mod share to peer {0} after receiving their data", peerId);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    ModularLogger.LogDebug(LogModule.WebRTC, "Failed reciprocal mod share to peer {0}: {1}", peerId, ex.Message);
-                                }
-                            }
+                            // Note: Removed automatic reciprocal sharing to prevent infinite loops
+                            // Initial connection sharing is sufficient for bidirectional sync
                         });
                     };
                     
