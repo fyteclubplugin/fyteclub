@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\Me\\git\\fyteclub\\Microsoft.MixedReality.WebRTC\\Microsoft.MixedReality.WebRTC.csproj": {}
+    "c:\\Users\\Me\\git\\fyteclub\\Microsoft.MixedReality.WebRTC\\Microsoft.MixedReality.WebRTC.csproj": {}
   },
   "projects": {
-    "C:\\Users\\Me\\git\\fyteclub\\Microsoft.MixedReality.WebRTC\\Microsoft.MixedReality.WebRTC.csproj": {
+    "c:\\Users\\Me\\git\\fyteclub\\Microsoft.MixedReality.WebRTC\\Microsoft.MixedReality.WebRTC.csproj": {
       "version": "0.1.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\Me\\git\\fyteclub\\Microsoft.MixedReality.WebRTC\\Microsoft.MixedReality.WebRTC.csproj",
+        "projectUniqueName": "c:\\Users\\Me\\git\\fyteclub\\Microsoft.MixedReality.WebRTC\\Microsoft.MixedReality.WebRTC.csproj",
         "projectName": "Microsoft.MixedReality.WebRTC",
-        "projectPath": "C:\\Users\\Me\\git\\fyteclub\\Microsoft.MixedReality.WebRTC\\Microsoft.MixedReality.WebRTC.csproj",
+        "projectPath": "c:\\Users\\Me\\git\\fyteclub\\Microsoft.MixedReality.WebRTC\\Microsoft.MixedReality.WebRTC.csproj",
         "packagesPath": "C:\\Users\\Me\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\Me\\git\\fyteclub\\Microsoft.MixedReality.WebRTC\\.\\bin\\build\\Microsoft.MixedReality.WebRTC\\",
+        "outputPath": "c:\\Users\\Me\\git\\fyteclub\\Microsoft.MixedReality.WebRTC\\.\\bin\\build\\Microsoft.MixedReality.WebRTC\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages",

@@ -317,24 +317,24 @@ namespace FyteClub.UI
             }
             
             ImGui.Separator();
-            ImGui.Text("Debug:");
-            if (ImGui.Button("Test Streaming Protocol"))
+            // Debug buttons - uncomment for testing
+            /*
+            if (ImGui.Button("Apply My Mods to Everyone 👑"))
             {
-                _ = Task.Run(() => _plugin.TestStreamingProtocol());
+                _ = Task.Run(() => _plugin.ApplyMyModsToEveryone());
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Applies your current mods to ALL nearby players.\nEveryone will look like you until they move or change zones!");
             }
             
             ImGui.SameLine();
-            if (ImGui.Button("Test File Transfer"))
+            */
+            if (ImGui.Button("Don't Do It"))
             {
-                _ = Task.Run(() => _plugin.TestFileTransfer());
+                _ = Task.Run(() => _plugin.ApplyMyModsToEverythingNearby());
             }
-            
-            ImGui.SameLine();
-            if (ImGui.Button("Test Mod Detection (Self)"))
-            {
-                _ = Task.Run(() => _plugin.TestModDetectionOnSelf());
-            }
-            
+            /*
             ImGui.SameLine();
             if (ImGui.Button("Apply My Mods to Random Person 😈"))
             {
@@ -344,6 +344,7 @@ namespace FyteClub.UI
             {
                 ImGui.SetTooltip("For testing: Applies your current mods to a random nearby player.\nThey'll see your appearance until they move or change zones!");
             }
+            */
         }
 
         private void DrawBlockListTab()

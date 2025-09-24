@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("plugin-tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+cac32abc96ee7c7515b3374beed6364e293bcb2b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+2f862cb0ec611c1b26ec044a8040858665e9a0d3")]
 [assembly: System.Reflection.AssemblyProductAttribute("plugin-tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("plugin-tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

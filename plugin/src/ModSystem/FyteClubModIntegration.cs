@@ -1897,6 +1897,164 @@ namespace FyteClub
         }
         
         /// <summary>
+        /// Force apply mods bypassing Penumbra collection restrictions (for chaos button)
+        /// </summary>
+        public async Task<bool> ForceApplyPlayerModsBypassCollections(AdvancedPlayerInfo playerInfo, string playerName)
+        {
+            try
+            {
+                _pluginLog.Info($"😈 [CHAOS BYPASS] Force applying mods to {playerName} - BYPASSING collection restrictions");
+                
+                // Find the character
+                var character = await _framework.RunOnFrameworkThread(() => FindCharacterByName(playerName));
+                if (character == null)
+                {
+                    _pluginLog.Warning($"😈 [CHAOS BYPASS] Character {playerName} not found");
+                    return false;
+                }
+                
+                // CRITICAL: Never apply to local player
+                if (IsLocalPlayer(character))
+                {
+                    _pluginLog.Warning($"😈 [CHAOS BYPASS] Blocked attempt to apply to local player {playerName}");
+                    return true; // Return true to avoid retries
+                }
+                
+                // Apply mods with FORCED assignment (bypasses collection restrictions)
+                await ApplyAdvancedPlayerInfoForced(character, playerInfo);
+                
+                _pluginLog.Info($"😈 [CHAOS BYPASS] Successfully force-applied mods to {playerName}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"😈 [CHAOS BYPASS] Failed to force apply mods: {ex.Message}");
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Apply mods with forced assignment (bypasses collection restrictions)
+        /// </summary>
+        private async Task ApplyAdvancedPlayerInfoForced(ICharacter character, AdvancedPlayerInfo playerInfo)
+        {
+            try
+            {
+                _pluginLog.Info($"😈 [FORCED APPLICATION] Applying mods to {character.Name} with FORCED assignment");
+                
+                // Apply Glamourer first (same as normal)
+                if (IsGlamourerAvailable && !string.IsNullOrEmpty(playerInfo.GlamourerData))
+                {
+                    await ApplyGlamourerData(character, playerInfo.GlamourerData);
+                }
+                
+                // Apply Penumbra mods with FORCED assignment
+                if (IsPenumbraAvailable && playerInfo.Mods?.Count > 0)
+                {
+                    await ApplyPenumbraModsForced(character, playerInfo.Mods, playerInfo);
+                }
+                
+                // Apply other plugins (same as normal)
+                if (IsCustomizePlusAvailable && !string.IsNullOrEmpty(playerInfo.CustomizePlusData))
+                {
+                    await ApplyCustomizePlusData(character, playerInfo.CustomizePlusData);
+                }
+                
+                if (IsHeelsAvailable && playerInfo.SimpleHeelsOffset.HasValue)
+                {
+                    await ApplyHeelsData(character, playerInfo.SimpleHeelsOffset.Value);
+                }
+                
+                if (IsHonorificAvailable && !string.IsNullOrEmpty(playerInfo.HonorificTitle))
+                {
+                    await ApplyHonorificData(character, playerInfo.HonorificTitle);
+                }
+                
+                _pluginLog.Info($"😈 [FORCED APPLICATION] Completed forced application to {character.Name}");
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"😈 [FORCED APPLICATION] Error in forced application: {ex.Message}");
+            }
+        }
+        
+        /// <summary>
+        /// Apply Penumbra mods with FORCED assignment (bypasses collection restrictions)
+        /// </summary>
+        private async Task ApplyPenumbraModsForced(ICharacter character, List<string> mods, AdvancedPlayerInfo playerInfo)
+        {
+            try
+            {
+                var collectionName = $"FyteClub_CHAOS_{character.ObjectIndex}";
+                _pluginLog.Info($"😈 [FORCED PENUMBRA] Applying {mods.Count} mods to {character.Name} with FORCED assignment");
+                
+                var (fileReplacements, metaManipulations) = ParseAndValidateMods(mods);
+                
+                if (fileReplacements.Count == 0 && metaManipulations.Count == 0)
+                {
+                    _pluginLog.Warning($"😈 [FORCED PENUMBRA] No valid mods to apply");
+                    return;
+                }
+                
+                await _redrawManager.RedrawSemaphore.WaitAsync().ConfigureAwait(false);
+                
+                try
+                {
+                    var applicationId = Guid.NewGuid();
+                    await _redrawManager.RedrawInternalAsync(character, applicationId, (chara) =>
+                    {
+                        try
+                        {
+                            // Create temporary collection
+                            var collectionId = Guid.Empty;
+                            var createResult = _penumbraCreateTemporaryCollection?.Invoke("FyteClub_CHAOS", collectionName, out collectionId);
+                            
+                            if (createResult != PenumbraApiEc.Success || collectionId == Guid.Empty)
+                            {
+                                _pluginLog.Error($"😈 [FORCED PENUMBRA] Failed to create collection: {createResult}");
+                                return;
+                            }
+                            
+                            // Apply mods to collection
+                            ApplyModsSequentially(collectionId, fileReplacements, metaManipulations);
+                            
+                            // Apply meta manipulations
+                            if (!string.IsNullOrEmpty(playerInfo.ManipulationData))
+                            {
+                                _penumbraAddTemporaryMod?.Invoke("FyteClub_CHAOS_Meta", collectionId, new Dictionary<string, string>(), playerInfo.ManipulationData, 0);
+                            }
+                            
+                            // Always use forceAssignment=true - we want to show the visual appearance regardless of collection settings
+                            var assignResult = _penumbraAssignTemporaryCollection?.Invoke(collectionId, chara.ObjectIndex, forceAssignment: true);
+                            
+                            if (assignResult == PenumbraApiEc.Success)
+                            {
+                                _pluginLog.Info($"😈 [FORCED PENUMBRA] SUCCESS! Forced assignment of {fileReplacements.Count} files to {chara.Name}");
+                                _pluginLog.Info($"😈 [FORCED PENUMBRA] Collection restrictions BYPASSED - mods should be visible regardless of user's collection settings");
+                            }
+                            else
+                            {
+                                _pluginLog.Error($"😈 [FORCED PENUMBRA] Failed forced assignment: {assignResult}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _pluginLog.Error($"😈 [FORCED PENUMBRA] Error in forced redraw action: {ex.Message}");
+                        }
+                    }, CancellationToken.None).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _redrawManager.RedrawSemaphore.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"😈 [FORCED PENUMBRA] Error in forced application: {ex.Message}");
+            }
+        }
+        
+        /// <summary>
         /// Get names of all nearby players for mod application targeting
         /// </summary>
         public async Task<List<string>> GetNearbyPlayerNames()

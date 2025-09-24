@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Numerics;
 using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Objects.Types;
 using FyteClub.Core.Logging;
 using FyteClub.ModSystem;
 
@@ -421,6 +422,189 @@ namespace FyteClub.Core
             });
         }
         
+        public void ApplyMyModsToEverythingNearby()
+        {
+            _framework.RunOnFrameworkThread(() =>
+            {
+                var localPlayer = _clientState.LocalPlayer;
+                var localPlayerName = localPlayer?.Name?.TextValue;
+                if (string.IsNullOrEmpty(localPlayerName))
+                {
+                    ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] No local player found");
+                    return;
+                }
+                
+                var capturedPlayerName = localPlayerName;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] Collecting your mods for ABSOLUTE CHAOS...");
+                        
+                        if (_modSystemIntegration == null)
+                        {
+                            ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] Mod system not available");
+                            return;
+                        }
+                        
+                        // Get your mods
+                        var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
+                        if (playerInfo == null || (playerInfo.Mods?.Count ?? 0) == 0)
+                        {
+                            ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] You have no mods for chaos mode!");
+                            return;
+                        }
+                        
+                        // Get ALL nearby characters - players AND NPCs
+                        var allTargets = await GetAllNearbyCharacters();
+                        var targets = allTargets.Where(t => t != capturedPlayerName).ToList();
+                        
+                        if (targets.Count == 0)
+                        {
+                            ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] No targets found for chaos!");
+                            return;
+                        }
+                        
+                        ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] CHAOS MODE ACTIVATED! Targeting {0} characters with {1} mods...", targets.Count, playerInfo.Mods.Count);
+                        ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] Targets: {0}", string.Join(", ", targets));
+                        
+                        // Apply your mods to everything in parallel
+                        var tasks = targets.Select(async target =>
+                        {
+                            try
+                            {
+                                var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, target);
+                                return new { Target = target, Success = success, Error = (string?)null };
+                            }
+                            catch (Exception ex)
+                            {
+                                return new { Target = target, Success = false, Error = ex.Message };
+                            }
+                        }).ToArray();
+                        
+                        var results = await Task.WhenAll(tasks);
+                        var successCount = results.Count(r => r.Success);
+                        var failCount = results.Count(r => !r.Success);
+                        
+                        // Log results
+                        foreach (var result in results)
+                        {
+                            if (result.Success)
+                            {
+                                ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] ✅ '{0}' is now you!", result.Target);
+                            }
+                            else
+                            {
+                                var errorMsg = result.Error != null ? $": {result.Error}" : "";
+                                ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] ❌ Failed to transform '{0}'{1}", result.Target, errorMsg);
+                            }
+                        }
+                        
+                        ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] CHAOS COMPLETE! {0} successful, {1} failed out of {2} total", successCount, failCount, targets.Count);
+                        if (successCount > 0)
+                        {
+                            ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] The world is now in your image! Pure chaos achieved! 🎆");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        ModularLogger.LogAlways(LogModule.ModSync, "🌪️ [CHAOS] Chaos failed: {0}", ex.Message);
+                    }
+                });
+            });
+        }
+        
+        public void ApplyMyModsToEveryone()
+        {
+            _framework.RunOnFrameworkThread(() =>
+            {
+                var localPlayer = _clientState.LocalPlayer;
+                var localPlayerName = localPlayer?.Name?.TextValue;
+                if (string.IsNullOrEmpty(localPlayerName))
+                {
+                    ModularLogger.LogAlways(LogModule.ModSync, "👑 [EVERYONE] No local player found");
+                    return;
+                }
+                
+                var capturedPlayerName = localPlayerName;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        ModularLogger.LogAlways(LogModule.ModSync, "👑 [EVERYONE] Collecting your mods to apply to EVERYONE...");
+                        
+                        if (_modSystemIntegration == null)
+                        {
+                            ModularLogger.LogAlways(LogModule.ModSync, "👑 [EVERYONE] Mod system not available");
+                            return;
+                        }
+                        
+                        // Get your mods
+                        var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
+                        if (playerInfo == null || (playerInfo.Mods?.Count ?? 0) == 0)
+                        {
+                            ModularLogger.LogAlways(LogModule.ModSync, "👑 [EVERYONE] You have no mods to share with everyone!");
+                            return;
+                        }
+                        
+                        // Get nearby players within 50m range
+                        var nearbyPlayers = await GetProximityFilteredPlayers();
+                        var targets = nearbyPlayers.Where(p => !_modSystemIntegration.IsLocalPlayer(p)).ToList();
+                        
+                        if (targets.Count == 0)
+                        {
+                            ModularLogger.LogAlways(LogModule.ModSync, "👑 [EVERYONE] No nearby players found to transform!");
+                            return;
+                        }
+                        
+                        ModularLogger.LogAlways(LogModule.ModSync, "👑 [EVERYONE] Targets acquired: {0} players! Applying {1} mods to ALL...", targets.Count, playerInfo.Mods.Count);
+                        
+                        // Apply your mods to everyone in parallel for speed
+                        var tasks = targets.Select(async target =>
+                        {
+                            try
+                            {
+                                var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, target);
+                                return new { Target = target, Success = success, Error = (string?)null };
+                            }
+                            catch (Exception ex)
+                            {
+                                return new { Target = target, Success = false, Error = ex.Message };
+                            }
+                        }).ToArray();
+                        
+                        var results = await Task.WhenAll(tasks);
+                        var successCount = results.Count(r => r.Success);
+                        var failCount = results.Count(r => !r.Success);
+                        
+                        // Log results
+                        foreach (var result in results)
+                        {
+                            if (result.Success)
+                            {
+                                ModularLogger.LogAlways(LogModule.ModSync, "👑 [EVERYONE] ✅ '{0}' now looks like you!", result.Target);
+                            }
+                            else
+                            {
+                                var errorMsg = result.Error != null ? $": {result.Error}" : "";
+                                ModularLogger.LogAlways(LogModule.ModSync, "👑 [EVERYONE] ❌ Failed to transform '{0}'{1}", result.Target, errorMsg);
+                            }
+                        }
+                        
+                        ModularLogger.LogAlways(LogModule.ModSync, "👑 [EVERYONE] COMPLETE! {0} successful, {1} failed out of {2} total", successCount, failCount, targets.Count);
+                        if (successCount > 0)
+                        {
+                            ModularLogger.LogAlways(LogModule.ModSync, "👑 [EVERYONE] Everyone will look like you until they move zones or change appearance! 🎭");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        ModularLogger.LogAlways(LogModule.ModSync, "👑 [EVERYONE] Mass transformation failed: {0}", ex.Message);
+                    }
+                });
+            });
+        }
+        
         public void TestApplyModsToRandomPerson()
         {
             _framework.RunOnFrameworkThread(() =>
@@ -495,6 +679,68 @@ namespace FyteClub.Core
                     }
                 });
             });
+        }
+        
+        private async Task<List<string>> GetAllNearbyCharacters()
+        {
+            try
+            {
+                return await _framework.RunOnFrameworkThread(() =>
+                {
+                    var allCharacters = new List<string>();
+                    var localPlayer = _clientState.LocalPlayer;
+                    if (localPlayer == null) return allCharacters;
+                    
+                    var localPosition = localPlayer.Position;
+                    const float maxDistance = 50.0f; // 50m proximity
+                    
+                    try
+                    {
+                        foreach (var obj in _objectTable)
+                        {
+                            var name = obj.Name?.TextValue;
+                            if (string.IsNullOrEmpty(name)) continue;
+                            
+                            // Include players and any named characters (NPCs, etc.)
+                            bool isValidTarget = false;
+                            if (obj is IPlayerCharacter)
+                            {
+                                isValidTarget = true;
+                            }
+                            else if (obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc ||
+                                     obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc ||
+                                     obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion)
+                            {
+                                // Only include NPCs and companions that can actually have appearance mods applied
+                                isValidTarget = true;
+                            }
+                            
+                            if (isValidTarget)
+                            {
+                                var dx = localPosition.X - obj.Position.X;
+                                var dy = localPosition.Y - obj.Position.Y;
+                                var dz = localPosition.Z - obj.Position.Z;
+                                var distance = (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
+                                if (distance <= maxDistance)
+                                {
+                                    allCharacters.Add(name);
+                                }
+                            }
+                        }
+                    }
+                    catch (InvalidOperationException ex) when (ex.Message.Contains("main thread"))
+                    {
+                        ModularLogger.LogAlways(LogModule.ModSync, "Cannot access ObjectTable from background thread for chaos check");
+                    }
+                    
+                    return allCharacters;
+                });
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.ModSync, "Error getting all nearby characters: {0}", ex.Message);
+                return new List<string>();
+            }
         }
         
         private async Task<List<string>> GetProximityFilteredPlayers()

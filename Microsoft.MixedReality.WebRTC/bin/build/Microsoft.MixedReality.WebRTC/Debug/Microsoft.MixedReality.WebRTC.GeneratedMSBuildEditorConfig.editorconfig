@@ -1,6 +1,6 @@
 is_global = true
 build_property.RootNamespace = Microsoft.MixedReality.WebRTC
-build_property.ProjectDir = C:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\
+build_property.ProjectDir = c:\Users\Me\git\fyteclub\Microsoft.MixedReality.WebRTC\
 build_property.EnableComHosting = 
 build_property.EnableGeneratedComInterfaceComImportInterop = 
 build_property.CsWinRTUseWindowsUIXamlProjections = false
