@@ -99,7 +99,10 @@ namespace FyteClub.Core
             SecureLogger.Initialize(_pluginLog);
             LibWebRTCConnection.PluginDirectory = _pluginInterface.AssemblyLocation.Directory?.FullName;
             WebRTCConnectionFactory.Initialize(_pluginLog);
-            WebRTCConnectionFactory.SetLocalPlayerNameResolver(() => Task.FromResult(_clientState.LocalPlayer?.Name?.TextValue ?? ""));
+            WebRTCConnectionFactory.SetLocalPlayerNameResolver(async () => 
+            {
+                return await _framework.RunOnFrameworkThread(() => _clientState.LocalPlayer?.Name?.TextValue ?? "");
+            });
         }
 
         private void InitializeServices()
