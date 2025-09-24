@@ -1,28 +1,21 @@
-using Dalamud.Game.Command;
-using Dalamud.Plugin;
-using Dalamud.Game.ClientState.Objects;
-using Dalamud.Game.ClientState;
-using Dalamud.Plugin.Services;
-using Dalamud.Game.ClientState.Objects.Types;
-using Dalamud.Interface.Windowing;
-using Dalamud.Bindings.ImGui;
-using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Net.Http;
-using System.Threading.Tasks;
-using System.Numerics;
-using System.Linq;
-using System.Threading;
-using System.Text;
-using System.Security.Cryptography;
-using Dalamud.Plugin.Ipc;
-using System.Text.Json;
-using FyteClub.WebRTC;
+// This file has been modularized into separate partial class files:
+// - FyteClubPluginCore.cs - Core initialization and dependency injection
+// - FyteClubPlugin.SyncQueue.cs - Sync queue management
+// - FyteClubPlugin.SyncshellManagement.cs - Syncshell operations
+// - FyteClubPlugin.ModSharing.cs - Mod sharing functionality
+// - FyteClubPlugin.Framework.cs - Framework updates and IPC
+// - FyteClubPlugin.Configuration.cs - Configuration management
+// - FyteClubPlugin.CacheManagement.cs - Cache operations
+// - FyteClubPlugin.P2PConnections.cs - P2P connection handling
+// - FyteClubPlugin.Commands.cs - Command processing
+
+// The main plugin class is now in FyteClubPluginCore.cs
+// This file is kept for reference but should be removed after migration
 
 namespace FyteClub
 {
-    public sealed partial class FyteClubPlugin : IDalamudPlugin, IMediatorSubscriber
+    // DEPRECATED: Use FyteClubPluginCore.cs instead
+    public sealed partial class FyteClubPlugin_DEPRECATED : IDalamudPlugin, IMediatorSubscriber
     {
         public string Name => "FyteClub";
         private const string CommandName = "/fyteclub";
@@ -114,7 +107,7 @@ namespace FyteClub
             WebRTCConnectionFactory.SetLocalPlayerNameResolver(async () => _clientState.LocalPlayer?.Name?.TextValue ?? "");
 
             // Initialize services
-            _modSystemIntegration = new FyteClubModIntegration(pluginInterface, pluginLog, objectTable, framework);
+            _modSystemIntegration = new FyteClubModIntegration(pluginInterface, pluginLog, objectTable, framework, clientState);
             _safeModIntegration = new SafeModIntegration(pluginInterface, pluginLog);
             _redrawCoordinator = new FyteClubRedrawCoordinator(pluginLog, _mediator, _modSystemIntegration);
             _playerDetection = new PlayerDetectionService(objectTable, _mediator, _pluginLog);
@@ -186,7 +179,7 @@ namespace FyteClub
             
 
             
-            _pluginLog.Info("FyteClub v4.5.9 initialized - P2P mod sharing with distributed TURN servers");
+            ModularLogger.LogAlways(LogModule.Core, "FyteClub v4.5.9 initialized - P2P mod sharing with distributed TURN servers");
         }
 
         private void InitializeClientCache()
@@ -194,12 +187,12 @@ namespace FyteClub
             try
             {
                 _clientCache = new ClientModCache(_pluginLog, _pluginInterface.ConfigDirectory.FullName);
-                _pluginLog.Info("FyteClub: Client cache initialized successfully");
+                ModularLogger.LogAlways(LogModule.Cache, "Client cache initialized successfully");
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"CRITICAL: Failed to initialize client cache: {ex.Message}");
-                _pluginLog.Error("FyteClub will continue with reduced functionality");
+                ModularLogger.LogAlways(LogModule.Cache, "CRITICAL: Failed to initialize client cache: {0}", ex.Message);
+                ModularLogger.LogAlways(LogModule.Cache, "FyteClub will continue with reduced functionality");
             }
         }
 
@@ -208,12 +201,12 @@ namespace FyteClub
             try
             {
                 _componentCache = new ModComponentCache(_pluginLog, _pluginInterface.ConfigDirectory.FullName);
-                _pluginLog.Info("FyteClub: Component-based mod cache initialized successfully");
+                ModularLogger.LogAlways(LogModule.Cache, "Component-based mod cache initialized successfully");
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"CRITICAL: Failed to initialize component cache: {ex.Message}");
-                _pluginLog.Error("FyteClub will continue with reduced functionality");
+                ModularLogger.LogAlways(LogModule.Cache, "CRITICAL: Failed to initialize component cache: {0}", ex.Message);
+                ModularLogger.LogAlways(LogModule.Cache, "FyteClub will continue with reduced functionality");
             }
         }
 
@@ -238,7 +231,7 @@ namespace FyteClub
                 {
                     _syncshellManager.SetLocalPlayerName(localPlayerName!);
                     _lastLocalPlayerName = localPlayerName;
-                    _pluginLog.Info($"Updated local player name for mod filtering: {localPlayerName}");
+                    ModularLogger.LogDebug(LogModule.Core, "Updated local player name for mod filtering: {0}", localPlayerName);
                 }
                 
                 _mediator.ProcessQueue();
@@ -276,7 +269,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Framework error: {ex.Message}");
+                ModularLogger.LogAlways(LogModule.Core, "Framework error: {0}", ex.Message);
             }
         }
         
@@ -297,7 +290,7 @@ namespace FyteClub
                 var allVisiblePlayers = new List<string>();
                 
                 // Get all visible players from object table
-                await _framework.RunOnFrameworkThread(() =>
+                await _framework.RunOnTick(() =>
                 {
                     foreach (var obj in _objectTable)
                     {
@@ -338,12 +331,12 @@ namespace FyteClub
                 
                 if (cacheHits > 0)
                 {
-                    _pluginLog.Info($"⚡ BULK: Applied cached mods to {cacheHits}/{allVisiblePlayers.Count} visible players");
+                    ModularLogger.LogDebug(LogModule.Cache, "⚡ BULK: Applied cached mods to {0}/{1} visible players", cacheHits, allVisiblePlayers.Count);
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog.Warning($"Bulk cache apply failed: {ex.Message}");
+                ModularLogger.LogAlways(LogModule.Cache, "Bulk cache apply failed: {0}", ex.Message);
             }
         }
         
@@ -442,7 +435,7 @@ namespace FyteClub
             var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive).ToList();
             if (activeSyncshells.Count == 0) return;
             
-            _pluginLog.Info($"FyteClub: Attempting peer reconnections for {activeSyncshells.Count} active syncshells...");
+            ModularLogger.LogDebug(LogModule.WebRTC, "Attempting peer reconnections for {0} active syncshells...", activeSyncshells.Count);
             
             foreach (var syncshell in activeSyncshells)
             {
@@ -452,18 +445,18 @@ namespace FyteClub
                     if (syncshell.IsOwner)
                     {
                         await _syncshellManager.InitializeAsHost(syncshell.Id);
-                        _pluginLog.Info($"Reinitialized host for syncshell: {syncshell.Name}");
+                        ModularLogger.LogDebug(LogModule.Syncshells, "Reinitialized host for syncshell: {0}", syncshell.Name);
                     }
                     else
                     {
                         // For joined syncshells, request member list sync to discover active peers
                         await _syncshellManager.RequestMemberListSync(syncshell.Id);
-                        _pluginLog.Info($"Requested member sync for syncshell: {syncshell.Name}");
+                        ModularLogger.LogDebug(LogModule.Syncshells, "Requested member sync for syncshell: {0}", syncshell.Name);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _pluginLog.Warning($"Failed to reconnect to syncshell {syncshell.Name}: {ex.Message}");
+                    ModularLogger.LogAlways(LogModule.Syncshells, "Failed to reconnect to syncshell {0}: {1}", syncshell.Name, ex.Message);
                 }
             }
         }
@@ -482,23 +475,23 @@ namespace FyteClub
                         var testConnection = await WebRTCConnectionFactory.CreateConnectionAsync(_turnManager);
                         testConnection?.Dispose();
                         
-                        _pluginLog.Info($"FyteClub: WebRTC P2P ready for {activeSyncshells.Count} active syncshells");
+                        ModularLogger.LogDebug(LogModule.WebRTC, "WebRTC P2P ready for {0} active syncshells", activeSyncshells.Count);
                         foreach (var syncshell in activeSyncshells)
                         {
-                            _pluginLog.Info($"  - '{syncshell.Name}' ID: {syncshell.Id} (Use invite codes to connect)");
+                            ModularLogger.LogDebug(LogModule.Syncshells, "  - '{0}' ID: {1} (Use invite codes to connect)", syncshell.Name, syncshell.Id);
                         }
                     }
                     catch (Exception innerEx)
                     {
-                        _pluginLog.Error($"FyteClub: WebRTC initialization failed - {innerEx.Message}");
-                        _pluginLog.Warning($"FyteClub: {activeSyncshells.Count} syncshells configured but P2P connections disabled");
+                        ModularLogger.LogAlways(LogModule.WebRTC, "WebRTC initialization failed - {0}", innerEx.Message);
+                        ModularLogger.LogAlways(LogModule.WebRTC, "{0} syncshells configured but P2P connections disabled", activeSyncshells.Count);
                     }
                 });
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"FyteClub: WebRTC test task failed - {ex.Message}");
-                _pluginLog.Warning($"FyteClub: P2P connections disabled due to WebRTC issues");
+                ModularLogger.LogAlways(LogModule.WebRTC, "WebRTC test task failed - {0}", ex.Message);
+                ModularLogger.LogAlways(LogModule.WebRTC, "P2P connections disabled due to WebRTC issues");
             }
         }
         
@@ -537,7 +530,7 @@ namespace FyteClub
                     var cachedRecipe = await _componentCache.GetCachedAppearanceRecipe(playerName);
                     if (cachedRecipe != null)
                     {
-                        _pluginLog.Info($"⚡ INSTANT: Cached recipe applied for {playerName}");
+                        ModularLogger.LogDebug(LogModule.Cache, "⚡ INSTANT: Cached recipe applied for {0}", playerName);
                         await _modSystemIntegration.ApplyPlayerMods(cachedRecipe, playerName);
                         _loadingStates[playerName] = LoadingState.Complete;
                         cacheHit = true;
@@ -550,7 +543,7 @@ namespace FyteClub
                     var cachedMods = await _clientCache.GetCachedPlayerMods(playerName);
                     if (cachedMods?.RecipeData != null)
                     {
-                        _pluginLog.Info($"⚡ INSTANT: Cached mods applied for {playerName}");
+                        ModularLogger.LogDebug(LogModule.Cache, "⚡ INSTANT: Cached mods applied for {0}", playerName);
                         await ApplyPlayerModsFromCache(playerName, cachedMods);
                         _loadingStates[playerName] = LoadingState.Complete;
                         cacheHit = true;
@@ -559,12 +552,12 @@ namespace FyteClub
                 
                 if (!cacheHit)
                 {
-                    _pluginLog.Debug($"No cache for {playerName} - will queue for P2P sync");
+                    ModularLogger.LogDebug(LogModule.ModSync, "No cache for {0} - will queue for P2P sync", playerName);
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog.Warning($"Failed to apply cached mods for {playerName}: {ex.Message}");
+                ModularLogger.LogAlways(LogModule.Cache, "Failed to apply cached mods for {0}: {1}", playerName, ex.Message);
             }
         }
         
@@ -597,7 +590,7 @@ namespace FyteClub
                     _syncQueue.Enqueue(entry, distance);
                 }
                 
-                _pluginLog.Debug($"Queued {message.PlayerName} for P2P sync at {distance:F1}m");
+                ModularLogger.LogDebug(LogModule.ModSync, "Queued {0} for P2P sync at {1:F1}m", message.PlayerName, distance);
             });
         }
         
@@ -623,7 +616,7 @@ namespace FyteClub
                 
                 if (batch.Count == 0) return;
                 
-                _pluginLog.Info($"Processing sync batch: {batch.Count} players");
+                ModularLogger.LogDebug(LogModule.ModSync, "Processing sync batch: {0} players", batch.Count);
                 
                 // Process batch in parallel
                 var tasks = batch.Select(async entry =>
@@ -634,7 +627,7 @@ namespace FyteClub
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog.Warning($"Failed to sync {entry.PlayerName}: {ex.Message}");
+                        ModularLogger.LogAlways(LogModule.ModSync, "Failed to sync {0}: {1}", entry.PlayerName, ex.Message);
                     }
                 });
                 
@@ -660,7 +653,7 @@ namespace FyteClub
             }
             
             _loadingStates[entry.PlayerName] = LoadingState.Requesting;
-            _pluginLog.Info($"🔄 P2P Sync: {entry.PlayerName} (queued {(DateTime.UtcNow - entry.DetectedAt).TotalSeconds:F1}s ago)");
+            ModularLogger.LogDebug(LogModule.ModSync, "🔄 P2P Sync: {0} (queued {1:F1}s ago)", entry.PlayerName, (DateTime.UtcNow - entry.DetectedAt).TotalSeconds);
             
             // Establish P2P connection and sync new data
             await TryEstablishP2PConnection(entry.PlayerName);
@@ -699,7 +692,7 @@ namespace FyteClub
                     if (!string.IsNullOrEmpty(currentHash) && currentHash != oldHash)
                     {
                         playersToRequeue.Add(playerName);
-                        _pluginLog.Info($"Hash changed for {playerName}: {oldHash[..8]} -> {currentHash[..8]}");
+                        ModularLogger.LogDebug(LogModule.ModSync, "Hash changed for {0}: {1} -> {2}", playerName, oldHash[..8], currentHash[..8]);
                     }
                 }
                 
@@ -721,7 +714,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                _pluginLog.Warning($"Hash change check failed: {ex.Message}");
+                ModularLogger.LogAlways(LogModule.ModSync, "Hash change check failed: {0}", ex.Message);
             }
         }
         
@@ -985,13 +978,13 @@ namespace FyteClub
                     var localPlayerName = localPlayer?.Name?.TextValue;
                     if (!string.IsNullOrEmpty(localPlayerName))
                     {
-                        _pluginLog.Info($"[HOST] Collecting own mod data for: {localPlayerName}");
+                        _pluginLog.Info($"🎯 [HOST] Collecting own mod data for: {localPlayerName}");
                         await SharePlayerModsToSyncshells(localPlayerName);
-                        _pluginLog.Info($"[HOST] Host mod data collected and cached");
+                        _pluginLog.Info($"🎯 [HOST] Host mod data collected and cached");
                     }
                     else
                     {
-                        _pluginLog.Warning($"[HOST] Could not get local player name for mod collection");
+                        _pluginLog.Warning($"🎯 [HOST] Could not get local player name for mod collection");
                     }
                 });
                 
@@ -1210,7 +1203,7 @@ namespace FyteClub
                 string? capturedPlayerName = null;
                 string? capturedWorldName = null;
                 
-                await _framework.RunOnFrameworkThread(() =>
+                await _framework.RunOnTick(() =>
                 {
                     var localPlayer = _clientState.LocalPlayer;
                     capturedPlayerName = localPlayer?.Name?.TextValue;
@@ -2215,6 +2208,12 @@ namespace FyteClub
                     ImGui.EndTabItem();
                 }
                 
+                if (ImGui.BeginTabItem("Logging"))
+                {
+                    DrawLoggingTab();
+                    ImGui.EndTabItem();
+                }
+                
                 ImGui.EndTabBar();
             }
         }
@@ -3191,6 +3190,66 @@ namespace FyteClub
             {
                 ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1), "Not hosting");
             }
+        }
+        
+        private void DrawLoggingTab()
+        {
+            ImGui.Text("Configure which logs to show for debugging");
+            ImGui.Separator();
+
+            // Master debug toggle
+            var debugEnabled = FyteClub.Core.Logging.LoggingManager.IsDebugEnabled();
+            if (ImGui.Checkbox("Enable Debug Logs", ref debugEnabled))
+            {
+                FyteClub.Core.Logging.LoggingManager.SetDebugEnabled(debugEnabled);
+            }
+
+            if (debugEnabled)
+            {
+                ImGui.Separator();
+                ImGui.Text("Debug Log Modules:");
+                
+                var modules = FyteClub.Core.Logging.LoggingManager.GetAllModules();
+                
+                foreach (FyteClub.Core.Logging.LogModule module in Enum.GetValues<FyteClub.Core.Logging.LogModule>())
+                {
+                    var enabled = modules.GetValueOrDefault(module, false);
+                    if (ImGui.Checkbox(module.ToString(), ref enabled))
+                    {
+                        FyteClub.Core.Logging.LoggingManager.SetModuleEnabled(module, enabled);
+                    }
+                    
+                    // Add tooltips for clarity
+                    if (ImGui.IsItemHovered())
+                    {
+                        var tooltip = module switch
+                        {
+                            FyteClub.Core.Logging.LogModule.Core => "Plugin lifecycle, syncshell creation/joining",
+                            FyteClub.Core.Logging.LogModule.UI => "User interface interactions and updates",
+                            FyteClub.Core.Logging.LogModule.WebRTC => "P2P connection establishment and data transfer",
+                            FyteClub.Core.Logging.LogModule.Nostr => "Nostr relay communication and signaling",
+                            FyteClub.Core.Logging.LogModule.Cache => "Mod data caching and storage",
+                            FyteClub.Core.Logging.LogModule.ModSync => "Mod synchronization between players",
+                            FyteClub.Core.Logging.LogModule.Syncshells => "Syncshell management and member lists",
+                            FyteClub.Core.Logging.LogModule.TURN => "TURN server operations",
+                            FyteClub.Core.Logging.LogModule.Penumbra => "Penumbra mod integration",
+                            FyteClub.Core.Logging.LogModule.Glamourer => "Glamourer integration",
+                            FyteClub.Core.Logging.LogModule.CustomizePlus => "Customize+ integration",
+                            FyteClub.Core.Logging.LogModule.Heels => "Simple Heels integration",
+                            FyteClub.Core.Logging.LogModule.Honorific => "Honorific integration",
+                            _ => "Debug logs for this module"
+                        };
+                        ImGui.SetTooltip(tooltip);
+                    }
+                }
+            }
+            else
+            {
+                ImGui.TextDisabled("Enable debug logs to configure modules");
+            }
+
+            ImGui.Separator();
+            ImGui.Text("Note: 'Always' level logs (critical events) are always shown");
         }
     }
 

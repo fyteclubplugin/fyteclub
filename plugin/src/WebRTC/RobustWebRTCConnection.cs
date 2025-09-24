@@ -19,6 +19,9 @@ namespace FyteClub.WebRTC
         private string _currentPassword = string.Empty;
         private List<FyteClub.TURN.TurnServerInfo> _turnServers = new();
         private Func<Task<string>>? _localPlayerNameResolver;
+        private readonly HashSet<string> _processedMessageIds = new();
+        private readonly object _messageLock = new();
+        private bool _handlersRegistered = false;
 
         public event Action? OnConnected;
         public event Action? OnDisconnected;
@@ -75,34 +78,55 @@ namespace FyteClub.WebRTC
                     }
                     
                     _currentPeer = peer;
-                    peer.OnDataReceived = (data) => {
-                        _pluginLog?.Info($"[WebRTC] 📨 Message received on {peer.PeerId}, {data.Length} bytes");
-                        
-                        // Fire external handler only once - no internal processing to avoid duplicates
-                        OnDataReceived?.Invoke(data);
-                    };
                     
-                    // Wait for data channel to open, then trigger bootstrap
-                    _ = Task.Run(async () => {
-                        _pluginLog?.Info($"⏳ [WebRTC] Starting data channel wait loop for {peer.PeerId}");
-                        // Wait up to 10 seconds for data channel to open
-                        for (int i = 0; i < 20; i++)
-                        {
-                            var currentState = peer.DataChannel?.State;
-                            _pluginLog?.Info($"🔍 [WebRTC] Data channel check {i}: {currentState}");
-                            
-                            if (currentState == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+                    // Only register handlers once per peer
+                    if (!_handlersRegistered)
+                    {
+                        _handlersRegistered = true;
+                        peer.OnDataReceived = (data) => {
+                            // Generate content hash for deduplication
+                            lock (_messageLock)
                             {
-                                _pluginLog?.Info($"✅ [WebRTC] Data channel opened after {i * 500}ms");
+                                var contentHash = System.Security.Cryptography.SHA256.HashData(data);
+                                var hashString = Convert.ToHexString(contentHash)[..16];
+                                
+                                if (_processedMessageIds.Contains(hashString))
+                                {
+                                    _pluginLog?.Debug($"[WebRTC] 🔄 Duplicate message detected, skipping: {hashString}");
+                                    return;
+                                }
+                                
+                                _processedMessageIds.Add(hashString);
+                                if (_processedMessageIds.Count > 1000)
+                                {
+                                    _processedMessageIds.Clear();
+                                }
+                            }
+                            
+                            _pluginLog?.Info($"[WebRTC] 📨 Message received on {peer.PeerId}, {data.Length} bytes");
+                            OnDataReceived?.Invoke(data);
+                        };
+                    }
+                    
+                    // Simplified data channel monitoring
+                    _ = Task.Run(async () => {
+                        _pluginLog?.Info($"⏳ [WebRTC] Monitoring data channel for {peer.PeerId}");
+                        
+                        // Wait up to 15 seconds with less frequent checks
+                        for (int i = 0; i < 15; i++)
+                        {
+                            if (peer.DataChannel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+                            {
+                                _pluginLog?.Info($"✅ [WebRTC] Data channel ready for {peer.PeerId}");
                                 TriggerBootstrap();
                                 OnConnected?.Invoke();
                                 return;
                             }
-                            await Task.Delay(500);
+                            await Task.Delay(1000); // Check every second
                         }
-                        _pluginLog?.Warning($"⚠️ [WebRTC] Data channel failed to open within 10 seconds, final state: {peer.DataChannel?.State}");
-                        // Trigger anyway in case state check is unreliable
-                        _pluginLog?.Info($"🚀 [WebRTC] Triggering bootstrap anyway due to timeout");
+                        
+                        // Timeout - trigger anyway as connection might still work
+                        _pluginLog?.Info($"🚀 [WebRTC] Bootstrap timeout for {peer.PeerId}, triggering anyway");
                         TriggerBootstrap();
                         OnConnected?.Invoke();
                     });
@@ -111,26 +135,17 @@ namespace FyteClub.WebRTC
                 _webrtcManager.OnPeerDisconnected += (peer) => {
                     if (_currentPeer == peer)
                     {
-                        Console.WriteLine($"🔌 [RobustWebRTCConnection] Peer disconnected: {peer.PeerId}");
+                        _pluginLog?.Info($"🔌 [WebRTC] Peer {peer.PeerId} disconnected");
                         _currentPeer = null;
                         OnDisconnected?.Invoke();
                         
-                        // Attempt automatic reconnection after 5 seconds
-                        if (!string.IsNullOrEmpty(_currentSyncshellId))
+                        // Schedule reconnection attempt
+                        if (!string.IsNullOrEmpty(_currentSyncshellId) && _reconnectionManager != null)
                         {
-                            Console.WriteLine($"🔄 [RobustWebRTCConnection] Scheduling automatic reconnection for {_currentSyncshellId} in 5 seconds");
                             _ = Task.Run(async () => {
-                                await Task.Delay(5000);
-                                Console.WriteLine($"🚀 [RobustWebRTCConnection] Starting automatic reconnection for {_currentSyncshellId}");
-                                if (_reconnectionManager != null)
-                                {
-                                    await _reconnectionManager.AttemptReconnection(_currentSyncshellId);
-                                }
+                                await Task.Delay(10000); // Wait 10 seconds before reconnecting
+                                await _reconnectionManager.AttemptReconnection(_currentSyncshellId);
                             });
-                        }
-                        else
-                        {
-                            Console.WriteLine($"❌ [RobustWebRTCConnection] No syncshell ID available for reconnection");
                         }
                     }
                 };
@@ -245,9 +260,10 @@ namespace FyteClub.WebRTC
                 };
                 
                 // Monitor connection establishment
-                if (_webrtcManager != null)
+                var webrtcManager = _webrtcManager;
+                if (webrtcManager != null)
                 {
-                    _webrtcManager.OnPeerConnected += (peer) => {
+                    webrtcManager.OnPeerConnected += (peer) => {
                         if (peer.PeerId == uuid)
                         {
                             connectionEstablished = true;
@@ -256,37 +272,29 @@ namespace FyteClub.WebRTC
                     };
                 }
                 
-                // Enhanced re-publish logic with faster initial attempts
+                // Simplified re-publish logic
                 _ = Task.Run(async () =>
                 {
                     var republishCount = 0;
-                    var maxAttempts = 24; // 2 minutes total
+                    var maxAttempts = 10; // 1 minute total
                     
                     while (!answerReceived && !connectionEstablished && republishCount < maxAttempts)
                     {
-                        // Faster re-publish for first few attempts, then slower
-                        var delay = republishCount < 6 ? 3000 : 10000; // 3s for first 6, then 10s
-                        await Task.Delay(delay);
+                        await Task.Delay(6000); // Re-publish every 6 seconds
                         
                         if (!answerReceived && !connectionEstablished)
                         {
                             republishCount++;
-                            _pluginLog?.Info($"[WebRTC] HOST: Re-publishing offer #{republishCount} for UUID {uuid}");
                             try
                             {
                                 await _hostNostrSignaling.PublishOfferAsync(uuid, offerSdp);
-                                _pluginLog?.Info($"[WebRTC] HOST: Offer re-published #{republishCount} successfully");
+                                _pluginLog?.Info($"[WebRTC] Re-published offer #{republishCount} for {uuid}");
                             }
                             catch (Exception ex)
                             {
-                                _pluginLog?.Warning($"[WebRTC] HOST: Failed to re-publish offer #{republishCount}: {ex.Message}");
+                                _pluginLog?.Warning($"[WebRTC] Re-publish failed #{republishCount}: {ex.Message}");
                             }
                         }
-                    }
-                    
-                    if (!answerReceived && !connectionEstablished)
-                    {
-                        _pluginLog?.Error($"[WebRTC] HOST: Connection failed after {republishCount} attempts for UUID {uuid}");
                     }
                 });
 
@@ -427,18 +435,17 @@ namespace FyteClub.WebRTC
                     _pluginLog?.Info($"[WebRTC] JOINER: Subscribed, HandleOffer will process offers automatically");
                     Console.WriteLine($"[JOINER] Subscribed, HandleOffer will process offers automatically");
 
-                    // Send republish request after initial wait to ensure host republishes
+                    // Send republish request
                     _ = Task.Run(async () => {
-                        await Task.Delay(5000); // Wait 5s first
-                        _pluginLog?.Info($"[WebRTC] JOINER: Sending republish request for UUID {uuid}");
+                        await Task.Delay(3000); // Wait 3s first
                         try
                         {
                             await nostr.SendRepublishRequestAsync(uuid);
-                            _pluginLog?.Info($"[WebRTC] JOINER: Republish request sent for UUID {uuid}");
+                            _pluginLog?.Info($"[WebRTC] Sent republish request for {uuid}");
                         }
                         catch (Exception ex)
                         {
-                            _pluginLog?.Warning($"[WebRTC] JOINER: Failed to send republish request: {ex.Message}");
+                            _pluginLog?.Warning($"[WebRTC] Republish request failed: {ex.Message}");
                         }
                     });
                     
@@ -473,21 +480,14 @@ namespace FyteClub.WebRTC
 
         public Task SendDataAsync(byte[] data)
         {
-            if (_currentPeer?.DataChannel?.State != Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+            if (_currentPeer?.DataChannel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
             {
-                _pluginLog?.Warning($"[WebRTC] Cannot send data - channel state: {_currentPeer?.DataChannel?.State}");
-                
-                // Force data channel open if connection exists
-                if (_currentPeer?.DataChannel != null)
-                {
-                    _pluginLog?.Info($"[WebRTC] Forcing data channel state check and bootstrap");
-                    TriggerBootstrap();
-                }
-                return Task.CompletedTask;
+                _pluginLog?.Debug($"[WebRTC] Sending {data.Length} bytes");
+                return _currentPeer.SendDataAsync(data);
             }
             
-            _pluginLog?.Debug($"[WebRTC] Sending {data.Length} bytes");
-            return _currentPeer.SendDataAsync(data);
+            _pluginLog?.Warning($"[WebRTC] Cannot send - channel state: {_currentPeer?.DataChannel?.State}");
+            return Task.CompletedTask;
         }
         
         private async void TriggerBootstrap()
@@ -572,24 +572,27 @@ namespace FyteClub.WebRTC
         
         // Removed duplicate message handlers - all processing now handled by SyncshellManager
         
-        private async Task<string> GetLocalPlayerName()
+        private Task<string> GetLocalPlayerName()
         {
-            try
+            return Task.Run(async () =>
             {
-                if (_localPlayerNameResolver != null)
+                try
                 {
-                    var name = await _localPlayerNameResolver();
-                    if (!string.IsNullOrWhiteSpace(name)) return name;
+                    if (_localPlayerNameResolver != null)
+                    {
+                        var name = await _localPlayerNameResolver();
+                        if (!string.IsNullOrWhiteSpace(name)) return name;
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                _pluginLog?.Warning($"[P2P] Local player name resolver failed: {ex.Message}");
-            }
-            return ""; // empty means unknown; callers already guard on empty
+                catch (Exception ex)
+                {
+                    _pluginLog?.Warning($"[P2P] Local player name resolver failed: {ex.Message}");
+                }
+                return ""; // empty means unknown; callers already guard on empty
+            });
         }
         
-        private async Task<object> GetLocalModData(string playerName)
+        private object GetLocalModData(string playerName)
         {
             // This would need to be injected or accessed via callback
             return new {
@@ -600,8 +603,9 @@ namespace FyteClub.WebRTC
             };
         }
         
-        public event Action<List<string>>? OnPhonebookUpdated;
-        public event Action<string, JsonElement>? OnModDataReceived;
+        // TODO: Implement phonebook and mod data event handling
+        // public event Action<List<string>>? OnPhonebookUpdated;
+        // public event Action<string, JsonElement>? OnModDataReceived;
         
         public void ConfigureTurnServers(List<FyteClub.TURN.TurnServerInfo> turnServers)
         {
@@ -654,8 +658,8 @@ namespace FyteClub.WebRTC
                 OnConnected = null;
                 OnDisconnected = null;
                 OnDataReceived = null;
-                OnPhonebookUpdated = null;
-                OnModDataReceived = null;
+                // OnPhonebookUpdated = null;
+                // OnModDataReceived = null;
                 OnAnswerCodeGenerated = null;
                 
                 // Cancel any ongoing tasks first

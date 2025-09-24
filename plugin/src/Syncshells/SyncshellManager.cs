@@ -639,9 +639,21 @@ namespace FyteClub
                     }
                 }
                 
-                var modData = Encoding.UTF8.GetString(data);
                 ModularLogger.LogAlways(LogModule.Syncshells, "Received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
                 ModularLogger.LogDebug(LogModule.Syncshells, "HandleModData: Received {0} bytes from {1}", data.Length, syncshellId);
+                
+                // Check if this is binary data (compressed P2P protocol) or JSON (legacy)
+                bool isBinaryData = data.Length > 0 && (data[0] == 0x01 || data[0] == 0x1f || data[0] < 0x20);
+                
+                if (isBinaryData)
+                {
+                    ModularLogger.LogDebug(LogModule.Syncshells, "HandleModData: Detected binary P2P protocol data, skipping JSON parsing");
+                    // Binary data is handled by P2P orchestrator via OnP2PMessageReceived event
+                    return;
+                }
+                
+                // Legacy JSON handling
+                var modData = Encoding.UTF8.GetString(data);
                 ModularLogger.LogDebug(LogModule.Syncshells, "HandleModData: Data preview: {0}...", modData.Substring(0, Math.Min(200, modData.Length)));
                 ModularLogger.LogDebug(LogModule.Syncshells, "HandleModData: Timestamp: {0}", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff"));
                 

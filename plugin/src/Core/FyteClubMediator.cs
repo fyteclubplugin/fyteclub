@@ -57,7 +57,7 @@ namespace FyteClub
     {
         public string PlayerName { get; set; } = "";
         public nint Address { get; set; }
-        public Vector3 Position { get; set; }
+        public System.Numerics.Vector3 Position { get; set; }
     }
 
     public class PlayerRemovedMessage : MessageBase

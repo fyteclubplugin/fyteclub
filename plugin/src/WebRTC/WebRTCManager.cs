@@ -74,7 +74,7 @@ namespace FyteClub.WebRTC
             };
             
             // Add local TURN server first (highest priority)
-            var localServer = _turnManager.GetLocalServerInfo();
+            var localServer = _turnManager?.GetLocalServerInfo();
             if (localServer != null)
             {
                 servers.Insert(0, new IceServer
@@ -87,15 +87,19 @@ namespace FyteClub.WebRTC
             }
             
             // Add peer TURN servers
-            foreach (var turnServer in _turnManager.AvailableServers)
+            var availableServers = _turnManager?.AvailableServers;
+            if (availableServers != null)
             {
-                servers.Add(new IceServer
+                foreach (var turnServer in availableServers)
                 {
-                    Urls = { turnServer.Url },
-                    TurnUserName = turnServer.Username,
-                    TurnPassword = turnServer.Password
-                });
-                _pluginLog?.Info($"[WebRTC] Added peer TURN server: {turnServer.Url}");
+                    servers.Add(new IceServer
+                    {
+                        Urls = { turnServer.Url },
+                        TurnUserName = turnServer.Username,
+                        TurnPassword = turnServer.Password
+                    });
+                    _pluginLog?.Info($"[WebRTC] Added peer TURN server: {turnServer.Url}");
+                }
             }
             
             _pluginLog?.Info($"[WebRTC] Configured {servers.Count} ICE servers total");
@@ -382,81 +386,25 @@ namespace FyteClub.WebRTC
 
             // Interactive Connectivity Establishment candidate handling
             peerConnection.IceCandidateReadytoSend += (candidate) => {
-                _pluginLog?.Info($"[WebRTC] 🧊 ICE candidate ready for {peerId}: {candidate.Content}");
-                
-                // Parse candidate details for better logging
-                var candidateStr = candidate.Content;
-                var candidateType = "unknown";
-                var candidateIP = "unknown";
-                var candidatePort = "unknown";
-                
-                if (candidateStr.Contains("typ host")) candidateType = "host";
-                else if (candidateStr.Contains("typ srflx")) candidateType = "server-reflexive";
-                else if (candidateStr.Contains("typ relay")) candidateType = "relay";
-                else if (candidateStr.Contains("typ prflx")) candidateType = "peer-reflexive";
-                
-                var parts = candidateStr.Split(' ');
-                if (parts.Length > 4)
-                {
-                    candidateIP = parts[4];
-                    candidatePort = parts[5];
-                }
-                
-                _pluginLog?.Info($"[WebRTC] 📍 ICE candidate details for {peerId}: type={candidateType}, IP={candidateIP}, port={candidatePort}");
-                
+                _pluginLog?.Debug($"[WebRTC] ICE candidate ready for {peerId}: {candidate.Content}");
                 _signalingChannel.SendIceCandidate(peerId, candidate);
-                _pluginLog?.Info($"[WebRTC] ✅ ICE candidate sent for {peerId}");
             };
 
-            // Connection state monitoring
+            // Simplified ICE state monitoring
             peerConnection.IceStateChanged += (state) => {
-                try
+                if (_disposed) return;
+                
+                _pluginLog?.Debug($"[WebRTC] ICE {state} for {peerId}");
+                peer.IceState = state;
+                
+                if (state == IceConnectionState.Connected)
                 {
-                    if (_disposed) return;
-                    
-                    _pluginLog?.Info($"[WebRTC] 🔗 ICE STATE CHANGE for {peerId}: {state}");
-                    peer.IceState = state;
-                    
-                    if (state == IceConnectionState.Connected)
-                    {
-                        _pluginLog?.Info($"[WebRTC] ✅ ICE CONNECTED for {peerId}, DataChannel: {peer.DataChannel?.State}");
-                        CheckAndTriggerConnection(peer);
-                    }
-                    else if (state == IceConnectionState.Checking)
-                    {
-                        _pluginLog?.Info($"[WebRTC] 🔄 ICE CHECKING for {peerId} - attempting connectivity");
-                    }
-                    else if (state == IceConnectionState.New)
-                    {
-                        _pluginLog?.Info($"[WebRTC] 🆕 ICE NEW for {peerId} - gathering candidates");
-                    }
-                    else if (state == IceConnectionState.Disconnected)
-                    {
-                        _pluginLog?.Warning($"[WebRTC] ⚠️ ICE DISCONNECTED for {peerId} - connection lost");
-                        OnPeerDisconnected?.Invoke(peer);
-                    }
-                    else if (state == IceConnectionState.Failed)
-                    {
-                        _pluginLog?.Error($"[WebRTC] ❌ ICE FAILED for {peerId} - connectivity establishment failed");
-                        _pluginLog?.Error($"[WebRTC] 🔍 ICE failure analysis for {peerId}:");
-                        _pluginLog?.Error($"[WebRTC] 🔍   - Check firewall settings on both machines");
-                        _pluginLog?.Error($"[WebRTC] 🔍   - Verify network connectivity between peers");
-                        _pluginLog?.Error($"[WebRTC] 🔍   - Consider adding more STUN servers");
-                        OnPeerDisconnected?.Invoke(peer);
-                    }
-                    else if (state == IceConnectionState.Closed)
-                    {
-                        _pluginLog?.Info($"[WebRTC] 🚪 ICE CLOSED for {peerId} - connection terminated");
-                        OnPeerDisconnected?.Invoke(peer);
-                    }
-                    else
-                    {
-                        _pluginLog?.Info($"[WebRTC] 🔄 ICE state {state} for {peerId}");
-                    }
+                    CheckAndTriggerConnection(peer);
                 }
-                catch (Exception ex)
+                else if (state == IceConnectionState.Failed || state == IceConnectionState.Disconnected)
                 {
-                    _pluginLog?.Error($"[WebRTC] ❌ Error in ICE state handler: {ex.Message}");
+                    _pluginLog?.Warning($"[WebRTC] ⚠️ ICE {state} for {peerId}");
+                    OnPeerDisconnected?.Invoke(peer);
                 }
             };
 
@@ -468,13 +416,13 @@ namespace FyteClub.WebRTC
                 await ProcessPendingIceCandidates(peerId);
             });
             
-            // Enhanced connection monitoring with timeout and retry logic
+            // Simplified connection monitoring with reasonable timeout
             _ = Task.Run(async () => {
-                _pluginLog?.Info($"[WebRTC] 🕰️ Starting enhanced connection monitor for {peerId}");
+                _pluginLog?.Debug($"[WebRTC] Starting connection monitor for {peerId}");
                 
-                var connectionTimeout = 45; // 45 seconds total timeout
-                var checkInterval = 500; // Check every 500ms
-                var maxChecks = connectionTimeout * 1000 / checkInterval;
+                var connectionTimeout = 30; // 30 seconds total timeout
+                var checkInterval = 2000; // Check every 2 seconds
+                var maxChecks = connectionTimeout / 2;
                 
                 for (int i = 0; i < maxChecks; i++)
                 {
@@ -482,65 +430,36 @@ namespace FyteClub.WebRTC
                     
                     await Task.Delay(checkInterval);
                     
-                    var currentDataChannelState = peer.DataChannel?.State;
-                    var currentIceState = peer.IceState;
-                    
-                    // Check for successful connection
-                    if (peer.DataChannel != null && 
-                        (currentDataChannelState == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open || 
-                         (currentDataChannelState == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Connecting && 
-                          currentIceState == IceConnectionState.Connected)) && 
-                        !peer.DataChannelReady)
+                    // Simple connection check - if either ICE is connected or DataChannel is open, we're good
+                    if ((peer.IceState == IceConnectionState.Connected || peer.DataChannel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open) && !peer.DataChannelReady)
                     {
-                        _pluginLog?.Info($"[WebRTC] ✅ Connection established for {peerId} (DataChannel: {currentDataChannelState}, ICE: {currentIceState})");
+                        _pluginLog?.Info($"[WebRTC] Connection established for {peerId}");
                         peer.DataChannelReady = true;
-                        peer.OnDataChannelReady?.Invoke();
-                        
-                        if (peer.IceState != IceConnectionState.Connected)
-                        {
-                            peer.IceState = IceConnectionState.Connected;
-                        }
-                        
                         CheckAndTriggerConnection(peer);
                         break;
                     }
                     
-                    // Check for connection failure
-                    if (currentIceState == IceConnectionState.Failed || 
-                        currentIceState == IceConnectionState.Disconnected ||
-                        currentDataChannelState == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Closed)
+                    // Check for definitive failure
+                    if (peer.IceState == IceConnectionState.Failed)
                     {
-                        _pluginLog?.Error($"[WebRTC] ❌ Connection failed for {peerId} (DataChannel: {currentDataChannelState}, ICE: {currentIceState})");
+                        _pluginLog?.Error($"[WebRTC] ❌ ICE connection failed for {peerId}");
                         OnPeerDisconnected?.Invoke(peer);
                         break;
                     }
                     
-                    // Periodic status logging
-                    if (i % 10 == 0) // Every 5 seconds
+                    // Log status every 10 seconds
+                    if (i % 5 == 0)
                     {
-                        var elapsed = i * checkInterval / 1000;
-                        _pluginLog?.Info($"[WebRTC] 🔍 Connection status {elapsed}s for {peerId}: DataChannel={currentDataChannelState}, ICE={currentIceState}");
-                        
-                        // Force ICE restart if stuck in checking for too long
-                        if (elapsed > 20 && currentIceState == IceConnectionState.Checking)
-                        {
-                            _pluginLog?.Warning($"[WebRTC] ⚠️ ICE stuck in checking state for {peerId}, connection may be blocked by firewall");
-                        }
+                        var elapsed = i * 2;
+                        _pluginLog?.Debug($"[WebRTC] Status {elapsed}s for {peerId}: ICE={peer.IceState}, DC={peer.DataChannel?.State}");
                     }
                 }
                 
-                // Final timeout check
+                // Timeout handling
                 if (!peer.DataChannelReady)
                 {
-                    _pluginLog?.Error($"[WebRTC] ⏰ Connection timeout for {peerId} after {connectionTimeout}s - final state: DataChannel={peer.DataChannel?.State}, ICE={peer.IceState}");
-                    _pluginLog?.Error($"[WebRTC] 💡 Troubleshooting tips for {peerId}:");
-                    _pluginLog?.Error($"[WebRTC] 💡   - Check Windows Firewall settings on both machines");
-                    _pluginLog?.Error($"[WebRTC] 💡   - Verify router port forwarding for TURN server");
-                    _pluginLog?.Error($"[WebRTC] 💡   - Try disabling antivirus temporarily");
-                    OnPeerDisconnected?.Invoke(peer);
+                    _pluginLog?.Warning($"[WebRTC] ⏰ Connection timeout for {peerId} after {connectionTimeout}s");
                 }
-                
-                _pluginLog?.Info($"[WebRTC] 🕰️ Connection monitor finished for {peerId}");
             });
             
             return peer;
@@ -550,96 +469,41 @@ namespace FyteClub.WebRTC
         
         private void RegisterDataChannelHandlers(Peer peer, Microsoft.MixedReality.WebRTC.DataChannel channel)
         {
-            _pluginLog?.Info($"[WebRTC] 📝 HANDLERS: Registering data channel handlers for {peer.PeerId}");
-            _pluginLog?.Info($"[WebRTC] 📝 HANDLERS: Initial channel state: {channel.State}");
-            _pluginLog?.Info($"[WebRTC] 📝 HANDLERS: Channel label: {channel.Label}");
-            _pluginLog?.Info($"[WebRTC] 📝 HANDLERS: Peer role: {(peer.IsOfferer ? "OFFERER" : "ANSWERER")}");
+            if (peer.HandlersRegistered) return;
+            
+            _pluginLog?.Debug($"[WebRTC] Registering handlers for {peer.PeerId}");
+            peer.HandlersRegistered = true;
             
             channel.StateChanged += () => {
-                try
+                if (_disposed) return;
+                
+                _pluginLog?.Debug($"[WebRTC] DataChannel {channel.State} for {peer.PeerId}");
+                
+                if (channel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
                 {
-                    if (_disposed) 
-                    {
-                        _pluginLog?.Warning($"[WebRTC] ⚠️ HANDLERS: StateChanged fired but manager disposed for {peer.PeerId}");
-                        return;
-                    }
-                    
-                    _pluginLog?.Info($"[WebRTC] 📡 HANDLERS: Data channel STATE CHANGE for {peer.PeerId}: {channel.State}");
-                    _pluginLog?.Info($"[WebRTC] 📡 HANDLERS: Current ICE state: {peer.IceState}");
-                    _pluginLog?.Info($"[WebRTC] 📡 HANDLERS: DataChannelReady flag: {peer.DataChannelReady}");
-                    
-                    if (channel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
-                    {
-                        _pluginLog?.Info($"[WebRTC] ✅ HANDLERS: Data channel OPEN for {peer.PeerId} - triggering ready event");
-                        peer.DataChannelReady = true;
-                        peer.OnDataChannelReady?.Invoke();
-                        CheckAndTriggerConnection(peer);
-                    }
-                    else if (channel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Connecting)
-                    {
-                        _pluginLog?.Info($"[WebRTC] 🔄 HANDLERS: Data channel CONNECTING for {peer.PeerId}");
-                        if (peer.IceState == IceConnectionState.Connected)
-                        {
-                            _pluginLog?.Info($"[WebRTC] ✅ HANDLERS: Data channel CONNECTING but ICE connected for {peer.PeerId} - assuming ready");
-                            peer.DataChannelReady = true;
-                            peer.OnDataChannelReady?.Invoke();
-                            CheckAndTriggerConnection(peer);
-                        }
-                    }
-                    else if (channel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Closed)
-                    {
-                        _pluginLog?.Warning($"[WebRTC] ❌ HANDLERS: Data channel CLOSED for {peer.PeerId}");
-                    }
-                    else
-                    {
-                        _pluginLog?.Info($"[WebRTC] 🔄 HANDLERS: Data channel state {channel.State} for {peer.PeerId}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _pluginLog?.Error($"[WebRTC] ❌ HANDLERS: Error in data channel state handler: {ex.Message}");
-                    _pluginLog?.Error($"[WebRTC] ❌ HANDLERS: Stack trace: {ex.StackTrace}");
+                    peer.DataChannelReady = true;
+                    CheckAndTriggerConnection(peer);
                 }
             };
 
             channel.MessageReceived += (data) => {
-                try
-                {
-                    if (_disposed) return;
-                    _pluginLog?.Info($"[WebRTC] 📨 HANDLERS: Message received on {peer.PeerId}, {data.Length} bytes");
-                    peer.OnDataReceived?.Invoke(data);
-                }
-                catch (Exception ex)
-                {
-                    _pluginLog?.Error($"[WebRTC] ❌ HANDLERS: Error in data channel message handler: {ex.Message}");
-                }
+                if (_disposed) return;
+                _pluginLog?.Debug($"[WebRTC] Message {data.Length}B from {peer.PeerId}");
+                peer.OnDataReceived?.Invoke(data);
             };
-            
-            _pluginLog?.Info($"[WebRTC] ✅ HANDLERS: All data channel handlers registered for {peer.PeerId}");
         }
         
         private void CheckAndTriggerConnection(Peer peer)
         {
-            // Check if both ICE and DataChannel are ready
-            bool iceReady = peer.IceState == IceConnectionState.Connected;
-            bool dataChannelReady = peer.DataChannel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open || peer.DataChannelReady;
+            // Simple check - either ICE connected OR DataChannel open means we're ready
+            bool ready = peer.IceState == IceConnectionState.Connected || 
+                        peer.DataChannel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open ||
+                        peer.DataChannelReady;
             
-            _pluginLog?.Info($"[WebRTC] 🔍 Connection readiness check for {peer.PeerId}:");
-            _pluginLog?.Info($"[WebRTC] 🔍   ICE State: {peer.IceState} (ready: {iceReady})");
-            _pluginLog?.Info($"[WebRTC] 🔍   DataChannel State: {peer.DataChannel?.State} (ready: {dataChannelReady})");
-            _pluginLog?.Info($"[WebRTC] 🔍   DataChannel Ready Flag: {peer.DataChannelReady}");
-            
-            if (iceReady && dataChannelReady && OnPeerConnected != null)
+            if (ready && OnPeerConnected != null)
             {
-                _pluginLog?.Info($"[WebRTC] 🎉 CONNECTION ESTABLISHED for {peer.PeerId} - both ICE and DataChannel ready!");
+                _pluginLog?.Info($"[WebRTC] Connection ready for {peer.PeerId}");
                 OnPeerConnected?.Invoke(peer);
-            }
-            else
-            {
-                var missing = new List<string>();
-                if (!iceReady) missing.Add("ICE connectivity");
-                if (!dataChannelReady) missing.Add("DataChannel");
-                _pluginLog?.Info($"[WebRTC] ⏳ Connection pending for {peer.PeerId}, waiting for: {string.Join(", ", missing)}");
             }
         }
 
@@ -793,7 +657,6 @@ namespace FyteClub.WebRTC
                 {
                     // Extract ufrag from the candidate to detect self-loop
                     var candidateContent = candidate.Content;
-                    var isOwnCandidate = false;
                     
                     // Check if we're hosting this UUID (only hosts should ignore their own candidates)
                     lock (_hostingUuids)
@@ -828,7 +691,7 @@ namespace FyteClub.WebRTC
                         else if (candidateStr.Contains("typ prflx")) candidateType = "peer-reflexive";
                         
                         var parts = candidateStr.Split(' ');
-                        if (parts.Length > 4)
+                        if (parts.Length > 5)
                         {
                             candidateIP = parts[4];
                             candidatePort = parts[5];
@@ -837,7 +700,7 @@ namespace FyteClub.WebRTC
                         _pluginLog?.Info($"[WebRTC] 🧊 Adding REMOTE ICE candidate for {peerId}: type={candidateType}, IP={candidateIP}, port={candidatePort}");
                         _pluginLog?.Info($"[WebRTC] 📝 Full candidate: {candidate.Content}");
                         
-                        peer.PeerConnection.AddIceCandidate(candidate);
+                        peer.PeerConnection?.AddIceCandidate(candidate);
                         _pluginLog?.Info($"[WebRTC] ✅ REMOTE ICE candidate added successfully for {peerId}");
                     }
                     catch (InvalidOperationException ex) when (ex.Message.Contains("Object not initialized"))
@@ -893,7 +756,7 @@ namespace FyteClub.WebRTC
             }
         }
 
-        private async Task<bool> ValidatePeerConnection(Peer peer, string peerId)
+        private Task<bool> ValidatePeerConnection(Peer peer, string peerId)
         {
             try
             {
@@ -903,7 +766,7 @@ namespace FyteClub.WebRTC
                 if (peer?.PeerConnection == null)
                 {
                     _pluginLog?.Error($"[WebRTC] 💥 Peer or PeerConnection is null for {peerId}");
-                    return false;
+                    return Task.FromResult(false);
                 }
                 
                 // Try to access basic properties to test if the connection is initialized
@@ -915,17 +778,17 @@ namespace FyteClub.WebRTC
                 catch (Exception basicEx)
                 {
                     _pluginLog?.Error($"[WebRTC] 💥 Basic validation failed for {peerId}: {basicEx.Message}");
-                    return false;
+                    return Task.FromResult(false);
                 }
                 
                 // Simple validation - just check if the connection exists and is accessible
                 _pluginLog?.Info($"[WebRTC] 🔍 Peer connection validation passed for {peerId}");
-                return true;
+                return Task.FromResult(true);
             }
             catch (Exception ex)
             {
                 _pluginLog?.Error($"[WebRTC] 💥 Peer validation exception for {peerId}: {ex.Message}");
-                return false;
+                return Task.FromResult(false);
             }
         }
         

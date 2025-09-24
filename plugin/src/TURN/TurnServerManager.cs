@@ -9,10 +9,12 @@ namespace FyteClub.TURN
     public class TurnServerManager : IDisposable
     {
         public bool IsHostingEnabled { get; private set; }
+        public bool IsFirewallConfigured { get; private set; }
         public SyncshellTurnServer? LocalServer { get; private set; }
         public List<TurnServerInfo> AvailableServers { get; private set; } = new();
         
         private readonly IPluginLog? _pluginLog;
+        private DateTime _startTime = DateTime.UtcNow;
 
         public TurnServerManager(IPluginLog? pluginLog = null)
         {
@@ -88,6 +90,19 @@ namespace FyteClub.TURN
                    (LocalServer?.IsRunning == true ? 1 : 0);
         }
         
+        public List<SyncshellTurnServer> GetAvailableServers()
+        {
+            var servers = new List<SyncshellTurnServer>();
+            
+            // Add local server if running
+            if (LocalServer?.IsRunning == true)
+            {
+                servers.Add(LocalServer);
+            }
+            
+            return servers;
+        }
+        
         public async Task<string?> FindUserServer(string targetUserId)
         {
             if (LocalServer?.IsRunning == true)
@@ -95,6 +110,40 @@ namespace FyteClub.TURN
                 return await LocalServer.FindPeerServer(targetUserId);
             }
             return null;
+        }
+
+        public TurnServerStatistics GetStatistics()
+        {
+            if (LocalServer?.IsRunning != true)
+            {
+                return new TurnServerStatistics();
+            }
+            
+            return new TurnServerStatistics
+            {
+                ActiveConnections = LocalServer.ActiveConnections,
+                TotalConnections = LocalServer.TotalConnections,
+                BytesRelayed = LocalServer.BytesRelayed,
+                UptimeSeconds = (int)(DateTime.UtcNow - _startTime).TotalSeconds
+            };
+        }
+        
+        public void ConfigureFirewall()
+        {
+            try
+            {
+                if (LocalServer?.IsRunning == true)
+                {
+                    LocalServer.ConfigureFirewall();
+                    IsFirewallConfigured = true;
+                    _pluginLog?.Info("[TURN] Firewall configured successfully");
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog?.Error($"[TURN] Failed to configure firewall: {ex.Message}");
+                IsFirewallConfigured = false;
+            }
         }
 
         public void Dispose()
@@ -120,5 +169,13 @@ namespace FyteClub.TURN
         public string HostPlayerId { get; set; } = "";
         public string SyncshellId { get; set; } = "";
         public int UserCount { get; set; } = 0;
+    }
+    
+    public class TurnServerStatistics
+    {
+        public int ActiveConnections { get; set; } = 0;
+        public int TotalConnections { get; set; } = 0;
+        public long BytesRelayed { get; set; } = 0;
+        public int UptimeSeconds { get; set; } = 0;
     }
 }

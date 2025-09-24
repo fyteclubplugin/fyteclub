@@ -16,7 +16,7 @@ namespace FyteClub.WebRTC
         private readonly IPluginLog? _pluginLog;
         private readonly Timer _reconnectionTimer;
         private readonly Dictionary<string, DateTime> _lastReconnectAttempt = new();
-        private readonly TimeSpan _reconnectInterval = TimeSpan.FromMinutes(2);
+        private readonly TimeSpan _reconnectInterval = TimeSpan.FromMinutes(5);
         private bool _disposed = false;
 
         public event Action<string, IWebRTCConnection>? OnReconnected;
@@ -30,8 +30,8 @@ namespace FyteClub.WebRTC
             _connectionFactory = connectionFactory;
             _pluginLog = pluginLog;
             
-            // Check for reconnections every 30 seconds
-            _reconnectionTimer = new Timer(CheckReconnections, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+            // Check for reconnections every 2 minutes
+            _reconnectionTimer = new Timer(CheckReconnections, null, TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(2));
         }
 
         public async Task AttemptReconnection(string syncshellId)
@@ -58,8 +58,7 @@ namespace FyteClub.WebRTC
             if (_lastReconnectAttempt.TryGetValue(syncshellId, out var lastAttempt) && 
                 DateTime.UtcNow - lastAttempt < _reconnectInterval)
             {
-                var timeUntilNext = _reconnectInterval - (DateTime.UtcNow - lastAttempt);
-                Console.WriteLine($"⏰ [ReconnectionManager] Rate limited: {timeUntilNext.TotalSeconds:F0}s until next attempt for {syncshellId}");
+                _pluginLog?.Info($"Reconnection rate limited for {syncshellId}");
                 return;
             }
 
@@ -98,31 +97,24 @@ namespace FyteClub.WebRTC
                 return;
             }
 
-            Console.WriteLine($"🔍 [ReconnectionManager] Starting periodic reconnection check");
-            
             var syncshells = _persistence.GetAllSyncshells();
-            Console.WriteLine($"🔍 [ReconnectionManager] Found {syncshells.Count} syncshells to check");
-            
             var eligibleCount = 0;
+            
             foreach (var syncshell in syncshells)
             {
-                var daysSinceLastConnection = (DateTime.UtcNow - syncshell.LastConnected).TotalDays;
-                Console.WriteLine($"🔍 [ReconnectionManager] Syncshell {syncshell.SyncshellId}: {daysSinceLastConnection:F1} days since last connection");
                 
                 // Only attempt reconnection for recently used syncshells
-                if (DateTime.UtcNow - syncshell.LastConnected < TimeSpan.FromDays(7))
+                if (DateTime.UtcNow - syncshell.LastConnected < TimeSpan.FromDays(3))
                 {
                     eligibleCount++;
-                    Console.WriteLine($"✅ [ReconnectionManager] Syncshell {syncshell.SyncshellId} is eligible for reconnection");
                     await AttemptReconnection(syncshell.SyncshellId);
-                }
-                else
-                {
-                    Console.WriteLine($"⏰ [ReconnectionManager] Syncshell {syncshell.SyncshellId} too old for automatic reconnection ({daysSinceLastConnection:F1} days)");
                 }
             }
             
-            Console.WriteLine($"🔍 [ReconnectionManager] Reconnection check complete: {eligibleCount}/{syncshells.Count} syncshells were eligible");
+            if (eligibleCount > 0)
+            {
+                _pluginLog?.Info($"Checked {eligibleCount}/{syncshells.Count} syncshells for reconnection");
+            }
         }
 
         public void Dispose()

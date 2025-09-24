@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Xunit;
 using FyteClub;
@@ -25,12 +27,12 @@ namespace FyteClub.Tests
         }
 
         [Fact]
-        public async Task CreateSyncshell_AddsToSessions()
+        public async Task CreateSyncshell_AddsToSyncshells()
         {
             var syncshell = await _manager.CreateSyncshell("TestGroup");
 
-            var retrieved = _manager.GetSession(syncshell.Id);
-            Assert.NotNull(retrieved);
+            var syncshells = _manager.GetSyncshells();
+            Assert.Contains(syncshells, s => s.Id == syncshell.Id);
         }
 
         [Fact]
@@ -43,10 +45,11 @@ namespace FyteClub.Tests
         }
 
         [Fact]
-        public void GetSession_ReturnsNullForNonexistentHash()
+        public void GetSyncshells_ReturnsEmptyListInitially()
         {
-            var result = _manager.GetSession("nonexistent_hash");
-            Assert.Null(result);
+            var syncshells = _manager.GetSyncshells();
+            Assert.NotNull(syncshells);
+            Assert.Empty(syncshells);
         }
 
         [Fact]
@@ -61,20 +64,44 @@ namespace FyteClub.Tests
         }
 
         [Fact]
-        public async Task JoinSyncshell_WithInvalidCode_ReturnsFalse()
+        public void JoinSyncshell_WithValidData_ReturnsTrue()
         {
-            var result = await _manager.JoinSyncshell("TestGroup", "password123");
-            Assert.True(result); // Simplified version always succeeds
+            var result = _manager.JoinSyncshell("TestGroup", "password123");
+            Assert.True(result);
         }
 
         [Fact]
-        public async Task JoinSyncshell_CreatesSession()
+        public void JoinSyncshell_CreatesSession()
         {
-            var result = await _manager.JoinSyncshell("TestGroup", "password123");
+            var result = _manager.JoinSyncshell("TestGroup", "password123");
             
             Assert.True(result);
             var syncshells = _manager.GetSyncshells();
             Assert.Contains(syncshells, s => s.Name == "TestGroup");
+        }
+        
+        [Fact]
+        public async Task CreateSyncshell_InitializesWithHostMember()
+        {
+            var syncshell = await _manager.CreateSyncshell("TestGroup");
+            
+            Assert.NotNull(syncshell.Members);
+            Assert.Single(syncshell.Members);
+            Assert.Contains("You (Host)", syncshell.Members);
+        }
+        
+        [Fact]
+        public async Task InitializeAsHost_SetsUpCorrectMemberList()
+        {
+            var syncshell = await _manager.CreateSyncshell("TestGroup");
+            await _manager.InitializeAsHost(syncshell.Id);
+            
+            var syncshells = _manager.GetSyncshells();
+            var hostSyncshell = syncshells.FirstOrDefault(s => s.Id == syncshell.Id);
+            
+            Assert.NotNull(hostSyncshell);
+            Assert.NotNull(hostSyncshell.Members);
+            Assert.True(hostSyncshell.Members.Any(m => m.Contains("Host")));
         }
 
         public void Dispose()

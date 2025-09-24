@@ -61,6 +61,9 @@ namespace FyteClub.WebRTC
                             _log?.Warning($"[NNostr] Error processing events from {relay}: {ex.Message}");
                         }
                     };
+                    
+                    // Note: NNostr library doesn't expose connection events, 
+                    // so we handle errors via try-catch in the main connection logic
 
                     // Add connection timeout and retry
                     var connectTask = client.ConnectAndWaitUntilConnected();

@@ -16,6 +16,7 @@ namespace FyteClub.WebRTC
         public bool IgnoreOffer { get; set; } = false;
         public IceConnectionState IceState { get; set; }
         public bool DataChannelReady { get; set; } = false;
+        public bool HandlersRegistered { get; set; } = false; // Prevent duplicate handler registration
 
         // SDP/ICE coordination flags
         public bool AnswerProcessed { get; set; } = false; // set after successful SRD(answer) on offerer

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
@@ -35,7 +36,7 @@ namespace FyteClub
         }
 
         /// <summary>
-        /// Apply a complete outfit atomically - all mods apply together or none at all.
+        /// Apply a complete outfit atomically using Mare's proven patterns.
         /// </summary>
         public async Task<ModApplicationResult> ApplyOutfitAtomic(string playerId, PeerModState modState)
         {
@@ -49,6 +50,14 @@ namespace FyteClub
             {
                 _pluginLog.Info($"[ModApplication] Starting atomic outfit application for {playerId} ({modState.ComponentReferences.Count} components)");
 
+                // Wait for character to be ready (Mare's pattern)
+                if (!await WaitForCharacterReady(playerId))
+                {
+                    var error = "Character not ready for mod application";
+                    _networkLogger.EndSession(sessionId, false, error);
+                    return new ModApplicationResult { Success = false, ErrorMessage = error };
+                }
+
                 // Create transaction for rollback capability
                 var transaction = new ModApplicationTransaction
                 {
@@ -59,21 +68,25 @@ namespace FyteClub
                     PreviousState = _appliedStates.GetValueOrDefault(playerId)
                 };
 
-                // Convert PeerModState to AdvancedPlayerInfo for application
-                var playerInfo = await ConvertPeerStateToPlayerInfo(modState, playerId);
+                // Process file replacements with validation
+                var processedFiles = ProcessFileReplacements(modState.ComponentReferences);
+                if (processedFiles.Count == 0)
+                {
+                    var error = "No valid files to apply";
+                    _networkLogger.EndSession(sessionId, false, error);
+                    return new ModApplicationResult { Success = false, ErrorMessage = error };
+                }
+
+                // Convert to player info with processed files
+                var playerInfo = ConvertPeerStateToPlayerInfo(modState, playerId, processedFiles);
                 if (playerInfo == null)
                 {
                     var error = "Failed to convert peer state to player info";
                     _networkLogger.EndSession(sessionId, false, error);
-                    return new ModApplicationResult
-                    {
-                        Success = false,
-                        ErrorMessage = error,
-                        ComponentsProcessed = 0
-                    };
+                    return new ModApplicationResult { Success = false, ErrorMessage = error };
                 }
 
-                // Apply using existing mod integration
+                // Apply using enhanced mod integration
                 var success = await _modIntegration.ApplyPlayerMods(playerInfo, playerId);
                 
                 if (success)
@@ -97,7 +110,6 @@ namespace FyteClub
                     transaction.Success = true;
                     transaction.EndTime = DateTime.UtcNow;
 
-                    // Add to transaction history for rollback capability
                     _transactionHistory.Push(transaction);
                     while (_transactionHistory.Count > MAX_TRANSACTION_HISTORY)
                     {
@@ -124,12 +136,7 @@ namespace FyteClub
                 {
                     var error = "Mod application failed";
                     _networkLogger.EndSession(sessionId, false, error);
-                    return new ModApplicationResult
-                    {
-                        Success = false,
-                        ErrorMessage = error,
-                        ComponentsProcessed = 0
-                    };
+                    return new ModApplicationResult { Success = false, ErrorMessage = error };
                 }
             }
             catch (Exception ex)
@@ -138,19 +145,50 @@ namespace FyteClub
                 _networkLogger.LogError(sessionId, playerId, "FATAL_ERROR", ex.Message, ex);
                 _networkLogger.EndSession(sessionId, false, ex.Message);
                 
-                return new ModApplicationResult
-                {
-                    Success = false,
-                    ErrorMessage = ex.Message,
-                    ComponentsProcessed = 0
-                };
+                return new ModApplicationResult { Success = false, ErrorMessage = ex.Message };
             }
         }
 
+        private async Task<bool> WaitForCharacterReady(string playerId, int timeoutMs = 5000)
+        {
+            var timeout = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+            while (DateTime.UtcNow < timeout)
+            {
+                // Check if character is in a state ready for mod application
+                // This would integrate with character monitoring system
+                await Task.Delay(100);
+                // For now, always return true after first check
+                break;
+            }
+            return true; // Simplified for now
+        }
+
+        private Dictionary<string, string> ProcessFileReplacements(List<ComponentReference> components)
+        {
+            var processedFiles = new Dictionary<string, string>();
+            var allowedExtensions = new[] { ".mdl", ".tex", ".mtrl", ".tmb", ".pap", ".avfx", ".atex", ".sklb", ".eid", ".phyb", ".pbd", ".scd", ".skp", ".shpk" };
+
+            foreach (var component in components.Where(c => c.Type.Equals("penumbra", StringComparison.OrdinalIgnoreCase)))
+            {
+                var resolvedPath = ResolvePenumbraModPath(component.Identifier);
+                if (!string.IsNullOrEmpty(resolvedPath))
+                {
+                    var extension = Path.GetExtension(resolvedPath).ToLowerInvariant();
+                    if (allowedExtensions.Any(ext => ext.Equals(extension)) && File.Exists(resolvedPath))
+                    {
+                        processedFiles[component.Identifier] = resolvedPath;
+                    }
+                }
+            }
+
+            _pluginLog.Info($"[ModApplication] Processed {processedFiles.Count} valid file replacements");
+            return processedFiles;
+        }
+
         /// <summary>
-        /// Convert PeerModState to AdvancedPlayerInfo for mod application.
+        /// Convert PeerModState to AdvancedPlayerInfo with processed files.
         /// </summary>
-        private Task<AdvancedPlayerInfo?> ConvertPeerStateToPlayerInfo(PeerModState modState, string playerId)
+        private AdvancedPlayerInfo? ConvertPeerStateToPlayerInfo(PeerModState modState, string playerId, Dictionary<string, string> processedFiles)
         {
             try
             {
@@ -166,14 +204,18 @@ namespace FyteClub
                     switch (componentRef.Type.ToLowerInvariant())
                     {
                         case "penumbra":
-                            playerInfo.Mods.Add(componentRef.Identifier);
+                            if (processedFiles.TryGetValue(componentRef.Identifier, out var resolvedPath))
+                            {
+                                // Create game path mapping
+                                var gamePath = ExtractGamePath(componentRef.Identifier);
+                                playerInfo.Mods.Add($"{gamePath}|{resolvedPath}");
+                            }
                             break;
                         case "glamourer":
-                            // Would need to retrieve component data from cache
-                            playerInfo.GlamourerDesign = "cached_design";
+                            playerInfo.GlamourerData = componentRef.Identifier;
                             break;
                         case "customize+":
-                            playerInfo.CustomizePlusProfile = "cached_profile";
+                            playerInfo.CustomizePlusData = componentRef.Identifier;
                             break;
                         case "heels":
                             if (float.TryParse(componentRef.Identifier, out var offset))
@@ -187,12 +229,150 @@ namespace FyteClub
                     }
                 }
 
-                return Task.FromResult<AdvancedPlayerInfo?>(playerInfo);
+                return playerInfo;
             }
             catch (Exception ex)
             {
                 _pluginLog.Error($"[ModApplication] Error converting peer state: {ex.Message}");
-                return Task.FromResult<AdvancedPlayerInfo?>(null);
+                return null;
+            }
+        }
+
+        private string ExtractGamePath(string identifier)
+        {
+            // Extract game path from identifier - simplified implementation
+            if (identifier.Contains('|'))
+            {
+                return identifier.Split('|')[0];
+            }
+            return identifier;
+        }
+
+        /// <summary>
+        /// Resolve Penumbra mod path from identifier, handling both full paths and mod names.
+        /// </summary>
+        private string ResolvePenumbraModPath(string identifier)
+        {
+            try
+            {
+                _pluginLog.Debug($"🔧 [PATH DEBUG] Starting path resolution for: '{identifier}'");
+                
+                // Check if this is an absolute path from sender's machine
+                if (System.IO.Path.IsPathRooted(identifier))
+                {
+                    _pluginLog.Debug($"🔧 [PATH DEBUG] Detected absolute path from sender: '{identifier}'");
+                    
+                    // Check if it's a Penumbra config file (contains pluginConfigs\Penumbra)
+                    if (identifier.Contains("pluginConfigs\\Penumbra") || identifier.Contains("pluginConfigs/Penumbra"))
+                    {
+                        var fileName = System.IO.Path.GetFileName(identifier);
+                        var localPenumbraConfigPath = GetPenumbraConfigDirectory();
+                        
+                        if (!string.IsNullOrEmpty(localPenumbraConfigPath))
+                        {
+                            var resolvedPath = System.IO.Path.Combine(localPenumbraConfigPath, fileName);
+                            _pluginLog.Info($"🔧 [PATH DEBUG] Resolved Penumbra config file '{fileName}' -> '{resolvedPath}'");
+                            return resolvedPath;
+                        }
+                    }
+                    
+                    // For other absolute paths, try to resolve to local mod directory
+                    var modFileName = System.IO.Path.GetFileName(identifier);
+                    var penumbraModPath = GetPenumbraModDirectory();
+                    if (!string.IsNullOrEmpty(penumbraModPath))
+                    {
+                        var resolvedPath = System.IO.Path.Combine(penumbraModPath, modFileName);
+                        _pluginLog.Info($"🔧 [PATH DEBUG] Resolved absolute path '{modFileName}' -> '{resolvedPath}'");
+                        return resolvedPath;
+                    }
+                    
+                    _pluginLog.Warning($"🔧 [PATH DEBUG] Cannot resolve absolute path, using as-is: '{identifier}'");
+                    return identifier;
+                }
+                
+                // Try to get Penumbra mod directory for relative paths
+                var penumbraPath = GetPenumbraModDirectory();
+                if (string.IsNullOrEmpty(penumbraPath))
+                {
+                    _pluginLog.Warning($"🔧 [PATH DEBUG] No Penumbra directory found, using identifier as-is: '{identifier}'");
+                    return identifier;
+                }
+                
+                // Construct full path
+                var fullPath = System.IO.Path.Combine(penumbraPath, identifier);
+                _pluginLog.Info($"🔧 [PATH DEBUG] Resolved '{identifier}' -> '{fullPath}'");
+                
+                return fullPath;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"🔧 [PATH DEBUG] Error resolving path for '{identifier}': {ex.Message}");
+                return identifier; // Fallback to original
+            }
+        }
+        
+        /// <summary>
+        /// Get the Penumbra config directory path.
+        /// </summary>
+        private string? GetPenumbraConfigDirectory()
+        {
+            try
+            {
+                var roamingPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                var penumbraPath = System.IO.Path.Combine(roamingPath, "XIVLauncher", "pluginConfigs", "Penumbra");
+                
+                if (System.IO.Directory.Exists(penumbraPath))
+                {
+                    _pluginLog.Debug($"🔧 [PATH DEBUG] Found Penumbra config directory: '{penumbraPath}'");
+                    return penumbraPath;
+                }
+                
+                _pluginLog.Debug($"🔧 [PATH DEBUG] Penumbra config directory not found");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"🔧 [PATH DEBUG] Error getting Penumbra config directory: {ex.Message}");
+                return null;
+            }
+        }
+        
+        /// <summary>
+        /// Get the Penumbra mod directory path.
+        /// </summary>
+        private string? GetPenumbraModDirectory()
+        {
+            try
+            {
+                // Try common Penumbra paths
+                var roamingPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                var penumbraPath = System.IO.Path.Combine(roamingPath, "XIVLauncher", "pluginConfigs", "Penumbra");
+                
+                if (System.IO.Directory.Exists(penumbraPath))
+                {
+                    // Look for mod directory in config
+                    var configPath = System.IO.Path.Combine(penumbraPath, "config.json");
+                    if (System.IO.File.Exists(configPath))
+                    {
+                        var configText = System.IO.File.ReadAllText(configPath);
+                        // Simple JSON parsing for ModDirectory
+                        var modDirMatch = System.Text.RegularExpressions.Regex.Match(configText, @"""ModDirectory""\s*:\s*""([^""]+)""");
+                        if (modDirMatch.Success)
+                        {
+                            var modDir = modDirMatch.Groups[1].Value.Replace("\\\\", "\\");
+                            _pluginLog.Debug($"🔧 [PATH DEBUG] Found Penumbra mod directory: '{modDir}'");
+                            return modDir;
+                        }
+                    }
+                }
+                
+                _pluginLog.Debug($"🔧 [PATH DEBUG] Penumbra mod directory not found");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"🔧 [PATH DEBUG] Error getting Penumbra directory: {ex.Message}");
+                return null;
             }
         }
 

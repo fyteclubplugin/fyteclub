@@ -61,7 +61,7 @@ namespace FyteClub
                         {
                             PlayerName = playerId,
                             Address = obj.Address,
-                            Position = new Vector3(obj.Position.X, obj.Position.Y, obj.Position.Z)
+                            Position = obj.Position
                         });
                     }
                     else

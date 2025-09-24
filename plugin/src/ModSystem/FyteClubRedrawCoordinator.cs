@@ -84,11 +84,24 @@ namespace FyteClub
             {
                 // Use targeted redraw instead of redrawing all characters
                 _pluginLog.Information($"FyteClub: Triggering targeted redraw for {characterName}");
-                _modIntegration.RedrawCharacterByName(characterName);
+                
+                // CRITICAL FIX: Schedule redraw on next framework tick to avoid threading issues
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(100); // Brief delay to ensure mod application is complete
+                        _modIntegration.RedrawCharacterByName(characterName);
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Warning($"FyteClub: Redraw failed for {characterName}: {ex.Message}");
+                    }
+                });
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"FyteClub: Failed to redraw character {characterName}: {ex.Message}");
+                _pluginLog.Error($"FyteClub: Failed to schedule redraw for character {characterName}: {ex.Message}");
             }
         }
     }

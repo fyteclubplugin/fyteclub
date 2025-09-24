@@ -16,7 +16,7 @@ namespace FyteClub
         private readonly IPluginLog _pluginLog;
         private readonly P2PNetworkLogger _networkLogger;
         private readonly PhonebookModStateManager _stateManager;
-        private readonly ModComponentCache _componentCache;
+        private readonly ModComponentStorage _componentCache;
         private readonly ClientModCache _clientCache;
         private readonly EnhancedModApplicationService _modApplication;
         
@@ -29,7 +29,7 @@ namespace FyteClub
             IPluginLog pluginLog,
             P2PNetworkLogger networkLogger,
             PhonebookModStateManager stateManager,
-            ModComponentCache componentCache,
+            ModComponentStorage componentCache,
             ClientModCache clientCache,
             EnhancedModApplicationService modApplication)
         {
@@ -230,7 +230,7 @@ namespace FyteClub
         /// <summary>
         /// Request missing components from a peer via P2P transfer.
         /// </summary>
-        private async Task RequestMissingComponents(SyncSession session)
+        private Task RequestMissingComponents(SyncSession session)
         {
             try
             {
@@ -246,6 +246,8 @@ namespace FyteClub
                 // TODO: Handle actual component transfer and caching
                 // When components are received, they should be stored in the component cache
                 // and then the complete outfit should be applied atomically
+                
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
@@ -253,6 +255,7 @@ namespace FyteClub
                 _networkLogger.LogError(session.SessionId, session.PeerId, "COMPONENT_REQUEST_ERROR", ex.Message, ex);
                 session.Status = SyncSessionStatus.Failed;
                 session.ErrorMessage = ex.Message;
+                return Task.CompletedTask;
             }
         }
 
@@ -401,14 +404,7 @@ namespace FyteClub
         public List<string> ReceivedComponents { get; set; } = new();
     }
 
-    public enum SyncSessionStatus
-    {
-        Requesting,
-        Transferring,
-        Applying,
-        Completed,
-        Failed
-    }
+
 
     public class PeerInfo
     {

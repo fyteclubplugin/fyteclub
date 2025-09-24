@@ -75,10 +75,10 @@ namespace FyteClub.Core
             };
         }
 
-        private async Task<List<SyncTarget>> GetSameTurnTargets()
+        private Task<List<SyncTarget>> GetSameTurnTargets()
         {
             // Mock implementation - get players from current TURN
-            return new List<SyncTarget>();
+            return Task.FromResult(new List<SyncTarget>());
         }
 
         private async Task<List<SyncTarget>> GetDifferentTurnTargets()

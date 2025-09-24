@@ -55,14 +55,31 @@ namespace FyteClub
 
         /// <summary>
         /// Check if we have cached mods for a player and they're still fresh.
+        /// PHASE 3: Added phonebook hash validation to prevent stale cache returns
         /// </summary>
-        public async Task<CachedPlayerMods?> GetCachedPlayerMods(string playerId)
+        public async Task<CachedPlayerMods?> GetCachedPlayerMods(string playerId, string? currentHash = null)
         {
             if (!_playerCache.TryGetValue(playerId, out var playerEntry))
+            {
+                _pluginLog.Debug($"Cache MISS for {playerId}: no cached entry");
                 return null;
+            }
 
-            // Do not expire cache entries – return whatever we have
-            // This matches the expectation that cache should never expire
+            // PHASE 3: CRITICAL hash validation - prevents stale mod application
+            if (!string.IsNullOrEmpty(currentHash) && playerEntry.ServerTimestamp != currentHash)
+            {
+                _pluginLog.Debug($"Cache MISS for {playerId}: hash mismatch (cached: {playerEntry.ServerTimestamp}, current: {currentHash}) - forcing fresh P2P fetch");
+                return null; // Force fresh P2P data fetch
+            }
+            
+            if (string.IsNullOrEmpty(currentHash))
+            {
+                _pluginLog.Debug($"Cache validation skipped for {playerId}: no current hash provided");
+            }
+            else
+            {
+                _pluginLog.Debug($"Cache HIT for {playerId}: hash matches ({currentHash})");
+            }
 
             try
             {

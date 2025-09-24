@@ -16,7 +16,7 @@ namespace FyteClub
     public class PhonebookModStateManager : IDisposable
     {
         private readonly IPluginLog _pluginLog;
-        private readonly ModComponentCache _componentCache;
+        private readonly ModComponentStorage _componentCache;
         private readonly ClientModCache _clientCache;
         
         // Phonebook integration
@@ -33,7 +33,7 @@ namespace FyteClub
         private const int STATE_EXPIRY_MINUTES = 30; // Peer states expire after 30 minutes
         private const int MAX_COMPONENT_REFS = 50; // Limit component references per peer
         
-        public PhonebookModStateManager(IPluginLog pluginLog, ModComponentCache componentCache, ClientModCache clientCache)
+        public PhonebookModStateManager(IPluginLog pluginLog, ModComponentStorage componentCache, ClientModCache clientCache)
         {
             _pluginLog = pluginLog;
             _componentCache = componentCache;
@@ -99,7 +99,7 @@ namespace FyteClub
         /// Process incoming peer mod state from phonebook.
         /// Determines what needs to be synced based on state comparison.
         /// </summary>
-        public async Task<ModSyncDecision> ProcessPeerModState(string peerId, PeerModState peerState)
+        public Task<ModSyncDecision> ProcessPeerModState(string peerId, PeerModState peerState)
         {
             try
             {
@@ -114,11 +114,11 @@ namespace FyteClub
                 if (existingState?.StateHash == peerState.StateHash)
                 {
                     _pluginLog.Debug($"[PhonebookModState] Peer {peerId} state unchanged, no sync needed");
-                    return new ModSyncDecision
+                    return Task.FromResult(new ModSyncDecision
                     {
                         SyncRequired = false,
                         Reason = "State unchanged"
-                    };
+                    });
                 }
 
                 // Analyze what components we need
@@ -127,7 +127,7 @@ namespace FyteClub
 
                 foreach (var componentRef in peerState.ComponentReferences)
                 {
-                    var hasComponent = await _componentCache.HasComponent(componentRef.Hash);
+                    var hasComponent = _componentCache.HasComponent(componentRef.Hash);
                     if (hasComponent)
                     {
                         availableComponents.Add(componentRef.Hash);
@@ -152,16 +152,16 @@ namespace FyteClub
                 };
 
                 _pluginLog.Info($"[PhonebookModState] Sync decision for {peerId}: {decision.Reason}");
-                return decision;
+                return Task.FromResult(decision);
             }
             catch (Exception ex)
             {
                 _pluginLog.Error($"[PhonebookModState] Error processing peer mod state for {peerId}: {ex.Message}");
-                return new ModSyncDecision
+                return Task.FromResult(new ModSyncDecision
                 {
                     SyncRequired = false,
                     Reason = $"Error: {ex.Message}"
-                };
+                });
             }
         }
 
