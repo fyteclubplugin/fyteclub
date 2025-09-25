@@ -4,7 +4,7 @@ using Dalamud.Game.ClientState.Objects;
 using Dalamud.Game.ClientState;
 using Dalamud.Plugin.Services;
 using Dalamud.Interface.Windowing;
-using Dalamud.Plugin.Ipc;
+
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -113,14 +113,8 @@ namespace FyteClub.Core
             _playerDetection = new PlayerDetectionService(_objectTable, _mediator, _pluginLog);
             _syncshellManager = new SyncshellManager(_pluginLog);
             _turnManager = new FyteClub.TURN.TurnServerManager(_pluginLog);
-            
-            // Wire up mod data received handler
-            _syncshellManager.OnModDataReceived += OnReceivedModData;
-            
             // Initialize P2P mod sync integration
             _p2pModSyncIntegration = new P2PModSyncIntegration(_pluginLog, _modSystemIntegration, _syncshellManager);
-            
-            ModularLogger.LogDebug(LogModule.Core, "Wired up OnModDataReceived handler for automatic mod application");
             
             // CRITICAL: Defer local player name setup to framework thread
             _framework.RunOnFrameworkThread(() =>
@@ -168,7 +162,7 @@ namespace FyteClub.Core
             LoadConfiguration();
         }
         
-        private async void OnPlayerDetected(PlayerDetectedMessage message)
+        private void OnPlayerDetected(PlayerDetectedMessage message)
         {
             try
             {
@@ -189,10 +183,10 @@ namespace FyteClub.Core
                         if (phonebookEntry != null)
                         {
                             isInSyncshell = true;
-                            ModularLogger.LogAlways(LogModule.Core, "Found {0} in syncshell {1} phonebook - initiating automatic P2P connection", message.PlayerName, syncshell.Name);
+                            ModularLogger.LogDebug(LogModule.Core, "Found {0} in syncshell {1} phonebook - initiating automatic P2P connection", message.PlayerName, syncshell.Name);
                             
                             // Automatically establish P2P connection using TURN servers
-                            await EstablishAutomaticP2PConnection(syncshell.Id, message.PlayerName);
+                            _ = EstablishAutomaticP2PConnection(syncshell.Id, message.PlayerName);
                             break; // Only connect once per player
                         }
                     }
@@ -200,11 +194,7 @@ namespace FyteClub.Core
                 
                 if (isInSyncshell)
                 {
-                    // INSTANT: Apply cached mods for syncshell members
-                    _ = Task.Run(async () => await TryApplyCachedModsForPlayer(message.PlayerName));
-                    
-                    // QUEUED: Add uncached syncshell members to P2P sync queue
-                    _ = Task.Run(() => AddPlayerToSyncQueue(message));
+                    ModularLogger.LogDebug(LogModule.Core, "Player {0} is in syncshell - P2P orchestrator will handle mod sync", message.PlayerName);
                 }
                 else
                 {
@@ -255,13 +245,13 @@ namespace FyteClub.Core
                     return;
                 }
                 
-                ModularLogger.LogAlways(LogModule.Core, "Establishing automatic P2P connection to {0} via TURN servers", playerName);
+                ModularLogger.LogDebug(LogModule.Core, "Establishing automatic P2P connection to {0} via TURN servers", playerName);
                 
                 // Use TURN servers for NAT traversal
                 var turnServers = _turnManager.GetAvailableServers();
                 if (turnServers.Count == 0)
                 {
-                    ModularLogger.LogAlways(LogModule.Core, "No TURN servers available for P2P connection to {0}", playerName);
+                    ModularLogger.LogDebug(LogModule.Core, "No TURN servers available for P2P connection to {0}", playerName);
                     return;
                 }
                 
@@ -280,12 +270,12 @@ namespace FyteClub.Core
                     }).ToList();
                     
                     robustConnection.ConfigureTurnServers(turnServerInfos);
-                    ModularLogger.LogAlways(LogModule.Core, "Configured {0} TURN servers for P2P connection", turnServerInfos.Count);
+                    ModularLogger.LogDebug(LogModule.Core, "Configured {0} TURN servers for P2P connection", turnServerInfos.Count);
                 }
                 
                 // Wire up P2P orchestrator events
                 connection.OnDataReceived += data => {
-                    ModularLogger.LogAlways(LogModule.Core, "📨 AUTO P2P received data from {0}: {1} bytes", playerName, data.Length);
+                    ModularLogger.LogDebug(LogModule.Core, "📨 AUTO P2P received data from {0}: {1} bytes", playerName, data.Length);
                     
                     // Process data through P2P orchestrator
                     _ = Task.Run(async () => {
@@ -295,7 +285,7 @@ namespace FyteClub.Core
                 };
                 
                 connection.OnConnected += () => {
-                    ModularLogger.LogAlways(LogModule.Core, "✅ Automatic P2P connection established with {0}", playerName);
+                    ModularLogger.LogAlways(LogModule.Core, "P2P connection established with {0}", playerName);
                     
                     // Register peer with P2P orchestrator
                     _modSyncOrchestrator?.RegisterPeer(syncshellId, async (data) => {
@@ -304,7 +294,7 @@ namespace FyteClub.Core
                 };
                 
                 connection.OnDisconnected += () => {
-                    ModularLogger.LogAlways(LogModule.Core, "❌ Automatic P2P connection lost with {0}", playerName);
+                    ModularLogger.LogDebug(LogModule.Core, "❌ Automatic P2P connection lost with {0}", playerName);
                     
                     // Unregister peer from P2P orchestrator
                     _modSyncOrchestrator?.UnregisterPeer(syncshellId);
@@ -314,25 +304,22 @@ namespace FyteClub.Core
                 var success = await _syncshellManager.ConnectToPeer(syncshellId, playerName, "");
                 if (success)
                 {
-                    ModularLogger.LogAlways(LogModule.Core, "Successfully initiated automatic P2P connection to {0}", playerName);
+                    ModularLogger.LogDebug(LogModule.Core, "Successfully initiated automatic P2P connection to {0}", playerName);
                 }
                 else
                 {
-                    ModularLogger.LogAlways(LogModule.Core, "Failed to initiate automatic P2P connection to {0}", playerName);
+                    ModularLogger.LogDebug(LogModule.Core, "Failed to initiate automatic P2P connection to {0}", playerName);
                     connection.Dispose();
                 }
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.Core, "Failed to establish automatic P2P connection to {0}: {1}", playerName, ex.Message);
+                ModularLogger.LogDebug(LogModule.Core, "Failed to establish automatic P2P connection to {0}: {1}", playerName, ex.Message);
             }
         }
 
         private void InitializeCaches()
         {
-            InitializeClientCache();
-            InitializeComponentCache();
-            InitializeSyncQueue();
             InitializeOrchestrator();
         }
         
@@ -347,36 +334,6 @@ namespace FyteClub.Core
                 {
                     _p2pModSyncIntegration.RegisterOrchestrator(_modSyncOrchestrator);
                 }
-                
-                // CRITICAL: Wire enhanced orchestrator directly to OnModDataReceived for mod application
-                _syncshellManager.OnModDataReceived += async (playerName, modData) =>
-                {
-                    try
-                    {
-                        ModularLogger.LogAlways(LogModule.Core, "🎯 Enhanced orchestrator received mod data for {0}", playerName);
-                        
-                        // Convert JsonElement to AdvancedPlayerInfo
-                        var playerInfo = ConvertJsonToPlayerInfo(modData, playerName);
-                        if (playerInfo != null)
-                        {
-                            // Create a ModDataResponse for the enhanced orchestrator
-                            var response = new FyteClub.ModSystem.ModDataResponse
-                            {
-                                PlayerName = playerName,
-                                PlayerInfo = playerInfo,
-                                DataHash = FyteClub.ModSystem.P2PModProtocol.CalculateDataHash(playerInfo, new Dictionary<string, TransferableFile>())
-                            };
-                            
-                            // Trigger the enhanced orchestrator's mod application
-                            await _modSyncOrchestrator.HandleReceivedModData(response);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        ModularLogger.LogAlways(LogModule.Core, "Error in enhanced orchestrator mod data handler: {0}", ex.Message);
-                    }
-                };
-                
                 ModularLogger.LogDebug(LogModule.Core, "P2P mod sync orchestrator initialized");
                 
                 // Connect orchestrator to WebRTC connections
@@ -863,119 +820,6 @@ namespace FyteClub.Core
                 ModularLogger.LogAlways(LogModule.Core, "❌ Manual reassembly test failed: {0}", ex.Message);
             }
         }
-        
-        /// <summary>
-        /// Handle received mod data from other players and apply it
-        /// </summary>
-        private async void OnReceivedModData(string playerName, System.Text.Json.JsonElement modData)
-        {
-            try
-            {
-                ModularLogger.LogAlways(LogModule.Core, "🎯 Processing received mod data for {0}", playerName);
-                
-                if (_modSystemIntegration == null)
-                {
-                    ModularLogger.LogAlways(LogModule.Core, "❌ Mod system integration not available");
-                    return;
-                }
-                
-                // Convert JsonElement to AdvancedPlayerInfo
-                var playerInfo = ConvertJsonToPlayerInfo(modData, playerName);
-                if (playerInfo == null)
-                {
-                    ModularLogger.LogAlways(LogModule.Core, "❌ Failed to convert received data to player info");
-                    return;
-                }
-                
-                ModularLogger.LogAlways(LogModule.Core, "✅ Converted mod data: {0} mods, glamourer: {1}", 
-                    playerInfo.Mods?.Count ?? 0, !string.IsNullOrEmpty(playerInfo.GlamourerData));
-                
-                // Apply the mods to the target player
-                var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, playerName);
-                
-                if (success)
-                {
-                    ModularLogger.LogAlways(LogModule.Core, "✅ Successfully applied received mods to {0}", playerName);
-                }
-                else
-                {
-                    ModularLogger.LogAlways(LogModule.Core, "❌ Failed to apply received mods to {0}", playerName);
-                }
-            }
-            catch (Exception ex)
-            {
-                ModularLogger.LogAlways(LogModule.Core, "❌ Error processing received mod data for {0}: {1}", playerName, ex.Message);
-            }
-        }
-        
-        /// <summary>
-        /// Convert JsonElement to AdvancedPlayerInfo
-        /// </summary>
-        private AdvancedPlayerInfo? ConvertJsonToPlayerInfo(System.Text.Json.JsonElement modData, string playerName)
-        {
-            try
-            {
-                var playerInfo = new AdvancedPlayerInfo
-                {
-                    PlayerName = playerName,
-                    Mods = new List<string>(),
-                    GlamourerData = null,
-                    CustomizePlusData = null,
-                    SimpleHeelsOffset = 0.0f,
-                    HonorificTitle = null
-                };
-                
-                // Extract mods
-                if (modData.TryGetProperty("mods", out var modsElement) && modsElement.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    var mods = new List<string>();
-                    foreach (var mod in modsElement.EnumerateArray())
-                    {
-                        if (mod.ValueKind == System.Text.Json.JsonValueKind.String)
-                        {
-                            var modStr = mod.GetString();
-                            if (!string.IsNullOrEmpty(modStr))
-                            {
-                                mods.Add(modStr);
-                            }
-                        }
-                    }
-                    playerInfo.Mods = mods;
-                }
-                
-                // Extract glamourer data
-                if (modData.TryGetProperty("glamourerDesign", out var glamourerElement) && glamourerElement.ValueKind == System.Text.Json.JsonValueKind.String)
-                {
-                    playerInfo.GlamourerData = glamourerElement.GetString();
-                }
-                
-                // Extract customize+ data
-                if (modData.TryGetProperty("customizePlusProfile", out var customizeElement) && customizeElement.ValueKind == System.Text.Json.JsonValueKind.String)
-                {
-                    playerInfo.CustomizePlusData = customizeElement.GetString();
-                }
-                
-                // Extract heels offset
-                if (modData.TryGetProperty("simpleHeelsOffset", out var heelsElement) && heelsElement.ValueKind == System.Text.Json.JsonValueKind.Number)
-                {
-                    playerInfo.SimpleHeelsOffset = heelsElement.GetSingle();
-                }
-                
-                // Extract honorific title
-                if (modData.TryGetProperty("honorificTitle", out var honorificElement) && honorificElement.ValueKind == System.Text.Json.JsonValueKind.String)
-                {
-                    playerInfo.HonorificTitle = honorificElement.GetString();
-                }
-                
-                return playerInfo;
-            }
-            catch (Exception ex)
-            {
-                ModularLogger.LogAlways(LogModule.Core, "Error converting JsonElement to PlayerInfo: {0}", ex.Message);
-                return null;
-            }
-        }
-
         public void Dispose()
         {
             try
@@ -998,10 +842,6 @@ namespace FyteClub.Core
                 try { _syncshellManager?.Dispose(); } catch { }
                 try { _modSyncOrchestrator?.Dispose(); } catch { }
                 try { _p2pModSyncIntegration?.Dispose(); } catch { }
-                try { _clientCache?.Dispose(); } catch { }
-                try { _componentCache?.Dispose(); } catch { }
-                try { _syncQueueProcessor?.Dispose(); } catch { }
-                try { _syncProcessingSemaphore?.Dispose(); } catch { }
                 try { _httpClient?.Dispose(); } catch { }
                 try { _cancellationTokenSource.Dispose(); } catch { }
                 

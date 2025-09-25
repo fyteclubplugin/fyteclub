@@ -151,7 +151,7 @@ namespace FyteClub.UI
                                     var joinedSyncshell = syncshells.LastOrDefault();
                                     if (joinedSyncshell != null)
                                     {
-                                        await _plugin._framework.RunOnFrameworkThread(() => {
+                                        await _plugin._framework.RunOnTick(() => {
                                             _plugin.WireUpP2PMessageHandling(joinedSyncshell.Id);
                                         });
                                     }
@@ -317,34 +317,22 @@ namespace FyteClub.UI
             }
             
             ImGui.Separator();
-            // Debug buttons - uncomment for testing
-            /*
-            if (ImGui.Button("Apply My Mods to Everyone 👑"))
+            var chaosStatus = _plugin.GetChaosStatus();
+            if (chaosStatus.Active)
             {
-                _ = Task.Run(() => _plugin.ApplyMyModsToEveryone());
+                ImGui.Text($"Chaos Active ({chaosStatus.TargetsFound} targets)");
+                if (ImGui.Button("Stop"))
+                {
+                    _plugin.StopChaosMode();
+                }
             }
-            if (ImGui.IsItemHovered())
+            else
             {
-                ImGui.SetTooltip("Applies your current mods to ALL nearby players.\nEveryone will look like you until they move or change zones!");
+                if (ImGui.Button("Don't Do It"))
+                {
+                    _ = Task.Run(() => _plugin.StartChaosMode());
+                }
             }
-            
-            ImGui.SameLine();
-            */
-            if (ImGui.Button("Don't Do It"))
-            {
-                _ = Task.Run(() => _plugin.ApplyMyModsToEverythingNearby());
-            }
-            /*
-            ImGui.SameLine();
-            if (ImGui.Button("Apply My Mods to Random Person 😈"))
-            {
-                _ = Task.Run(() => _plugin.TestApplyModsToRandomPerson());
-            }
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("For testing: Applies your current mods to a random nearby player.\nThey'll see your appearance until they move or change zones!");
-            }
-            */
         }
 
         private void DrawBlockListTab()
@@ -461,7 +449,7 @@ namespace FyteClub.UI
                             _ = Task.Run(async () => {
                                 try
                                 {
-                                    await _plugin.Framework.RunOnFrameworkThread(async () => {
+                                    await _plugin.Framework.RunOnTick(async () => {
                                         var playerName = _plugin.ClientState?.LocalPlayer?.Name?.TextValue;
                                         if (!string.IsNullOrEmpty(playerName))
                                         {

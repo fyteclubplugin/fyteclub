@@ -425,7 +425,7 @@ namespace FyteClub.ModSystem
             try
             {
                 // Get list of nearby players from the mod integration
-                var nearbyPlayers = await _modIntegration.GetNearbyPlayerNames();
+                var nearbyPlayers = await _modIntegration.GetAllNearbyTargets();
                 
                 _pluginLog.Info($"[P2PModSyncIntegration] 🔍 Looking for nearby player to apply mods from '{receivedPlayerName}'");
                 _pluginLog.Info($"[P2PModSyncIntegration] 🔍 Nearby players ({nearbyPlayers.Count}): {string.Join(", ", nearbyPlayers)}");

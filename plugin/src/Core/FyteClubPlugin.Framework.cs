@@ -59,7 +59,7 @@ namespace FyteClub.Core
                 {
                     _syncshellManager.SetLocalPlayerName(localPlayerName!);
                     _lastLocalPlayerName = localPlayerName;
-                    ModularLogger.LogDebug(LogModule.Core, "Updated local player name: {0}", localPlayerName);
+                    ModularLogger.LogDebug(LogModule.Core, "Updated local player name: {0}", localPlayerName ?? "null");
                 }
                 
                 _mediator.ProcessQueue();
@@ -218,7 +218,7 @@ namespace FyteClub.Core
         {
             _lastPhonebookPoll = DateTime.UtcNow;
             
-            _framework.RunOnFrameworkThread(() =>
+            _framework.RunOnTick(() =>
             {
                 try
                 {

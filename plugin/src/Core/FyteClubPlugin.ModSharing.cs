@@ -67,115 +67,16 @@ namespace FyteClub.Core
 
         private async Task SharePlayerModsToSyncshells(string playerName)
         {
-            if (_modSystemIntegration == null || _syncshellManager == null) return;
+            if (_modSystemIntegration == null || _modSyncOrchestrator == null) return;
             
             var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
             if (playerInfo != null)
             {
-                var outfitHash = CalculateModDataHash(playerInfo);
-                
-                // Use the new P2P orchestrator if available
-                if (_modSyncOrchestrator != null)
-                {
-                    try
-                    {
-                        await _modSyncOrchestrator.BroadcastPlayerMods(playerInfo);
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        ModularLogger.LogAlways(LogModule.ModSync, "P2P broadcast failed, falling back to legacy: {0}", ex.Message);
-                    }
-                }
-                
-                // Fallback to legacy method for backward compatibility
-                await SharePlayerModsLegacy(playerName, playerInfo, outfitHash);
+                await _modSyncOrchestrator.BroadcastPlayerMods(playerInfo);
             }
         }
         
-        private async Task SharePlayerModsLegacy(string playerName, AdvancedPlayerInfo playerInfo, string? outfitHash)
-        {
-            // Get transferable files for mod paths
-            var transferableFiles = new Dictionary<string, TransferableFile>();
-            if (playerInfo.Mods?.Count > 0)
-            {
-                var filePaths = new Dictionary<string, string>();
-                foreach (var mod in playerInfo.Mods)
-                {
-                    if (mod.Contains('|'))
-                    {
-                        var parts = mod.Split('|', 2);
-                        if (parts.Length == 2 && !parts[1].StartsWith("CACHED:"))
-                        {
-                            filePaths[parts[0]] = parts[1];
-                        }
-                    }
-                }
-                
-                if (filePaths.Count > 0)
-                {
-                    transferableFiles = await _modSystemIntegration._fileTransferSystem.PrepareFilesForTransfer(filePaths);
-                }
-            }
-            
-            var componentData = new
-            {
-                mods = playerInfo.Mods,
-                glamourerDesign = playerInfo.GlamourerDesign,
-                customizePlusProfile = playerInfo.CustomizePlusProfile,
-                simpleHeelsOffset = playerInfo.SimpleHeelsOffset,
-                honorificTitle = playerInfo.HonorificTitle,
-                files = transferableFiles
-            };
-            
-            var modDataDict = new Dictionary<string, object>
-            {
-                ["type"] = "mod_data",
-                ["playerId"] = playerName,
-                ["playerName"] = playerName,
-                ["outfitHash"] = outfitHash ?? "",
-                ["mods"] = playerInfo.Mods ?? new List<string>(),
-                ["glamourerDesign"] = playerInfo.GlamourerDesign ?? "",
-                ["customizePlusProfile"] = playerInfo.CustomizePlusProfile ?? "",
-                ["simpleHeelsOffset"] = playerInfo.SimpleHeelsOffset ?? 0.0f,
-                ["honorificTitle"] = playerInfo.HonorificTitle ?? "",
-                ["files"] = transferableFiles,
-                ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-            };
-            
-            _syncshellManager.UpdatePlayerModData(playerName, componentData, modDataDict);
-            
-            var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
-            foreach (var syncshell in activeSyncshells)
-            {
-                try
-                {
-                    var modData = new
-                    {
-                        type = "mod_data",
-                        playerId = playerName,
-                        playerName = playerName,
-                        outfitHash = outfitHash,
-                        mods = playerInfo.Mods,
-                        glamourerDesign = playerInfo.GlamourerDesign,
-                        customizePlusProfile = playerInfo.CustomizePlusProfile,
-                        simpleHeelsOffset = playerInfo.SimpleHeelsOffset,
-                        honorificTitle = playerInfo.HonorificTitle,
-                        files = transferableFiles,
-                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                    };
 
-                    var json = JsonSerializer.Serialize(modData);
-                    await _syncshellManager.SendModData(syncshell.Id, json);
-                }
-                catch (Exception ex)
-                {
-                    ModularLogger.LogAlways(LogModule.ModSync, "Failed to send mods to syncshell {0}: {1}", syncshell.Name, ex.Message);
-                }
-            }
-            
-            _hasPerformedInitialUpload = true;
-        }
 
         private void OnModSystemChanged()
         {
@@ -203,78 +104,12 @@ namespace FyteClub.Core
                         await CacheLocalPlayerMods(playerName);
                         
                         await SharePlayerModsToSyncshells(playerName);
-                        
-                        _ = _framework.RunOnFrameworkThread(() => ShareCompanionMods(playerName!));
                     });
                 }
             });
         }
 
-        private void ShareCompanionMods(string ownerName)
-        {
-            try
-            {
-                var companions = new List<CompanionSnapshot>();
-                // TODO: Fix IBattleNpc reference
-                // foreach (var obj in _objectTable)
-                // {
-                //     if (obj is IBattleNpc npc && npc.OwnerId == _clientState.LocalPlayer?.GameObjectId)
-                //     {
-                //         companions.Add(new CompanionSnapshot
-                //         {
-                //             Name = $"{ownerName}'s {npc.Name}",
-                //             ObjectKind = npc.ObjectKind.ToString(),
-                //             ObjectIndex = obj.ObjectIndex
-                //         });
-                //     }
-                // }
 
-                if (companions.Count > 0)
-                {
-                    CheckCompanionsForChanges(companions);
-                }
-            }
-            catch
-            {
-                // Swallow exception
-            }
-        }
-
-        private void ShareCompanionToSyncshells(CompanionSnapshot companion)
-        {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    if (_modSystemIntegration == null || _syncshellManager == null) return;
-                    
-                    var companionInfo = await _modSystemIntegration.GetCurrentPlayerMods(companion.Name);
-                    if (companionInfo != null)
-                    {
-                        var companionHash = CalculateModDataHash(companionInfo);
-                        var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
-                        foreach (var syncshell in activeSyncshells)
-                        {
-                            var companionData = new
-                            {
-                                type = "companion",
-                                companionName = companion.Name,
-                                objectKind = companion.ObjectKind,
-                                outfitHash = companionHash,
-                                mods = companionInfo.Mods,
-                                timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                            };
-                            var json = JsonSerializer.Serialize(companionData);
-                            await _syncshellManager.SendModData(syncshell.Id, json);
-                        }
-                    }
-                }
-                catch
-                {
-                    // Swallow exception
-                }
-            });
-        }
 
         private string CalculateModDataHash(AdvancedPlayerInfo playerInfo)
         {
@@ -326,7 +161,7 @@ namespace FyteClub.Core
                         var modCount = playerInfo.Mods?.Count ?? 0;
                         var hash = CalculateModDataHash(playerInfo);
                         
-                        ModularLogger.LogDebug(LogModule.ModSync, "Mod test: {0} mods found, hash: {1}", modCount, hash?[..8] ?? "none");
+                        ModularLogger.LogDebug(LogModule.ModSync, "Mod test: {0} mods found, hash: {1}", modCount, hash[..8]);
                         
                         if (modCount == 0)
                         {
@@ -431,13 +266,13 @@ namespace FyteClub.Core
                         {
                             try
                             {
-                                // DIRECT mod application - completely bypasses P2P streaming
-                                var success = await _modSystemIntegration.ForceApplyPlayerModsBypassCollections(playerInfo, target);
+                                // DIRECT mod application - uses enhanced approach with rate limiting
+                                var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, target);
                                 return new { Target = target, Success = success, Error = (string?)null };
                             }
                             catch (Exception ex)
                             {
-                                return new { Target = target, Success = false, Error = ex.Message };
+                                return new { Target = target, Success = false, Error = (string?)ex.Message };
                             }
                         }).ToArray();
                         
@@ -516,7 +351,7 @@ namespace FyteClub.Core
                             }
                             catch (Exception ex)
                             {
-                                return new { Target = target, Success = false, Error = ex.Message };
+                                return new { Target = target, Success = false, Error = (string?)ex.Message };
                             }
                         }).ToArray();
                         
@@ -586,17 +421,17 @@ namespace FyteClub.Core
                         var random = new Random();
                         var victim = victims[random.Next(victims.Count)];
                         
-                        ModularLogger.LogDebug(LogModule.ModSync, "Applying {0} mods to '{1}'", playerInfo.Mods.Count, victim ?? "NULL");
+                        ModularLogger.LogDebug(LogModule.ModSync, "Applying {0} mods to '{1}'", playerInfo.Mods.Count, victim);
                         
                         // Test individual plugin APIs first
-                        await TestIndividualPluginAPIs(victim);
+                        await TestIndividualPluginAPIs(victim!);
                         
                         // Apply your mods to them
                         var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, victim);
                         
                         if (success)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "Successfully applied mods to '{0}'", victim ?? "UNKNOWN");
+                            ModularLogger.LogDebug(LogModule.ModSync, "Successfully applied mods to '{0}'", victim);
                         }
                         else
                         {
@@ -707,6 +542,84 @@ namespace FyteClub.Core
             }
         }
         
+        /// <summary>
+        /// Start 5-minute chaos mode that finds unique people and applies mods to them
+        /// </summary>
+        public void StartChaosMode()
+        {
+            ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] Button pressed - starting chaos mode");
+            
+            _framework.RunOnFrameworkThread(() =>
+            {
+                var localPlayer = _clientState.LocalPlayer;
+                var localPlayerName = localPlayer?.Name?.TextValue;
+                if (string.IsNullOrEmpty(localPlayerName))
+                {
+                    ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] ERROR: No local player found for chaos mode");
+                    return;
+                }
+                
+                ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] Local player found: {0}", localPlayerName);
+                
+                var capturedPlayerName = localPlayerName;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        if (_modSystemIntegration == null)
+                        {
+                            ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] ERROR: Mod system not available for chaos mode");
+                            return;
+                        }
+                        
+                        ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] Mod system available, getting player mods...");
+                        
+                        // Get your mods
+                        var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
+                        if (playerInfo == null)
+                        {
+                            ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] ERROR: Failed to get player info for chaos mode");
+                            return;
+                        }
+                        
+                        var modCount = playerInfo.Mods?.Count ?? 0;
+                        if (modCount == 0)
+                        {
+                            ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] ERROR: No mods available for chaos mode (count: {0})", modCount);
+                            return;
+                        }
+                        
+                        ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] Found {0} mods, starting chaos mode in mod integration...", modCount);
+                        
+                        // Start chaos mode in mod integration
+                        await _modSystemIntegration.StartChaosMode();
+                        
+                        ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] Chaos mode started successfully!");
+                    }
+                    catch (Exception ex)
+                    {
+                        ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] ERROR: Failed to start chaos mode: {0}", ex.Message);
+                    }
+                });
+            });
+        }
+        
+        /// <summary>
+        /// Stop chaos mode
+        /// </summary>
+        public void StopChaosMode()
+        {
+            _modSystemIntegration?.StopChaosMode();
+        }
+        
+        /// <summary>
+        /// Get chaos mode status
+        /// </summary>
+        public (bool Active, int TargetsFound) GetChaosStatus()
+        {
+            return _modSystemIntegration?.GetChaosStatus() ?? (false, 0);
+        }
+        
         private async Task TestIndividualPluginAPIs(string targetPlayerName)
         {
             try
@@ -789,10 +702,5 @@ namespace FyteClub.Core
         }
     }
 
-    public class CompanionSnapshot
-    {
-        public string Name { get; set; } = string.Empty;
-        public string ObjectKind { get; set; } = string.Empty;
-        public uint ObjectIndex { get; set; }
-    }
+
 }

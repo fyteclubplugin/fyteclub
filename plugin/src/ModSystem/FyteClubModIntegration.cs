@@ -42,7 +42,7 @@ namespace FyteClub
         // Mod state tracking for intelligent application
         private readonly Dictionary<string, string> _appliedModHashes = new();
         private readonly Dictionary<string, DateTime> _lastApplicationTime = new();
-        private readonly TimeSpan _minReapplicationInterval = TimeSpan.FromSeconds(30); // REDUCED: Allow re-application after 30 seconds
+        private readonly TimeSpan _minReapplicationInterval = TimeSpan.FromMinutes(2); // Increased to 2 minutes to reduce spam
         
         // Advanced mod system components
         private readonly CharacterChangeDetector _changeDetector;
@@ -101,8 +101,39 @@ namespace FyteClub
 
         public readonly FileTransferSystem _fileTransferSystem;
 
+        /// <summary>
+        /// Generate appearance hash for character matching during cutscenes
+        /// </summary>
+        private string? GetCharacterAppearanceHash(ICharacter? character)
+        {
+            if (character == null) return null;
+            
+            try
+            {
+                // Create hash from visual appearance data
+                var appearance = $"{character.Customize[0]}{character.Customize[1]}{character.Customize[2]}{character.Customize[3]}" +
+                               $"{character.Customize[4]}{character.Customize[5]}{character.Customize[6]}{character.Customize[7]}" +
+                               $"{character.Customize[8]}{character.Customize[9]}{character.Customize[10]}{character.Customize[11]}" +
+                               $"{character.Customize[12]}{character.Customize[13]}{character.Customize[14]}{character.Customize[15]}" +
+                               $"{character.Customize[16]}{character.Customize[17]}{character.Customize[18]}{character.Customize[19]}" +
+                               $"{character.Customize[20]}{character.Customize[21]}{character.Customize[22]}{character.Customize[23]}" +
+                               $"{character.Customize[24]}{character.Customize[25]}";
+                
+                using var sha1 = SHA1.Create();
+                var hashBytes = sha1.ComputeHash(Encoding.UTF8.GetBytes(appearance));
+                return Convert.ToHexString(hashBytes);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         public void Dispose()
         {
+            // Stop chaos mode
+            StopChaosMode();
+            
             // Unsubscribe from framework updates
             if (_framework != null)
             {
@@ -137,6 +168,18 @@ namespace FyteClub
                     
                     _localPlayerObjectIndex = currentIndex;
                     _localPlayerName = currentName;
+                    
+                    // Track valid player character references
+                    if (localPlayer.ObjectIndex != 0)
+                    {
+                        _redrawManager.TrackPlayerCharacter(localPlayer);
+                    }
+                    
+                    // Periodically clean up old tracked addresses
+                    if (indexChanged)
+                    {
+                        _redrawManager.CleanupTrackedAddresses();
+                    }
                     
                     if (indexChanged || nameChanged)
                     {
@@ -245,7 +288,7 @@ namespace FyteClub
             });
         }
 
-        // Find a character in the object table by name - supports players AND NPCs
+        // Find a character in the object table by name - supports players, NPCs, and cutscene characters
         private ICharacter? FindCharacterByName(string characterName)
         {
             try
@@ -254,25 +297,34 @@ namespace FyteClub
                 
                 try
                 {
+                    ICharacter? bestMatch = null;
+                    
                     foreach (var obj in _objectTable)
                     {
-                        // Check all objects with names - players, NPCs, companions, etc.
+                        // Check all objects with names - players, NPCs, companions, cutscene characters
                         if (obj.Name?.TextValue != null && obj.Name.TextValue.Equals(cleanName, StringComparison.OrdinalIgnoreCase))
                         {
-                            // Try to cast to ICharacter - this works for players, NPCs, companions
+                            // Try to cast to ICharacter - this works for players, NPCs, companions, cutscene characters
                             if (obj is ICharacter character)
                             {
-                                return character;
+                                // Prioritize cutscene/event characters for better mod application
+                                if ((int)obj.ObjectKind == 3) // Event/Cutscene NPC
+                                {
+                                    return character; // Return cutscene character immediately
+                                }
+                                
+                                // Store first match as fallback
+                                bestMatch ??= character;
                             }
                         }
                     }
+                    
+                    return bestMatch;
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("main thread"))
                 {
                     return null;
                 }
-                
-                return null;
             }
             catch (Exception ex)
             {
@@ -467,19 +519,17 @@ namespace FyteClub
         {
             try
             {
-                
                 var modDataHash = CalculateModDataHash(playerInfo);
                 
-                // TEMPORARILY DISABLED: Skip logic to force mod application for debugging
-                var shouldSkip = false; // ShouldSkipApplication(playerName, modDataHash);
-                _pluginLog.Debug($"Skip check DISABLED for debugging - will always apply mods");
+                // Re-enable skip logic to prevent excessive applications
+                var shouldSkip = ShouldSkipApplication(playerName, modDataHash);
                 if (shouldSkip)
                 {
-                    _pluginLog.Debug($"Skipping - already applied recently");
+                    _pluginLog.Debug($"Skipping mod application for {playerName} - already applied recently with same hash");
                     return true;
                 }
 
-                _pluginLog.Debug($"Proceeding with mod application");
+                _pluginLog.Debug($"Proceeding with mod application for {playerName}");
                 
                 var success = false;
                 var errorMessage = "";
@@ -488,6 +538,7 @@ namespace FyteClub
                 {
                     if (IsLocalPlayer(playerName))
                     {
+                        _pluginLog.Debug($"Skipping mod application - {playerName} is local player");
                         success = true; // Skip local player
                     }
                     else
@@ -497,10 +548,12 @@ namespace FyteClub
                         {
                             if (IsLocalPlayer(character))
                             {
+                                _pluginLog.Debug($"Skipping mod application - {playerName} is local player by ObjectIndex");
                                 success = true; // Skip local player by ObjectIndex
                             }
                             else
                             {
+                                _pluginLog.Debug($"Applying mods to {playerName} (ObjectIndex: {character.ObjectIndex})");
                                 await ApplyAdvancedPlayerInfo(character, playerInfo);
                                 success = true;
                             }
@@ -696,6 +749,12 @@ namespace FyteClub
                 return;
             }
             
+            // Track this character if it's the local player
+            if (IsLocalPlayer(character))
+            {
+                _redrawManager.TrackPlayerCharacter(character);
+            }
+            
             try
             {
                 // Apply Glamourer FIRST - this sets the base character appearance
@@ -739,7 +798,7 @@ namespace FyteClub
             try
             {
                 var collectionName = $"FyteClub_{character.ObjectIndex}";
-                _pluginLog.Info($"Applying Penumbra mods to {character.Name}: {mods.Count} files");
+                _pluginLog.Debug($"Applying Penumbra mods to {character.Name}: {mods.Count} files");
                 
                 var (fileReplacements, metaManipulations) = ParseAndValidateMods(mods);
                 
@@ -748,7 +807,17 @@ namespace FyteClub
                     return;
                 }
                 
-                await _redrawManager.RedrawSemaphore.WaitAsync().ConfigureAwait(false);
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                
+                try
+                {
+                    await _redrawManager.RedrawSemaphore.WaitAsync(cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    _pluginLog.Warning($"Penumbra application timed out waiting for redraw semaphore for {character.Name}");
+                    return;
+                }
                 
                 try
                 {
@@ -762,6 +831,7 @@ namespace FyteClub
                             
                             if (createResult != PenumbraApiEc.Success || collectionId == Guid.Empty)
                             {
+                                _pluginLog.Warning($"Failed to create Penumbra collection for {chara.Name}: {createResult}");
                                 return;
                             }
                             
@@ -772,18 +842,35 @@ namespace FyteClub
                                 _penumbraAddTemporaryMod?.Invoke("FyteClub_Meta", collectionId, new Dictionary<string, string>(), playerInfo.ManipulationData, 0);
                             }
                             
-                            _penumbraAssignTemporaryCollection?.Invoke(collectionId, chara.ObjectIndex, forceAssignment: true);
+                            // Use forced assignment to override existing collections
+                            var assignResult = _penumbraAssignTemporaryCollection?.Invoke(collectionId, chara.ObjectIndex, forceAssignment: true);
+                            if (assignResult == PenumbraApiEc.Success)
+                            {
+                                _pluginLog.Debug($"Successfully assigned Penumbra collection to {chara.Name}");
+                                
+                                // Force immediate redraw to make changes visible
+                                _penumbraRedraw?.Invoke(chara.ObjectIndex, RedrawType.Redraw);
+                                _pluginLog.Debug($"Triggered Penumbra redraw for {chara.Name}");
+                            }
+                            else
+                            {
+                                _pluginLog.Warning($"Failed to assign Penumbra collection to {chara.Name}: {assignResult}");
+                            }
                         }
                         catch (Exception ex)
                         {
                             _pluginLog.Error($"Error in Penumbra redraw action: {ex.Message}");
                         }
-                    }, CancellationToken.None).ConfigureAwait(false);
+                    }, cts.Token).ConfigureAwait(false);
                 }
                 finally
                 {
                     _redrawManager.RedrawSemaphore.Release();
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                _pluginLog.Warning($"Penumbra application was canceled for {character.Name}");
             }
             catch (Exception ex)
             {
@@ -797,7 +884,7 @@ namespace FyteClub
             var metaManipulations = new List<string>();
             var allowedExtensions = new[] { ".mdl", ".tex", ".mtrl", ".tmb", ".pap", ".avfx", ".atex", ".sklb", ".eid", ".phyb", ".pbd", ".scd", ".skp", ".shpk", ".imc" };
             
-            _pluginLog.Info($"Parsing {mods.Count} mods for validation");
+            _pluginLog.Debug($"Parsing {mods.Count} mods for validation");
             
             foreach (var mod in mods)
             {
@@ -858,7 +945,7 @@ namespace FyteClub
                 }
             }
             
-            _pluginLog.Info($"Validation complete: {fileReplacements.Count} files, {metaManipulations.Count} meta");
+            _pluginLog.Debug($"Validation complete: {fileReplacements.Count} files, {metaManipulations.Count} meta");
             return (fileReplacements, metaManipulations);
         }
         
@@ -901,8 +988,18 @@ namespace FyteClub
                     return;
                 }
                 
-                // Use Mare's sophisticated redraw management
-                await _redrawManager.RedrawSemaphore.WaitAsync().ConfigureAwait(false);
+                // Use cancellation token with timeout to prevent hanging
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                
+                try
+                {
+                    await _redrawManager.RedrawSemaphore.WaitAsync(cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    _pluginLog.Warning($"Glamourer application timed out waiting for redraw semaphore for {character.Name}");
+                    return;
+                }
                 
                 try
                 {
@@ -912,19 +1009,30 @@ namespace FyteClub
                         try
                         {
                             _glamourerApplyAll?.Invoke(glamourerData, chara.ObjectIndex, FYTECLUB_GLAMOURER_LOCK);
-                            _pluginLog.Info($"🎯 [GLAMOURER API] ApplyState(data={glamourerData.Length}chars, objectIndex={chara.ObjectIndex}, lock=0x{FYTECLUB_GLAMOURER_LOCK:X}) -> SUCCESS");
+                            _pluginLog.Debug($"🎯 [GLAMOURER API] ApplyState(data={glamourerData.Length}chars, objectIndex={chara.ObjectIndex}, lock=0x{FYTECLUB_GLAMOURER_LOCK:X}) -> SUCCESS");
+                            
+                            // Force immediate redraw to make changes visible
+                            if (IsPenumbraAvailable && _penumbraRedraw != null)
+                            {
+                                _penumbraRedraw.Invoke(chara.ObjectIndex, RedrawType.Redraw);
+                                _pluginLog.Debug($"Triggered redraw for Glamourer changes on {chara.Name}");
+                            }
                         }
                         catch (Exception apiEx)
                         {
                             _pluginLog.Error($"🎯 [GLAMOURER API] ApplyState FAILED: {apiEx.Message}");
                             throw;
                         }
-                    }, CancellationToken.None).ConfigureAwait(false);
+                    }, cts.Token).ConfigureAwait(false);
                 }
                 finally
                 {
                     _redrawManager.RedrawSemaphore.Release();
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                _pluginLog.Warning($"Glamourer application was canceled for {character.Name}");
             }
             catch (Exception ex)
             {
@@ -938,7 +1046,17 @@ namespace FyteClub
             {
                 if (string.IsNullOrEmpty(customizePlusData)) return;
                 
-                await _redrawManager.RedrawSemaphore.WaitAsync().ConfigureAwait(false);
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                
+                try
+                {
+                    await _redrawManager.RedrawSemaphore.WaitAsync(cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    _pluginLog.Warning($"Customize+ application timed out waiting for redraw semaphore for {character.Name}");
+                    return;
+                }
                 
                 try
                 {
@@ -960,25 +1078,36 @@ namespace FyteClub
                             {
                                 // Revert character if no data
                                 _customizePlusRevertCharacter?.InvokeFunc(chara.ObjectIndex);
-                                _pluginLog.Info($"🎨 [CUSTOMIZE+ API] Reverted character {chara.Name}");
+                                _pluginLog.Debug($"🎨 [CUSTOMIZE+ API] Reverted character {chara.Name}");
                             }
                             else
                             {
                                 // Apply scale data
                                 var result = _customizePlusSetBodyScale?.InvokeFunc(chara.ObjectIndex, decodedScale);
-                                _pluginLog.Info($"🎨 [CUSTOMIZE+ API] SetTemporaryProfile(index={chara.ObjectIndex}) -> SUCCESS (ProfileId: {result?.Item2})");
+                                _pluginLog.Debug($"🎨 [CUSTOMIZE+ API] SetTemporaryProfile(index={chara.ObjectIndex}) -> SUCCESS (ProfileId: {result?.Item2})");
+                            }
+                            
+                            // Force immediate redraw to make changes visible
+                            if (IsPenumbraAvailable && _penumbraRedraw != null)
+                            {
+                                _penumbraRedraw.Invoke(chara.ObjectIndex, RedrawType.Redraw);
+                                _pluginLog.Debug($"Triggered redraw for Customize+ changes on {chara.Name}");
                             }
                         }
                         catch (Exception apiEx)
                         {
                             _pluginLog.Warning($"🎨 [CUSTOMIZE+ API] FAILED: {apiEx.Message}");
                         }
-                    }, CancellationToken.None).ConfigureAwait(false);
+                    }, cts.Token).ConfigureAwait(false);
                 }
                 finally
                 {
                     _redrawManager.RedrawSemaphore.Release();
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                _pluginLog.Warning($"Customize+ application was canceled for {character.Name}");
             }
             catch (Exception ex)
             {
@@ -1010,7 +1139,7 @@ namespace FyteClub
                             // Format as JSON config like Mare does
                             var heelsConfig = $"{{\"Offset\":{heelsOffset:F3}}}";
                             _heelsRegisterPlayer?.InvokeAction(chara.ObjectIndex, heelsConfig);
-                            _pluginLog.Info($"🎯 [HEELS API] RegisterPlayer(index={chara.ObjectIndex}, config={heelsConfig}) -> SUCCESS");
+                            _pluginLog.Debug($"🎯 [HEELS API] RegisterPlayer(index={chara.ObjectIndex}, config={heelsConfig}) -> SUCCESS");
                         }
                         catch (Exception apiEx)
                         {
@@ -1056,12 +1185,12 @@ namespace FyteClub
                             if (string.IsNullOrEmpty(honorificTitle))
                             {
                                 _honorificClearCharacterTitle?.InvokeAction(chara.ObjectIndex);
-                                _pluginLog.Info($"🎯 [HONORIFIC API] ClearCharacterTitle(index={chara.ObjectIndex}) -> SUCCESS");
+                                _pluginLog.Debug($"🎯 [HONORIFIC API] ClearCharacterTitle(index={chara.ObjectIndex}) -> SUCCESS");
                             }
                             else
                             {
                                 _honorificSetCharacterTitle?.InvokeAction(chara.ObjectIndex, honorificTitle);
-                                _pluginLog.Info($"🎯 [HONORIFIC API] SetCharacterTitle(index={chara.ObjectIndex}, title='{honorificTitle}') -> SUCCESS");
+                                _pluginLog.Debug($"🎯 [HONORIFIC API] SetCharacterTitle(index={chara.ObjectIndex}, title='{honorificTitle}') -> SUCCESS");
                             }
                         }
                         catch (Exception apiEx)
@@ -1337,6 +1466,48 @@ namespace FyteClub
                     // Resolve target character by name; prefer exact match, fallback to local player
                     var targetCharacter = FindCharacterByName(playerName) ?? _clientState.LocalPlayer;
 
+                    // If ObjectIndex is 0 (cutscene), try to find character with matching appearance or tracked addresses
+                    if (targetCharacter?.ObjectIndex == 0 && IsLocalPlayer(playerName))
+                    {
+                        _pluginLog.Debug($"ObjectIndex 0 for local player {playerName} - attempting character re-establishment");
+                        
+                        // First try tracked addresses
+                        var availableCharacters = _objectTable.OfType<ICharacter>().Where(c => c.ObjectIndex != 0);
+                        var trackedCharacter = _redrawManager.FindPlayerCharacter(availableCharacters);
+                        
+                        if (trackedCharacter != null)
+                        {
+                            targetCharacter = trackedCharacter;
+                            _pluginLog.Debug($"Re-established character from tracked address for {playerName} - using ObjectIndex {trackedCharacter.ObjectIndex}");
+                        }
+                        else
+                        {
+                            // Fallback to appearance hash matching
+                            var localPlayerHash = GetCharacterAppearanceHash(targetCharacter);
+                            if (!string.IsNullOrEmpty(localPlayerHash))
+                            {
+                                foreach (var obj in _objectTable)
+                                {
+                                    if (obj is ICharacter character && 
+                                        character.ObjectIndex != 0 &&
+                                        GetCharacterAppearanceHash(character) == localPlayerHash)
+                                    {
+                                        targetCharacter = character;
+                                        _redrawManager.TrackPlayerCharacter(character); // Track this new reference
+                                        _pluginLog.Debug($"Found character with matching appearance hash for {playerName} - using ObjectIndex {character.ObjectIndex}");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Track valid player characters for future re-establishment
+                    if (targetCharacter != null && IsLocalPlayer(playerName) && targetCharacter.ObjectIndex != 0)
+                    {
+                        _redrawManager.TrackPlayerCharacter(targetCharacter);
+                    }
+
                     // Get comprehensive character data like Mare for the target character
                     if (IsPenumbraAvailable && targetCharacter != null)
                     {
@@ -1482,7 +1653,8 @@ namespace FyteClub
                 gamePathsWithReplacements++;
 
                 // Mare processes the first non-vanilla path as the replacement
-                var replacementPath = modPaths.First(p => !string.Equals(p, gamePath, StringComparison.Ordinal));
+                var replacementPath = modPaths?.FirstOrDefault(p => !string.Equals(p, gamePath, StringComparison.Ordinal));
+                if (replacementPath == null) continue;
                 var resolved = ResolvePenumbraModPath(replacementPath);
                 
                 try
@@ -1598,6 +1770,13 @@ namespace FyteClub
         {
             try
             {
+                // Skip during cutscenes when ObjectIndex is 0 (invalid)
+                if (character.ObjectIndex == 0)
+                {
+                    _pluginLog.Debug($"🎭 [GLAMOURER DEBUG] Skipping {character.Name} - ObjectIndex 0 (likely cutscene)");
+                    return Task.FromResult<string?>(null);
+                }
+                
                 _pluginLog.Info($"🎭 [GLAMOURER DEBUG] Getting state for {character.Name} (ObjectIndex: {character.ObjectIndex})");
                 
                 // Mare's approach: Get current state and take Item2 from tuple
@@ -1605,6 +1784,13 @@ namespace FyteClub
                 var result = getState.Invoke(character.ObjectIndex);
                 
                 _pluginLog.Info($"🎭 [GLAMOURER DEBUG] API returned: Item1={result.Item1}, Item2={result.Item2?.Length ?? 0} chars");
+                
+                // Skip if Glamourer returns InvalidKey (character not found)
+                if (result.Item1 == Glamourer.Api.Enums.GlamourerApiEc.InvalidKey)
+                {
+                    _pluginLog.Debug($"🎭 [GLAMOURER DEBUG] InvalidKey for {character.Name} - character not accessible");
+                    return Task.FromResult<string?>(null);
+                }
                 
                 var state = result.Item2;
                 
@@ -1739,198 +1925,229 @@ namespace FyteClub
             }
         }
         
+        // Chaos button state
+        private bool _chaosActive = false;
+        private readonly HashSet<string> _chaosTargets = new();
+        
         /// <summary>
-        /// Force apply mods bypassing Penumbra collection restrictions (for chaos button)
-        /// CRITICAL: This method completely bypasses the P2P streaming system for maximum speed
-        /// Used by chaos mode to apply mods directly without any P2P overhead
+        /// Start chaos mode - continuously applies YOUR mods to all nearby characters
+        /// FAST & LOCAL: No networking, no file transfers, keeps polling for new people
         /// </summary>
-        public async Task<bool> ForceApplyPlayerModsBypassCollections(AdvancedPlayerInfo playerInfo, string playerName)
+        public async Task StartChaosMode()
+        {
+            if (_chaosActive) return;
+            
+            _chaosActive = true;
+            _chaosTargets.Clear();
+            
+            var localPlayerName = GetLocalPlayerName();
+            if (string.IsNullOrEmpty(localPlayerName)) 
+            {
+                _chaosActive = false;
+                return;
+            }
+            
+            var playerInfo = await GetCurrentPlayerMods(localPlayerName);
+            if (playerInfo == null) 
+            {
+                _chaosActive = false;
+                return;
+            }
+            
+            _pluginLog.Info($"😈 [CHAOS] Started! Continuously applying to new people...");
+            
+            _ = Task.Run(async () =>
+            {
+                while (_chaosActive)
+                {
+                    try
+                    {
+                        var targets = await GetAllNearbyTargets();
+                        var newTargets = targets.Where(name => !IsLocalPlayer(name) && !_chaosTargets.Contains(name)).ToList();
+                        
+                        if (newTargets.Count > 0)
+                        {
+                            _pluginLog.Info($"😈 [CHAOS] Found {newTargets.Count} new targets");
+                            
+                            foreach (var target in newTargets)
+                            {
+                                if (!_chaosActive) break;
+                                _chaosTargets.Add(target);
+                                _ = ApplyChaosModsInstant(playerInfo, target);
+                            }
+                        }
+                        
+                        await Task.Delay(1000); // Check every second
+                    }
+                    catch { }
+                }
+                
+                _pluginLog.Info($"😈 [CHAOS] Stopped! Applied to {_chaosTargets.Count} total characters");
+            });
+        }
+        
+        /// <summary>
+        /// INSTANT chaos application - bypasses redraw semaphore entirely
+        /// </summary>
+        private async Task ApplyChaosModsInstant(AdvancedPlayerInfo playerInfo, string targetName)
         {
             try
             {
-                _pluginLog.Info($"😈 [CHAOS BYPASS] Force applying mods to {playerName} - BYPASSING collection restrictions");
-                
-                // Find the character
-                var character = await _framework.RunOnFrameworkThread(() => FindCharacterByName(playerName));
-                if (character == null)
+                var character = await _framework.RunOnFrameworkThread(() => FindCharacterByName(targetName));
+                if (character != null && !IsLocalPlayer(character) && !IsLocalPlayer(targetName))
                 {
-                    _pluginLog.Warning($"😈 [CHAOS BYPASS] Character {playerName} not found");
-                    return false;
+                    // CHAOS: Apply mods directly without redraw coordination
+                    await ApplyChaosModsDirect(character, playerInfo);
                 }
-                
-                // CRITICAL: Never apply to local player
-                if (IsLocalPlayer(character))
-                {
-                    _pluginLog.Warning($"😈 [CHAOS BYPASS] Blocked attempt to apply to local player {playerName}");
-                    return true; // Return true to avoid retries
-                }
-                
-                // Apply mods with FORCED assignment (bypasses collection restrictions)
-                await ApplyAdvancedPlayerInfoForced(character, playerInfo);
-                
-                _pluginLog.Info($"😈 [CHAOS BYPASS] Successfully force-applied mods to {playerName}");
-                return true;
             }
-            catch (Exception ex)
+            catch
             {
-                _pluginLog.Error($"😈 [CHAOS BYPASS] Failed to force apply mods: {ex.Message}");
-                return false;
+                // Silent fail for speed
             }
         }
         
         /// <summary>
-        /// Apply mods with forced assignment (bypasses collection restrictions)
+        /// Direct mod application bypassing all redraw semaphores and coordination
+        /// PROPER ORDER: Glamourer (base) -> Penumbra (textures) -> Accessories -> Redraw
         /// </summary>
-        private async Task ApplyAdvancedPlayerInfoForced(ICharacter character, AdvancedPlayerInfo playerInfo)
+        private async Task ApplyChaosModsDirect(ICharacter character, AdvancedPlayerInfo playerInfo)
         {
-            try
+            // STEP 1: Get YOUR current Glamourer appearance (base outfit/appearance)
+            string glamourerData = playerInfo.GlamourerData;
+            if (string.IsNullOrEmpty(glamourerData) && IsGlamourerAvailable)
             {
-                _pluginLog.Info($"😈 [FORCED APPLICATION] Applying mods to {character.Name} with FORCED assignment");
-                
-                // Apply Glamourer first (same as normal)
-                if (IsGlamourerAvailable && !string.IsNullOrEmpty(playerInfo.GlamourerData))
-                {
-                    await ApplyGlamourerData(character, playerInfo.GlamourerData);
-                }
-                
-                // Apply Penumbra mods with FORCED assignment
-                if (IsPenumbraAvailable && playerInfo.Mods?.Count > 0)
-                {
-                    await ApplyPenumbraModsForced(character, playerInfo.Mods, playerInfo);
-                }
-                
-                // Apply other plugins (same as normal)
-                if (IsCustomizePlusAvailable && !string.IsNullOrEmpty(playerInfo.CustomizePlusData))
-                {
-                    await ApplyCustomizePlusData(character, playerInfo.CustomizePlusData);
-                }
-                
-                if (IsHeelsAvailable && playerInfo.SimpleHeelsOffset.HasValue)
-                {
-                    await ApplyHeelsData(character, playerInfo.SimpleHeelsOffset.Value);
-                }
-                
-                if (IsHonorificAvailable && !string.IsNullOrEmpty(playerInfo.HonorificTitle))
-                {
-                    await ApplyHonorificData(character, playerInfo.HonorificTitle);
-                }
-                
-                _pluginLog.Info($"😈 [FORCED APPLICATION] Completed forced application to {character.Name}");
-            }
-            catch (Exception ex)
-            {
-                _pluginLog.Error($"😈 [FORCED APPLICATION] Error in forced application: {ex.Message}");
-            }
-        }
-        
-        /// <summary>
-        /// Apply Penumbra mods with FORCED assignment (bypasses collection restrictions)
-        /// </summary>
-        private async Task ApplyPenumbraModsForced(ICharacter character, List<string> mods, AdvancedPlayerInfo playerInfo)
-        {
-            try
-            {
-                var collectionName = $"FyteClub_CHAOS_{character.ObjectIndex}";
-                _pluginLog.Info($"😈 [FORCED PENUMBRA] Applying {mods.Count} mods to {character.Name} with FORCED assignment");
-                
-                var (fileReplacements, metaManipulations) = ParseAndValidateMods(mods);
-                
-                if (fileReplacements.Count == 0 && metaManipulations.Count == 0)
-                {
-                    _pluginLog.Warning($"😈 [FORCED PENUMBRA] No valid mods to apply");
-                    return;
-                }
-                
-                await _redrawManager.RedrawSemaphore.WaitAsync().ConfigureAwait(false);
-                
                 try
                 {
-                    var applicationId = Guid.NewGuid();
-                    await _redrawManager.RedrawInternalAsync(character, applicationId, (chara) =>
+                    var localPlayer = _clientState.LocalPlayer;
+                    if (localPlayer != null)
                     {
-                        try
+                        var getState = new Glamourer.Api.IpcSubscribers.GetStateBase64(_pluginInterface);
+                        var result = getState.Invoke(localPlayer.ObjectIndex);
+                        if (result.Item1 == Glamourer.Api.Enums.GlamourerApiEc.Success && !string.IsNullOrEmpty(result.Item2))
                         {
-                            // Create temporary collection
-                            var collectionId = Guid.Empty;
-                            var createResult = _penumbraCreateTemporaryCollection?.Invoke("FyteClub_CHAOS", collectionName, out collectionId);
-                            
-                            if (createResult != PenumbraApiEc.Success || collectionId == Guid.Empty)
-                            {
-                                _pluginLog.Error($"😈 [FORCED PENUMBRA] Failed to create collection: {createResult}");
-                                return;
-                            }
-                            
-                            // Apply mods to collection
-                            ApplyModsSequentially(collectionId, fileReplacements, metaManipulations);
-                            
-                            // Apply meta manipulations
-                            if (!string.IsNullOrEmpty(playerInfo.ManipulationData))
-                            {
-                                _penumbraAddTemporaryMod?.Invoke("FyteClub_CHAOS_Meta", collectionId, new Dictionary<string, string>(), playerInfo.ManipulationData, 0);
-                            }
-                            
-                            // Always use forceAssignment=true - we want to show the visual appearance regardless of collection settings
-                            var assignResult = _penumbraAssignTemporaryCollection?.Invoke(collectionId, chara.ObjectIndex, forceAssignment: true);
-                            
-                            if (assignResult == PenumbraApiEc.Success)
-                            {
-                                _pluginLog.Info($"😈 [FORCED PENUMBRA] SUCCESS! Forced assignment of {fileReplacements.Count} files to {chara.Name}");
-                                _pluginLog.Info($"😈 [FORCED PENUMBRA] Collection restrictions BYPASSED - mods should be visible regardless of user's collection settings");
-                            }
-                            else
-                            {
-                                _pluginLog.Error($"😈 [FORCED PENUMBRA] Failed forced assignment: {assignResult}");
-                            }
+                            glamourerData = result.Item2;
                         }
-                        catch (Exception ex)
-                        {
-                            _pluginLog.Error($"😈 [FORCED PENUMBRA] Error in forced redraw action: {ex.Message}");
-                        }
-                    }, CancellationToken.None).ConfigureAwait(false);
+                    }
                 }
-                finally
-                {
-                    _redrawManager.RedrawSemaphore.Release();
-                }
+                catch { }
             }
-            catch (Exception ex)
+            
+            // STEP 2: Apply Glamourer FIRST (sets base appearance/outfit)
+            if (IsGlamourerAvailable && !string.IsNullOrEmpty(glamourerData))
             {
-                _pluginLog.Error($"😈 [FORCED PENUMBRA] Error in forced application: {ex.Message}");
+                try
+                {
+                    _glamourerApplyAll?.Invoke(glamourerData, character.ObjectIndex, FYTECLUB_GLAMOURER_LOCK);
+                }
+                catch { }
+            }
+            
+            // STEP 3: Skip Penumbra for chaos mode - too complex for instant application
+            // Glamourer appearance is the main visual change anyway
+            
+            // STEP 4: Apply Customize+ (body scaling)
+            if (IsCustomizePlusAvailable && !string.IsNullOrEmpty(playerInfo.CustomizePlusData))
+            {
+                try
+                {
+                    var decodedScale = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(playerInfo.CustomizePlusData));
+                    _customizePlusSetBodyScale?.InvokeFunc(character.ObjectIndex, decodedScale);
+                }
+                catch { }
+            }
+            
+            // STEP 5: Apply SimpleHeels (height adjustment)
+            if (IsHeelsAvailable && playerInfo.SimpleHeelsOffset.HasValue)
+            {
+                try
+                {
+                    var heelsConfig = $"{{\"Offset\":{playerInfo.SimpleHeelsOffset.Value:F3}}}";
+                    _heelsRegisterPlayer?.InvokeAction(character.ObjectIndex, heelsConfig);
+                }
+                catch { }
+            }
+            
+            // STEP 6: Apply Honorific (nameplate title)
+            if (IsHonorificAvailable && !string.IsNullOrEmpty(playerInfo.HonorificTitle))
+            {
+                try
+                {
+                    _honorificSetCharacterTitle?.InvokeAction(character.ObjectIndex, playerInfo.HonorificTitle);
+                }
+                catch { }
+            }
+            
+            // STEP 6: Final redraw to make all changes visible
+            if (IsPenumbraAvailable && _penumbraRedraw != null)
+            {
+                try
+                {
+                    _penumbraRedraw.Invoke(character.ObjectIndex, RedrawType.Redraw);
+                }
+                catch { }
             }
         }
         
         /// <summary>
-        /// Get names of all nearby players for mod application targeting
+        /// Stop chaos mode
         /// </summary>
-        public async Task<List<string>> GetNearbyPlayerNames()
+        public void StopChaosMode()
+        {
+            _chaosActive = false;
+            _chaosTargets.Clear();
+            _pluginLog.Debug("😈 [CHAOS] Stopped");
+        }
+        
+        /// <summary>
+        /// Check if chaos mode is active
+        /// </summary>
+        public bool IsChaosActive => _chaosActive;
+        
+        /// <summary>
+        /// Get chaos mode status
+        /// </summary>
+        public (bool Active, int TargetsFound) GetChaosStatus()
+        {
+            return (_chaosActive, _chaosTargets.Count);
+        }
+        
+
+        
+
+        
+        /// <summary>
+        /// Get names of ALL nearby targets - players, NPCs, monsters, everything with a name
+        /// </summary>
+        public async Task<List<string>> GetAllNearbyTargets()
         {
             try
             {
                 return await _framework.RunOnFrameworkThread(() =>
                 {
-                    var nearbyPlayers = new List<string>();
+                    var nearbyTargets = new List<string>();
                     
                     try
                     {
                         foreach (var obj in _objectTable)
                         {
-                            if (obj is ICharacter character && character.Name?.TextValue != null)
+                            if (obj.Name?.TextValue != null && obj is ICharacter)
                             {
-                                nearbyPlayers.Add(character.Name.TextValue);
+                                // Include ALL character types - no filtering
+                                nearbyTargets.Add(obj.Name.TextValue);
                             }
                         }
                     }
                     catch (InvalidOperationException ex) when (ex.Message.Contains("main thread"))
                     {
-                        _pluginLog.Warning("Cannot access ObjectTable from background thread for nearby players");
+                        _pluginLog.Warning("Cannot access ObjectTable from background thread for nearby targets");
                     }
                     
-                    return nearbyPlayers;
+                    return nearbyTargets;
                 });
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"Error getting nearby player names: {ex.Message}");
+                _pluginLog.Error($"Error getting nearby targets: {ex.Message}");
                 return new List<string>();
             }
         }

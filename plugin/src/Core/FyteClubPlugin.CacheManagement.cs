@@ -161,28 +161,7 @@ namespace FyteClub.Core
             }
         }
 
-        private void CheckCompanionsForChanges(List<CompanionSnapshot> companions)
-        {
-            if (_syncshellManager == null) return;
-            
-            foreach (var companion in companions)
-            {
-                var phonebookEntry = _syncshellManager.GetPhonebookEntry(companion.Name);
-                if (phonebookEntry != null)
-                {
-                    var modData = _syncshellManager.GetPlayerModData(companion.Name);
-                    if (modData?.ComponentData != null && _componentCache != null)
-                    {
-                        _componentCache.UpdateComponentForPlayer(companion.Name, modData.ComponentData);
-                        ModularLogger.LogDebug(LogModule.Cache, "Updated companion cache for {0}", companion.Name);
-                    }
-                }
-                else
-                {
-                    ShareCompanionToSyncshells(companion);
-                }
-            }
-        }
+
 
         public string GetCacheStatsDisplay()
         {

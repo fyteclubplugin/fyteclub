@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Game.ClientState.Objects.Types;
@@ -17,6 +19,7 @@ namespace FyteClub.ModSystem.Advanced
         private readonly IPluginLog _pluginLog;
         private readonly IFramework _framework;
         private readonly ConcurrentDictionary<nint, bool> _redrawRequests = new();
+        private readonly HashSet<nint> _playerCharacterAddresses = new();
         private CancellationTokenSource _disposalCts = new();
 
         public SemaphoreSlim RedrawSemaphore { get; } = new(2, 2);
@@ -25,6 +28,43 @@ namespace FyteClub.ModSystem.Advanced
         {
             _pluginLog = pluginLog;
             _framework = framework;
+        }
+
+        /// <summary>
+        /// Tracks a character address as potentially being the player character.
+        /// </summary>
+        public void TrackPlayerCharacter(ICharacter character)
+        {
+            if (character?.IsValid() == true)
+            {
+                _playerCharacterAddresses.Add(character.Address);
+                _pluginLog.Debug($"Tracking player character address: {character.Address:X}");
+            }
+        }
+
+        /// <summary>
+        /// Attempts to find the player character from tracked addresses.
+        /// </summary>
+        public ICharacter? FindPlayerCharacter(IEnumerable<ICharacter> availableCharacters)
+        {
+            return availableCharacters.FirstOrDefault(c => 
+                c?.IsValid() == true && _playerCharacterAddresses.Contains(c.Address));
+        }
+
+        /// <summary>
+        /// Clears old tracked addresses to prevent memory buildup.
+        /// </summary>
+        public void CleanupTrackedAddresses()
+        {
+            if (_playerCharacterAddresses.Count > 10)
+            {
+                var toRemove = _playerCharacterAddresses.Take(_playerCharacterAddresses.Count - 5).ToList();
+                foreach (var addr in toRemove)
+                {
+                    _playerCharacterAddresses.Remove(addr);
+                }
+                _pluginLog.Debug($"Cleaned up {toRemove.Count} old character addresses");
+            }
         }
 
         /// <summary>

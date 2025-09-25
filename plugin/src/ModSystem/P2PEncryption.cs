@@ -33,7 +33,7 @@ namespace FyteClub.ModSystem
         /// </summary>
         public async Task EncryptStream(Stream inputStream, byte[] key, Func<byte[], Task> sendFunction)
         {
-            using var aes = new AesGcm(key);
+            using var aes = new AesGcm(key, 16);
             var nonce = new byte[12]; // 96-bit nonce for GCM
             RandomNumberGenerator.Fill(nonce);
             
@@ -74,7 +74,7 @@ namespace FyteClub.ModSystem
             if (nonce == null || nonce.Length != 12)
                 throw new InvalidOperationException("Invalid nonce received");
             
-            using var aes = new AesGcm(key);
+            using var aes = new AesGcm(key, 16);
             var buffer = new byte[BUFFER_SIZE + 16]; // +16 for tag
             var plainBuffer = new byte[BUFFER_SIZE];
             
