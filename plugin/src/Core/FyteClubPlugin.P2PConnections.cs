@@ -58,7 +58,7 @@ namespace FyteClub.Core
                         }
                         else
                         {
-                            ModularLogger.LogAlways(LogModule.WebRTC, "Failed to connect to known member {0}", playerName);
+                            ModularLogger.LogDebug(LogModule.WebRTC, "Failed to connect to known member {0}", playerName);
                         }
                     }
                 }

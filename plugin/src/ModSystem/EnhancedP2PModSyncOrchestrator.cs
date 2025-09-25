@@ -263,8 +263,10 @@ namespace FyteClub
                     };
                 }
 
-                // Prepare file list for streaming (metadata only)
+                // Prepare actual file content for transfer
+                var fileReplacements = new Dictionary<string, TransferableFile>();
                 var fileList = new List<FileMetadata>();
+                
                 if (playerInfo.Mods?.Count > 0)
                 {
                     foreach (var modPath in playerInfo.Mods)
@@ -275,12 +277,22 @@ namespace FyteClub
                             if (parts.Length == 2 && File.Exists(parts[0]))
                             {
                                 var fileInfo = new FileInfo(parts[0]);
+                                var fileContent = await File.ReadAllBytesAsync(parts[0]);
+                                var fileHash = CalculateFileHash(parts[0]);
+                                
+                                fileReplacements[parts[1]] = new TransferableFile
+                                {
+                                    GamePath = parts[1],
+                                    Content = fileContent,
+                                    Hash = fileHash
+                                };
+                                
                                 fileList.Add(new FileMetadata
                                 {
                                     GamePath = parts[1],
                                     LocalPath = parts[0],
                                     Size = fileInfo.Length,
-                                    Hash = CalculateFileHash(parts[0])
+                                    Hash = fileHash
                                 });
                             }
                         }
@@ -288,7 +300,7 @@ namespace FyteClub
                 }
                 
                 var totalBytes = fileList.Sum(f => f.Size);
-                _pluginLog.Info($"📁 [STREAMING] Prepared {fileList.Count} files for streaming: {totalBytes} bytes ({totalBytes / 1024.0:F1} KB)");
+                _pluginLog.Info($"📁 [FILE TRANSFER] Prepared {fileList.Count} files with content: {totalBytes} bytes ({totalBytes / 1024.0 / 1024.0:F1} MB)");
 
                 // Create serializable player info first (exclude GameObjectAddress)
                 var serializablePlayerInfo = new AdvancedPlayerInfo
@@ -327,11 +339,9 @@ namespace FyteClub
                     PlayerName = request.PlayerName,
                     DataHash = dataHash,
                     PlayerInfo = serializablePlayerInfo,
-                    FileReplacements = new Dictionary<string, TransferableFile>(), // Empty - files streamed separately
+                    FileReplacements = fileReplacements, // Include actual file content
                     ResponseTo = request.MessageId
                 };
-                
-                // TODO: Stream files separately after sending metadata
             }
             catch (Exception ex)
             {
@@ -608,8 +618,10 @@ namespace FyteClub
                 }
             }
 
-            // Prepare file metadata for broadcast
+            // Prepare actual file content for broadcast
+            var fileReplacements = new Dictionary<string, TransferableFile>();
             var fileList = new List<FileMetadata>();
+            
             if (playerInfo.Mods?.Count > 0)
             {
                 foreach (var modPath in playerInfo.Mods)
@@ -619,21 +631,38 @@ namespace FyteClub
                         var parts = modPath.Split('|', 2);
                         if (parts.Length == 2 && File.Exists(parts[0]))
                         {
-                            var fileInfo = new FileInfo(parts[0]);
-                            fileList.Add(new FileMetadata
+                            try
                             {
-                                GamePath = parts[1],
-                                LocalPath = parts[0],
-                                Size = fileInfo.Length,
-                                Hash = CalculateFileHash(parts[0])
-                            });
+                                var fileInfo = new FileInfo(parts[0]);
+                                var fileContent = await File.ReadAllBytesAsync(parts[0]);
+                                var fileHash = CalculateFileHash(parts[0]);
+                                
+                                fileReplacements[parts[1]] = new TransferableFile
+                                {
+                                    GamePath = parts[1],
+                                    Content = fileContent,
+                                    Hash = fileHash
+                                };
+                                
+                                fileList.Add(new FileMetadata
+                                {
+                                    GamePath = parts[1],
+                                    LocalPath = parts[0],
+                                    Size = fileInfo.Length,
+                                    Hash = fileHash
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                _pluginLog.Warning($"📁 [FILE TRANSFER] Failed to read file {parts[0]}: {ex.Message}");
+                            }
                         }
                     }
                 }
             }
             
             var totalBytes = fileList.Sum(f => f.Size);
-            _pluginLog.Info($"📁 [STREAMING] Broadcasting metadata for {fileList.Count} files: {totalBytes} bytes ({totalBytes / 1024.0:F1} KB)");
+            _pluginLog.Info($"📁 [FILE TRANSFER] Broadcasting {fileList.Count} files with content: {totalBytes} bytes ({totalBytes / 1024.0 / 1024.0:F1} MB)");
 
             // Calculate data hash
             var dataHash = CalculatePlayerDataHash(playerInfo, fileList);
@@ -654,7 +683,7 @@ namespace FyteClub
                             PlayerName = playerInfo.PlayerName,
                             DataHash = dataHash,
                             PlayerInfo = playerInfo,
-                            FileReplacements = new Dictionary<string, TransferableFile>() // Empty - files streamed on demand
+                            FileReplacements = fileReplacements // Include actual file content
                         };
 
                         _pluginLog.Info($"📦 [P2P PACKAGE DEBUG] Sending message to peer {peerId}");

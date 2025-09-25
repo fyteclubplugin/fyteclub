@@ -48,24 +48,24 @@ namespace FyteClub
         public Task<SyncshellInfo> CreateSyncshell(string name)
         {
             ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell START - name: '{0}'", name);
-            ModularLogger.LogAlways(LogModule.Syncshells, "SyncshellManager.CreateSyncshell called with name: '{0}' (length: {1})", name, name?.Length ?? 0);
+            ModularLogger.LogDebug(LogModule.Syncshells, "SyncshellManager.CreateSyncshell called with name: '{0}' (length: {1})", name, name?.Length ?? 0);
             
             if (string.IsNullOrEmpty(name))
             {
-                ModularLogger.LogAlways(LogModule.Syncshells, "CreateSyncshell FAIL - name is null or empty");
+                ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell FAIL - name is null or empty");
                 throw new ArgumentException("Syncshell name cannot be null or empty");
             }
             
             ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell - validating name");
             if (!InputValidator.IsValidSyncshellName(name))
             {
-                ModularLogger.LogAlways(LogModule.Syncshells, "CreateSyncshell FAIL - name validation failed for: '{0}'", name);
+                ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell FAIL - name validation failed for: '{0}'", name);
                 
                 var invalidChars = name.Where(c => !char.IsLetterOrDigit(c) && c != ' ' && c != '-' && c != '_' && c != '.').ToList();
                 if (invalidChars.Any())
                 {
                     var invalidCharStr = string.Join(", ", invalidChars.Select(c => $"'{c}' (code: {(int)c})"));
-                    ModularLogger.LogAlways(LogModule.Syncshells, "Invalid characters found: {0}", invalidCharStr);
+                    ModularLogger.LogDebug(LogModule.Syncshells, "Invalid characters found: {0}", invalidCharStr);
                 }
                 
                 throw new ArgumentException($"Invalid syncshell name: '{name}'. Name must contain only letters, numbers, spaces, hyphens, underscores, and dots.");
@@ -92,7 +92,7 @@ namespace FyteClub
             }
             
             ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell - found syncshell, ID: {0}", result.Id);
-            ModularLogger.LogAlways(LogModule.Syncshells, "SyncshellInfo created successfully with ID: {0}, Name: {1}", result.Id, result.Name);
+            ModularLogger.LogDebug(LogModule.Syncshells, "SyncshellInfo created successfully with ID: {0}, Name: {1}", result.Id, result.Name);
             ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell SUCCESS - returning result");
             return Task.FromResult(result);
         }
@@ -639,7 +639,7 @@ namespace FyteClub
                     }
                 }
                 
-                ModularLogger.LogAlways(LogModule.Syncshells, "Received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
+                ModularLogger.LogDebug(LogModule.Syncshells, "Received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
                 ModularLogger.LogDebug(LogModule.Syncshells, "HandleModData: Received {0} bytes from {1}", data.Length, syncshellId);
                 
                 // Check if this is binary data (compressed P2P protocol) or JSON (legacy)
@@ -792,7 +792,7 @@ namespace FyteClub
                         !playerName.Contains("Host"))
                     {
                         syncshell.Members.Add(playerName);
-                        ModularLogger.LogAlways(LogModule.Syncshells, "Host added new member {0} to syncshell {1}", playerName, syncshellId);
+                        ModularLogger.LogDebug(LogModule.Syncshells, "Host added new member {0} to syncshell {1}", playerName, syncshellId);
                     }
                     else if (!string.IsNullOrEmpty(playerName))
                     {

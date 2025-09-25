@@ -18,7 +18,7 @@ namespace FyteClub.Core
             try
             {
                 _clientCache = new ClientModCache(_pluginLog, _pluginInterface.ConfigDirectory.FullName);
-                ModularLogger.LogAlways(LogModule.Cache, "Client cache initialized successfully");
+                ModularLogger.LogDebug(LogModule.Cache, "Client cache initialized successfully");
             }
             catch (Exception ex)
             {
@@ -31,7 +31,7 @@ namespace FyteClub.Core
             try
             {
                 _componentCache = new ModComponentStorage(_pluginLog, _pluginInterface.ConfigDirectory.FullName);
-                ModularLogger.LogAlways(LogModule.Cache, "Component-based mod cache initialized successfully");
+                ModularLogger.LogDebug(LogModule.Cache, "Component-based mod cache initialized successfully");
             }
             catch (Exception ex)
             {
@@ -228,19 +228,19 @@ namespace FyteClub.Core
                 if (_clientCache != null)
                 {
                     var clientStats = _clientCache.GetClientDeduplicationStats();
-                    ModularLogger.LogAlways(LogModule.Cache, "Client Cache Stats: {0}", clientStats);
-                    ModularLogger.LogAlways(LogModule.Cache, "Traditional storage would need {0} files", clientStats.TotalReferences);
-                    ModularLogger.LogAlways(LogModule.Cache, "Actual storage uses {0} files", clientStats.TotalModFiles);
-                    ModularLogger.LogAlways(LogModule.Cache, "Average {0:F1} references per mod file", clientStats.AverageReferencesPerMod);
+                    ModularLogger.LogDebug(LogModule.Cache, "Client Cache Stats: {0}", clientStats);
+                    ModularLogger.LogDebug(LogModule.Cache, "Traditional storage would need {0} files", clientStats.TotalReferences);
+                    ModularLogger.LogDebug(LogModule.Cache, "Actual storage uses {0} files", clientStats.TotalModFiles);
+                    ModularLogger.LogDebug(LogModule.Cache, "Average {0:F1} references per mod file", clientStats.AverageReferencesPerMod);
                 }
                 
                 if (_componentCache != null)
                 {
                     var componentStats = _componentCache.GetDeduplicationStats();
-                    ModularLogger.LogAlways(LogModule.Cache, "Component Cache Stats: {0}", componentStats);
-                    ModularLogger.LogAlways(LogModule.Cache, "{0} unique components shared across {1} recipes", 
+                    ModularLogger.LogDebug(LogModule.Cache, "Component Cache Stats: {0}", componentStats);
+                    ModularLogger.LogDebug(LogModule.Cache, "{0} unique components shared across {1} recipes", 
                         componentStats.TotalComponents, componentStats.TotalRecipes);
-                    ModularLogger.LogAlways(LogModule.Cache, "Average {0:F1} references per component", componentStats.AverageReferencesPerComponent);
+                    ModularLogger.LogDebug(LogModule.Cache, "Average {0:F1} references per component", componentStats.AverageReferencesPerComponent);
                     
                     _componentCache.LogStatistics();
                 }

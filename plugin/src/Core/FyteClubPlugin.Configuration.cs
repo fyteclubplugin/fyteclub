@@ -143,13 +143,13 @@ namespace FyteClub.Core
             
             if (toRemove.Count > 0)
             {
-                ModularLogger.LogAlways(LogModule.Core, "Cleaned up {0} old player associations", toRemove.Count);
+                ModularLogger.LogDebug(LogModule.Core, "Cleaned up {0} old player associations", toRemove.Count);
             }
         }
 
         public async Task RetryDetection()
         {
-            ModularLogger.LogAlways(LogModule.Core, "Retrying mod system detection");
+            ModularLogger.LogDebug(LogModule.Core, "Retrying mod system detection");
             CheckModSystemAvailability();
             await Task.Delay(1000);
         }

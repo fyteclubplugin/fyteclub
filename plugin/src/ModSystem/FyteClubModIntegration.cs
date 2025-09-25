@@ -1741,6 +1741,8 @@ namespace FyteClub
         
         /// <summary>
         /// Force apply mods bypassing Penumbra collection restrictions (for chaos button)
+        /// CRITICAL: This method completely bypasses the P2P streaming system for maximum speed
+        /// Used by chaos mode to apply mods directly without any P2P overhead
         /// </summary>
         public async Task<bool> ForceApplyPlayerModsBypassCollections(AdvancedPlayerInfo playerInfo, string playerName)
         {
