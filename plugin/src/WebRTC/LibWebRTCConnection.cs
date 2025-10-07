@@ -20,17 +20,54 @@ namespace FyteClub
         private readonly Dalamud.Plugin.Services.IPluginLog? _pluginLog;
         private bool _onboardingCompleted = false;
         private List<FyteClub.TURN.TurnServerInfo> _turnServers = new();
+        private DateTime _lastSendTime = DateTime.MinValue; // Track last send time for transfer detection
+        private DateTime _connectionStartTime = DateTime.MinValue; // Track when connection establishment started
+        private const int TRANSFER_TIMEOUT_SECONDS = 5; // Consider transfer inactive after 5 seconds of no sends
+        private const int CONNECTION_ESTABLISHMENT_TIMEOUT_SECONDS = 60; // Allow 60 seconds for connection to establish
 
         public event Action? OnConnected;
         public event Action? OnDisconnected;
-        public event Action<byte[]>? OnDataReceived;
+        public event Action<byte[], int>? OnDataReceived;
 
 
         public bool IsConnected => _isConnected && _dataChannelOpen;
         
+        /// <summary>
+        /// Check if this connection is actively transferring data (sent data within the last 5 seconds)
+        /// </summary>
+        public bool IsTransferring()
+        {
+            // If we've never sent data, not transferring
+            if (_lastSendTime == DateTime.MinValue) return false;
+            
+            // If we sent data within the last 5 seconds, consider it an active transfer
+            var timeSinceLastSend = DateTime.UtcNow - _lastSendTime;
+            return timeSinceLastSend.TotalSeconds < TRANSFER_TIMEOUT_SECONDS;
+        }
+        
+        /// <summary>
+        /// Check if this connection is still establishing (handshake in progress)
+        /// </summary>
+        public bool IsEstablishing()
+        {
+            // If connection start time wasn't set, not establishing
+            if (_connectionStartTime == DateTime.MinValue) return false;
+            
+            // If we're connected with open data channel, establishment is complete
+            if (IsConnected) return false;
+            
+            // If we're within the establishment timeout window, still establishing
+            var timeSinceStart = DateTime.UtcNow - _connectionStartTime;
+            return timeSinceStart.TotalSeconds < CONNECTION_ESTABLISHMENT_TIMEOUT_SECONDS;
+        }
+        
+        // Expose TURN servers for recovery
+        public List<FyteClub.TURN.TurnServerInfo> TurnServers => _turnServers;
+        
         public LibWebRTCConnection(Dalamud.Plugin.Services.IPluginLog? pluginLog = null)
         {
             _pluginLog = pluginLog;
+            _connectionStartTime = DateTime.UtcNow; // Initialize connection establishment start time
         }
         
         public void ConfigureTurnServers(List<FyteClub.TURN.TurnServerInfo> turnServers)
@@ -231,6 +268,7 @@ namespace FyteClub
                     try
                     {
                         _dataChannel.SendMessage(data);
+                        _lastSendTime = DateTime.UtcNow; // Track send time for transfer detection
                         _pluginLog?.Info($"✅ Sent {data.Length} bytes via WebRTC data channel");
                     }
                     catch (Exception ex)
@@ -260,7 +298,7 @@ namespace FyteClub
             
             _dataChannel.MessageReceived += (data) => {
                 _pluginLog?.Info($"📨 Received {data.Length} bytes via WebRTC data channel");
-                OnDataReceived?.Invoke(data);
+                OnDataReceived?.Invoke(data, 0); // LibWebRTC only supports single channel, so always channel 0
             };
             
             _dataChannel.StateChanged += () => {

@@ -164,7 +164,15 @@ namespace FyteClub.Core
                     }
                     
                     // Process received files and update mod paths to use local cached files
-                    if (modData.ComponentData is System.Collections.Generic.List<string> modList && modList.Count > 0)
+                    var modList = new System.Collections.Generic.List<string>();
+                    if (modData.ComponentData is System.Collections.Generic.Dictionary<string, object> componentDict && 
+                        componentDict.TryGetValue("mods", out var modsObj) && 
+                        modsObj is System.Collections.Generic.List<string> extractedMods)
+                    {
+                        modList = extractedMods;
+                    }
+                    
+                    if (modList.Count > 0)
                     {
                         ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Processing {0} mods for path resolution", modList.Count);
                         var updatedMods = new System.Collections.Generic.List<string>();
@@ -244,7 +252,7 @@ namespace FyteClub.Core
                         // Replace the mod list with updated paths
                         if (pathsUpdated > 0)
                         {
-                            modData.ComponentData = updatedMods;
+                            modList = updatedMods;
                             ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] ✅ Updated {0} mod paths to use local cached files for {1}", pathsUpdated, normalizedName);
                         }
                         else
@@ -256,7 +264,7 @@ namespace FyteClub.Core
                     var reconstructedPlayerInfo = new AdvancedPlayerInfo
                     {
                         PlayerName = normalizedName,
-                        Mods = (modData.ComponentData as System.Collections.Generic.List<string>) ?? new System.Collections.Generic.List<string>(),
+                        Mods = modList,
                         GlamourerData = modData.RecipeData?.ToString()
                     };
                     

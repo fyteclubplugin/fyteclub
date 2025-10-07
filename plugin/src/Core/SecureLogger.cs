@@ -17,6 +17,10 @@ namespace FyteClub
         
         public static void LogInfo(string message, params object[] args)
         {
+            // Skip excessive transfer logging
+            if (message.Contains("📨📨📨") || message.Contains("received mod data from syncshell"))
+                return;
+                
             var sanitizedMessage = SanitizeLogInput(message);
             var sanitizedArgs = args?.Select(arg => SanitizeLogInput(arg?.ToString() ?? "")).ToArray() ?? new string[0];
             

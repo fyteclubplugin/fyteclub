@@ -55,11 +55,11 @@ namespace FyteClub.Core
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 var isLocalPlayerValid = localPlayer != null && !string.IsNullOrEmpty(localPlayerName);
                 
-                if (isLocalPlayerValid && localPlayerName != _lastLocalPlayerName && _syncshellManager != null)
+                if (isLocalPlayerValid && localPlayerName != _lastLocalPlayerName && _syncshellManager != null && !string.IsNullOrEmpty(localPlayerName))
                 {
-                    _syncshellManager.SetLocalPlayerName(localPlayerName!);
+                    _syncshellManager.SetLocalPlayerName(localPlayerName);
                     _lastLocalPlayerName = localPlayerName;
-                    ModularLogger.LogDebug(LogModule.Core, "Updated local player name: {0}", localPlayerName ?? "null");
+                    ModularLogger.LogDebug(LogModule.Core, "Updated local player name: {0}", localPlayerName);
                 }
                 
                 _mediator.ProcessQueue();
@@ -89,7 +89,7 @@ namespace FyteClub.Core
                 
                 if (!IsPenumbraAvailable || !IsGlamourerAvailable || !IsHonorificAvailable)
                 {
-                    _modSystemIntegration.RetryDetection();
+                    _modSystemIntegration?.RetryDetection();
                 }
             }
             catch (Exception ex)

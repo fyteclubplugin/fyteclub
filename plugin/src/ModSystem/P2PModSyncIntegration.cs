@@ -41,15 +41,33 @@ namespace FyteClub.ModSystem
                 _connections[syncshellId] = connection;
                 
                 // Register the connection's send function with the orchestrator
+                // Wrap the connection's send with safety gating (slower and safer)
                 _orchestrator.RegisterPeer(syncshellId, async (data) =>
                 {
+                    // Wait until channel is open
+                    var maxWaitMs = 15000; // 15s safety cap
+                    var waited = 0;
+                    while (!connection.IsChannelOpen && waited < maxWaitMs)
+                    {
+                        await Task.Delay(200);
+                        waited += 200;
+                    }
+
+                    if (!connection.IsChannelOpen)
+                    {
+                        _pluginLog.Warning($"[P2PModSyncIntegration] Send aborted: channel not open for {syncshellId}");
+                        throw new InvalidOperationException("Channel not open");
+                    }
+
+                    // No backpressure needed with directional channels
+
                     await connection.SendDataAsync(data);
                 });
 
                 // Wire up the connection's data received event
-                connection.OnDataReceived += async (data) =>
+                connection.OnDataReceived += async (data, channelIndex) =>
                 {
-                    await HandleIncomingData(syncshellId, data);
+                    await HandleIncomingData(syncshellId, data, channelIndex);
                 };
 
                 _pluginLog.Info($"[P2PModSyncIntegration] Registered connection for syncshell {syncshellId}");
@@ -94,12 +112,12 @@ namespace FyteClub.ModSystem
         /// <summary>
         /// Handle incoming data from WebRTC connections
         /// </summary>
-        private async Task HandleIncomingData(string peerId, byte[] data)
+        private async Task HandleIncomingData(string peerId, byte[] data, int channelIndex)
         {
             try
             {
                 // First, try to parse as the new P2P mod protocol
-                if (await TryHandleP2PModMessage(peerId, data))
+                if (await TryHandleP2PModMessage(peerId, data, channelIndex))
                 {
                     return;
                 }
@@ -116,36 +134,28 @@ namespace FyteClub.ModSystem
         /// <summary>
         /// Try to handle data as a P2P mod protocol message
         /// </summary>
-        private async Task<bool> TryHandleP2PModMessage(string peerId, byte[] data)
+        private async Task<bool> TryHandleP2PModMessage(string peerId, byte[] data, int channelIndex)
         {
             try
             {
-                _pluginLog.Info($"[P2PModSyncIntegration] Checking if {data.Length} bytes from {peerId} is P2P protocol message");
-                
-                // Check if this looks like a P2P mod protocol message
-                // P2P messages start with compression flag (0 or 1)
-                if (data.Length < 2)
+                if (data == null || data.Length == 0)
                 {
-                    _pluginLog.Debug($"[P2PModSyncIntegration] Message too short ({data.Length} bytes) for P2P protocol");
                     return false;
                 }
 
-                // Additional check: if the first byte is not 0 or 1, it's likely not a P2P message
-                if (data[0] != 0 && data[0] != 1)
+                // Accept both framed (leading 0/1) and raw JSON ('{' or '[') protocol messages
+                var first = data[0];
+                var looksLikeProtocol = first == 0 || first == 1 || first == (byte)'{' || first == (byte)'[';
+                if (!looksLikeProtocol)
                 {
-                    _pluginLog.Debug($"[P2PModSyncIntegration] First byte {data[0]} indicates not P2P protocol");
                     return false;
                 }
 
-                _pluginLog.Info($"[P2PModSyncIntegration] Processing as P2P mod message from {peerId}");
-                // Try to process as P2P mod message
-                await _orchestrator.ProcessIncomingMessage(peerId, data);
-                _pluginLog.Info($"[P2PModSyncIntegration] Successfully processed P2P message from {peerId}");
+                await _orchestrator.ProcessIncomingMessage(peerId, data, channelIndex);
                 return true;
             }
             catch (Exception ex)
             {
-                // Log at debug level to avoid spam, since this is expected for legacy messages
                 _pluginLog.Debug($"[P2PModSyncIntegration] Message from {peerId} is not P2P protocol format: {ex.Message}");
                 return false;
             }

@@ -403,29 +403,29 @@ namespace FyteClub.UI
                     {
                         playerCount = 1;
                         
-                        // Extract mod count from cached data - handle different data types
-                        if (cachedData.RecipeData is System.Text.Json.JsonElement element && element.ValueKind == System.Text.Json.JsonValueKind.Object)
+                        // Extract mod count from cached data - use PlayerModEntry properties
+                        totalMods = cachedData.FileCount;
+                        
+                        // If FileCount is 0, try to extract from ModData
+                        if (totalMods == 0 && cachedData.ModData.Count > 0)
                         {
-                            if (element.TryGetProperty("mods", out var modsProperty) && modsProperty.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            // Count mods from various sources
+                            foreach (var kvp in cachedData.ModData)
                             {
-                                totalMods = modsProperty.GetArrayLength();
-                            }
-                        }
-                        else if (cachedData.RecipeData is Dictionary<string, object> dict)
-                        {
-                            if (dict.TryGetValue("mods", out var modsObj) && modsObj is List<string> modsList)
-                            {
-                                totalMods = modsList.Count;
-                            }
-                            else if (dict.TryGetValue("mods", out var modsObj2) && modsObj2 is System.Text.Json.JsonElement modsElement && modsElement.ValueKind == System.Text.Json.JsonValueKind.Array)
-                            {
-                                totalMods = modsElement.GetArrayLength();
+                                if (kvp.Value is System.Collections.ICollection collection)
+                                {
+                                    totalMods += collection.Count;
+                                }
+                                else if (kvp.Key.Contains("mod") || kvp.Key.Contains("file"))
+                                {
+                                    totalMods++;
+                                }
                             }
                         }
                         
                         ImGui.Text($"Players: {playerCount}");
                         ImGui.Text($"Total Mods: {totalMods}");
-                        ImGui.Text($"Last Updated: {cachedData.LastUpdated:HH:mm:ss}");
+                        ImGui.Text($"Last Updated: {cachedData.Timestamp:HH:mm:ss}");
                         
                         if (totalMods > 0)
                         {
@@ -476,6 +476,56 @@ namespace FyteClub.UI
             else
             {
                 ImGui.Text("SyncshellManager not available");
+            }
+            
+            ImGui.Separator();
+            
+            // Phonebook Members
+            ImGui.Text("Syncshell Members (Phonebook):");
+            if (_plugin.SyncshellManager != null)
+            {
+                var syncshells = _plugin.GetSyncshells();
+                foreach (var syncshell in syncshells)
+                {
+                    if (syncshell.IsActive)
+                    {
+                        ImGui.Text($"{syncshell.Name}:");
+                        var members = _plugin.SyncshellManager.GetPhonebookMembers(syncshell.Id);
+                        if (members.Count > 0)
+                        {
+                            foreach (var member in members)
+                            {
+                                var isBlocked = _plugin.IsUserBlocked(member.PlayerName ?? "");
+                                var color = isBlocked ? new Vector4(0.5f, 0.5f, 0.5f, 1) : new Vector4(1, 1, 1, 1);
+                                
+                                ImGui.TextColored(color, $"  {member.PlayerName ?? "Unknown"}");
+                                ImGui.SameLine();
+                                
+                                if (!string.IsNullOrEmpty(member.PlayerName))
+                                {
+                                    if (isBlocked)
+                                    {
+                                        if (ImGui.SmallButton($"Unblock##{member.PlayerName}"))
+                                        {
+                                            _plugin.UnblockUser(member.PlayerName);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        if (ImGui.SmallButton($"Block##{member.PlayerName}"))
+                                        {
+                                            _plugin.BlockUser(member.PlayerName);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            ImGui.Text("  No members in phonebook");
+                        }
+                    }
+                }
             }
             
             ImGui.Separator();

@@ -284,7 +284,7 @@ namespace FyteClub.WebRTC
             peerConnection.DataChannelAdded += (channel) => {
                 try
                 {
-                    _pluginLog?.Info($"[WebRTC] 🚨 DataChannelAdded EVENT FIRED for {peer.PeerId} (Thread: {System.Threading.Thread.CurrentThread.ManagedThreadId})");
+                    _pluginLog?.Debug($"[WebRTC] DataChannelAdded event fired for {peer.PeerId}: {channel.Label}");
                     
                     if (_disposed) 
                     {
@@ -292,17 +292,25 @@ namespace FyteClub.WebRTC
                         return;
                     }
                     
-                    _pluginLog?.Info($"[WebRTC] 🎯 Remote data channel added for {peer.PeerId}: {channel.Label}, State: {channel.State}");
+                    _pluginLog?.Debug($"[WebRTC] Remote data channel added for {peer.PeerId}: {channel.Label}, State: {channel.State}");
                     
-                    if (peer.DataChannel == null)
+                    var existing = peer.DataChannel;
+                    if (existing == null ||
+                        existing.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Closed ||
+                        existing.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Closing)
                     {
+                        if (existing != null)
+                        {
+                            _pluginLog?.Debug($"[WebRTC] Replacing stale data channel (state {existing.State}) for {peer.PeerId}");
+                        }
                         peer.DataChannel = channel;
+                        peer.DataChannelReady = (channel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open);
                         RegisterDataChannelHandlers(peer, channel);
-                        _pluginLog?.Info($"[WebRTC] ✅ Remote data channel registered for {peer.PeerId}");
+                        _pluginLog?.Debug($"[WebRTC] Data channel registered/replaced for {peer.PeerId}");
                     }
                     else
                     {
-                        _pluginLog?.Warning($"[WebRTC] ⚠️ Additional data channel ignored for {peer.PeerId}");
+                        _pluginLog?.Debug($"[WebRTC] Ignoring additional data channel while existing is {existing.State} for {peer.PeerId}");
                     }
                 }
                 catch (Exception ex)
@@ -386,15 +394,23 @@ namespace FyteClub.WebRTC
 
             // Interactive Connectivity Establishment candidate handling
             peerConnection.IceCandidateReadytoSend += (candidate) => {
-                _pluginLog?.Debug($"[WebRTC] ICE candidate ready for {peerId}: {candidate.Content}");
-                _signalingChannel.SendIceCandidate(peerId, candidate);
+                _pluginLog?.Info($"[WebRTC] ICE candidate ready for {peerId}: {candidate.SdpMid}/{candidate.SdpMlineIndex} | {candidate.Content.Length} chars");
+                try { _signalingChannel.SendIceCandidate(peerId, candidate); }
+                catch (Exception ex) { _pluginLog?.Error($"[WebRTC] Failed to send ICE candidate for {peerId}: {ex.Message}"); }
+            };
+
+            // Connection established
+            peerConnection.Connected += () =>
+            {
+                if (_disposed) return;
+                _pluginLog?.Info($"[WebRTC] PeerConnection Connected for {peerId}");
             };
 
             // Simplified ICE state monitoring
             peerConnection.IceStateChanged += (state) => {
                 if (_disposed) return;
                 
-                _pluginLog?.Debug($"[WebRTC] ICE {state} for {peerId}");
+                _pluginLog?.Info($"[WebRTC] ICE state: {state} for {peerId}");
                 peer.IceState = state;
                 
                 if (state == IceConnectionState.Connected)
@@ -474,22 +490,175 @@ namespace FyteClub.WebRTC
             _pluginLog?.Debug($"[WebRTC] Registering handlers for {peer.PeerId}");
             peer.HandlersRegistered = true;
             
+            // Monitor buffer usage to detect backpressure and proactively renegotiate
+            channel.BufferingChanged += (prev, current, limit) =>
+            {
+                if (_disposed) return;
+
+                try
+                {
+                    if (limit > 0)
+                    {
+                        double ratio = (double)current / (double)limit;
+
+                        // Backpressure flags: set when >=95%, clear when <=80%
+                        if (ratio >= 0.95 && !peer.BackpressureActive)
+                        {
+                            peer.BackpressureActive = true;
+                            // Reset writable signal so senders can await drain
+                            peer.WritableSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                            _pluginLog?.Warning($"[WebRTC] 🚦 Backpressure ACTIVE for {peer.PeerId} at {ratio:P0}");
+                        }
+                        else if (ratio <= 0.80 && peer.BackpressureActive)
+                        {
+                            peer.BackpressureActive = false;
+                            // Signal writers to resume
+                            if (!peer.WritableSignal.Task.IsCompleted)
+                                peer.WritableSignal.TrySetResult(true);
+                            _pluginLog?.Info($"[WebRTC] ✅ Backpressure CLEARED for {peer.PeerId} at {ratio:P0}");
+                        }
+
+                        // Proactive renegotiation when buffer exceeds 95% while ICE is Connected (offerer only)
+                        if (peer.IceState == IceConnectionState.Connected && peer.IsOfferer && ratio >= 0.95)
+                        {
+                            var now = DateTime.UtcNow;
+                            // 10s cooldown to avoid spam
+                            if ((now - peer.LastHighWatermarkRenegotiate) > TimeSpan.FromSeconds(10))
+                            {
+                                peer.LastHighWatermarkRenegotiate = now;
+                                _pluginLog?.Warning($"[WebRTC] 📈 High watermark {ratio:P0} for {peer.PeerId}. Proactively creating offer to refresh data channel.");
+                                try { peer.PeerConnection.CreateOffer(); }
+                                catch (Exception ex) { _pluginLog?.Warning($"[WebRTC] Proactive CreateOffer failed: {ex.Message}"); }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog?.Debug($"[WebRTC] BufferingChanged handling failed: {ex.Message}");
+                }
+            };
+
             channel.StateChanged += () => {
                 if (_disposed) return;
+                var st = channel.State;
+                _pluginLog?.Debug($"[WebRTC] DataChannel state: {st} for {peer.PeerId}");
                 
-                _pluginLog?.Debug($"[WebRTC] DataChannel {channel.State} for {peer.PeerId}");
-                
-                if (channel.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+                if (st == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
                 {
                     peer.DataChannelReady = true;
                     CheckAndTriggerConnection(peer);
+                }
+                else if (st == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Closing ||
+                         st == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Closed)
+                {
+                    peer.DataChannelReady = false;
+                    _pluginLog?.Warning($"[WebRTC] DataChannel closed/closing for {peer.PeerId}. Halting outbound sends.");
+
+                    // Fast path: if ICE is still connected, attempt a quick data channel reopen before declaring full disconnect
+                    if (peer.IceState == IceConnectionState.Connected && !peer.ReopenInProgress)
+                    {
+                        peer.ReopenInProgress = true;
+                        _ = Task.Run(async () =>
+                        {
+                            bool reopenedSuccessfully = false;
+                            try
+                            {
+                                _pluginLog?.Info($"[WebRTC] 🔁 Attempting fast DataChannel reopen for {peer.PeerId} (ICE Connected)");
+                                // Offerer can recreate the channel immediately; answerer will wait for remote
+                                if (peer.IsOfferer)
+                                {
+                                    // Try up to 3 fast reopen attempts with progressive backoff
+                                    var backoffs = new[] { 500, 1000, 2000 }; // Increased delays for stability
+                                    for (int attempt = 0; attempt < backoffs.Length; attempt++)
+                                    {
+                                        try
+                                        {
+                                            var newDc = await peer.PeerConnection.AddDataChannelAsync("fyteclub", ordered: true, reliable: true);
+                                            peer.DataChannel = newDc;
+                                            RegisterDataChannelHandlers(peer, newDc);
+                                            _pluginLog?.Info($"[WebRTC] ✅ Recreated DataChannel for {peer.PeerId}, state {newDc.State} (attempt {attempt+1})");
+
+                                            // Wait for channel to stabilize before renegotiation
+                                            await Task.Delay(200);
+                                            
+                                            // Trigger renegotiation to propagate reopened channel
+                                            peer.PeerConnection.CreateOffer();
+                                            _pluginLog?.Info($"[WebRTC] 📡 Sent renegotiation offer for reopened channel {peer.PeerId}");
+                                            
+                                            // Wait for channel to become ready
+                                            for (int wait = 0; wait < 30; wait++) // 6 seconds max
+                                            {
+                                                if (newDc.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+                                                {
+                                                    peer.DataChannelReady = true;
+                                                    CheckAndTriggerConnection(peer);
+                                                    reopenedSuccessfully = true;
+                                                    _pluginLog?.Info($"[WebRTC] ✅ DataChannel reopen successful for {peer.PeerId}");
+                                                    return;
+                                                }
+                                                await Task.Delay(200);
+                                            }
+                                            
+                                            _pluginLog?.Warning($"[WebRTC] ⏰ DataChannel reopen timeout for {peer.PeerId} (attempt {attempt+1})");
+                                        }
+                                        catch (Exception rex)
+                                        {
+                                            _pluginLog?.Warning($"[WebRTC] Recreate DataChannel attempt {attempt+1} failed for {peer.PeerId}: {rex.Message}");
+                                            if (attempt < backoffs.Length - 1)
+                                            {
+                                                await Task.Delay(backoffs[attempt]);
+                                            }
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    // Answerer: wait for remote to recreate; set a longer grace period for large transfers
+                                    for (int i = 0; i < 40; i++) // ~8s grace (increased from 4s)
+                                    {
+                                        await Task.Delay(200);
+                                        if (peer.DataChannel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+                                        {
+                                            _pluginLog?.Info($"[WebRTC] ✅ DataChannel reopened by remote for {peer.PeerId}");
+                                            peer.DataChannelReady = true;
+                                            CheckAndTriggerConnection(peer);
+                                            reopenedSuccessfully = true;
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                            finally
+                            {
+                                peer.ReopenInProgress = false;
+                                if (!reopenedSuccessfully)
+                                {
+                                    _pluginLog?.Warning($"[WebRTC] ❌ DataChannel reopen failed for {peer.PeerId}, triggering disconnect");
+                                    // If we couldn't reopen quickly, declare disconnected to upstream
+                                    OnPeerDisconnected?.Invoke(peer);
+                                }
+                            }
+                        });
+                    }
+                    else
+                    {
+                        OnPeerDisconnected?.Invoke(peer);
+                    }
                 }
             };
 
             channel.MessageReceived += (data) => {
                 if (_disposed) return;
-                _pluginLog?.Debug($"[WebRTC] Message {data.Length}B from {peer.PeerId}");
-                peer.OnDataReceived?.Invoke(data);
+                try
+                {
+                    _pluginLog?.Debug($"[WebRTC] Message {data.Length}B from {peer.PeerId}");
+                    peer.OnDataReceived?.Invoke(data);
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog?.Error($"[WebRTC] Exception in MessageReceived handler for {peer.PeerId}: {ex.Message}");
+                }
             };
         }
         
@@ -525,7 +694,7 @@ namespace FyteClub.WebRTC
                     }
                 }
                 
-                // Check if peer already exists and is the offerer (host receiving its own offer)
+                // If a peer already exists:
                 if (_peers.ContainsKey(peerId))
                 {
                     var existingPeer = _peers[peerId];
@@ -537,7 +706,10 @@ namespace FyteClub.WebRTC
                         return;
                     }
                     
-                    _pluginLog?.Info($"[WebRTC] 🔄 Peer {peerId} already exists - ignoring duplicate offer to prevent duplicate answer");
+                    // Answerer receiving a re-offer (renegotiation): process it and generate a fresh answer
+                    _pluginLog?.Info($"[WebRTC] ♻️ Re-offer received for existing answerer peer {peerId} - applying and answering");
+                    var reOfferAnswer = await CreateAnswerAsync(peerId, offerSdp);
+                    _pluginLog?.Info($"[WebRTC] ✅ Re-offer handled for {peerId}, answer length: {reOfferAnswer.Length}");
                     return;
                 }
                 
@@ -604,7 +776,7 @@ namespace FyteClub.WebRTC
                     try
                     {
                         // Test if PeerConnection is actually initialized by accessing a property
-                        var connectionHash = peer.PeerConnection.GetHashCode();
+                        var connectionHash = peer.PeerConnection?.GetHashCode() ?? 0;
                         _pluginLog?.Info($"[WebRTC] 🔍   PeerConnection hash: {connectionHash} (connection appears initialized)");
                     }
                     catch (Exception testEx)
@@ -617,12 +789,15 @@ namespace FyteClub.WebRTC
                     _pluginLog?.Info($"[WebRTC] 🔄 Setting remote answer for offerer {peerId}");
                     try
                     {
-                        await peer.PeerConnection.SetRemoteDescriptionAsync(new SdpMessage
+                        if (peer.PeerConnection != null)
                         {
-                            Type = SdpMessageType.Answer,
-                            Content = answerSdp
-                        });
-                        _pluginLog?.Info($"[WebRTC] ✅ REMOTE ANSWER SET for offerer {peerId}");
+                            await peer.PeerConnection.SetRemoteDescriptionAsync(new SdpMessage
+                            {
+                                Type = SdpMessageType.Answer,
+                                Content = answerSdp
+                            });
+                            _pluginLog?.Info($"[WebRTC] ✅ REMOTE ANSWER SET for offerer {peerId}");
+                        }
                         // Now that the remote answer is applied, flush any queued ICE candidates
                         _ = Task.Run(async () => await ProcessPendingIceCandidates(peerId));
                     }
@@ -742,7 +917,7 @@ namespace FyteClub.WebRTC
                     try
                     {
                         var candidate = candidates.Dequeue();
-                        peer.PeerConnection.AddIceCandidate(candidate);
+                        peer.PeerConnection?.AddIceCandidate(candidate);
                         applied++;
                         await Task.Delay(50); // Small delay between candidates
                     }

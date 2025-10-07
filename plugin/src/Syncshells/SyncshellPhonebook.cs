@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -15,6 +16,16 @@ namespace FyteClub
         public long EntrySequence { get; set; }
         public DateTime LastSeen { get; set; }
         public List<string> Capabilities { get; set; } = new();
+    }
+    
+    public class SyncshellPhonebookEntry
+    {
+        public string PeerId { get; set; } = string.Empty;
+        public string? PlayerName { get; set; }
+        public string PublicKey { get; set; } = string.Empty;
+        public string IpAddress { get; set; } = string.Empty;
+        public int Port { get; set; }
+        public long Timestamp { get; set; }
     }
 
     public class SyncshellTombstone
@@ -34,10 +45,10 @@ namespace FyteClub
         public Dictionary<string, SyncshellMember> Members { get; set; } = new();
         public List<SyncshellTombstone> Tombstones { get; set; } = new();
 
-        public void AddMember(byte[] publicKey, IPAddress ip, int port)
+        public void AddMember(byte[] publicKey, IPAddress ip, int port, string? playerName = null)
         {
             var keyStr = Convert.ToBase64String(publicKey);
-            Members[keyStr] = new SyncshellMember
+            var member = new SyncshellMember
             {
                 PublicKey = publicKey,
                 IP = ip,
@@ -47,6 +58,14 @@ namespace FyteClub
                 LastSeen = DateTime.UtcNow,
                 Capabilities = new List<string> { "penumbra", "glamourer" }
             };
+            
+            // Store player name in capabilities for lookup
+            if (!string.IsNullOrEmpty(playerName))
+            {
+                member.Capabilities.Add($"player:{playerName}");
+            }
+            
+            Members[keyStr] = member;
         }
 
         public void RemoveMember(byte[] publicKey, List<byte[]> signatures)
@@ -109,24 +128,53 @@ namespace FyteClub
             return JsonSerializer.Deserialize<SyncshellPhonebook>(data, options) ?? new SyncshellPhonebook();
         }
 
-        public PhonebookEntry? GetEntry(string playerName)
+        public SyncshellPhonebookEntry? GetEntry(string playerName)
         {
-            // Simple lookup by player name - in production this would be more sophisticated
             foreach (var member in Members.Values)
             {
-                if (member.LastSeen > DateTime.UtcNow.AddMinutes(-5)) // Only recent entries
+                // Look for player name in capabilities
+                var playerCapability = member.Capabilities.FirstOrDefault(c => c.StartsWith("player:"));
+                if (playerCapability != null)
                 {
-                    return new PhonebookEntry
+                    var storedPlayerName = playerCapability.Substring(7); // Remove "player:" prefix
+                    if (storedPlayerName == playerName)
+                    {
+                        return new SyncshellPhonebookEntry
+                        {
+                            PeerId = playerName,
+                            PlayerName = playerName,
+                            PublicKey = Convert.ToBase64String(member.PublicKey),
+                            IpAddress = member.IP.ToString(),
+                            Port = member.Port,
+                            Timestamp = ((DateTimeOffset)member.LastSeen).ToUnixTimeSeconds()
+                        };
+                    }
+                }
+            }
+            return null;
+        }
+        
+        public List<SyncshellPhonebookEntry> GetAllMembers()
+        {
+            var entries = new List<SyncshellPhonebookEntry>();
+            foreach (var member in Members.Values)
+            {
+                var playerCapability = member.Capabilities.FirstOrDefault(c => c.StartsWith("player:"));
+                if (playerCapability != null)
+                {
+                    var playerName = playerCapability.Substring(7);
+                    entries.Add(new SyncshellPhonebookEntry
                     {
                         PeerId = playerName,
+                        PlayerName = playerName,
                         PublicKey = Convert.ToBase64String(member.PublicKey),
                         IpAddress = member.IP.ToString(),
                         Port = member.Port,
                         Timestamp = ((DateTimeOffset)member.LastSeen).ToUnixTimeSeconds()
-                    };
+                    });
                 }
             }
-            return null;
+            return entries;
         }
     }
 

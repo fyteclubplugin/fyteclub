@@ -14,9 +14,9 @@ namespace FyteClub.WebRTC
         private readonly SyncshellPersistence _persistence;
         private readonly Func<string, string, Task<IWebRTCConnection>> _connectionFactory;
         private readonly IPluginLog? _pluginLog;
-        private readonly Timer _reconnectionTimer;
         private readonly Dictionary<string, DateTime> _lastReconnectAttempt = new();
         private readonly TimeSpan _reconnectInterval = TimeSpan.FromMinutes(5);
+        private readonly HashSet<string> _activeConnections = new();
         private bool _disposed = false;
 
         public event Action<string, IWebRTCConnection>? OnReconnected;
@@ -30,8 +30,7 @@ namespace FyteClub.WebRTC
             _connectionFactory = connectionFactory;
             _pluginLog = pluginLog;
             
-            // Check for reconnections every 2 minutes
-            _reconnectionTimer = new Timer(CheckReconnections, null, TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(2));
+            _pluginLog?.Info("[ReconnectionManager] Initialized with event-driven reconnection (no periodic timer)");
         }
 
         public async Task AttemptReconnection(string syncshellId)
@@ -39,6 +38,13 @@ namespace FyteClub.WebRTC
             if (_disposed) 
             {
                 Console.WriteLine($"❌ [ReconnectionManager] Manager disposed, skipping reconnection for {syncshellId}");
+                return;
+            }
+
+            // Skip if connection is already active
+            if (_activeConnections.Contains(syncshellId))
+            {
+                _pluginLog?.Debug($"[ReconnectionManager] Skipping reconnection for {syncshellId} - already connected");
                 return;
             }
 
@@ -75,6 +81,7 @@ namespace FyteClub.WebRTC
                 {
                     Console.WriteLine($"🎉 [ReconnectionManager] Successfully reconnected to syncshell {syncshellId}");
                     _pluginLog?.Info($"Successfully reconnected to syncshell {syncshellId}");
+                    MarkConnectionActive(syncshellId);
                     OnReconnected?.Invoke(syncshellId, connection);
                 }
                 else
@@ -89,31 +96,21 @@ namespace FyteClub.WebRTC
             }
         }
 
-        private async void CheckReconnections(object? state)
+        public void MarkConnectionActive(string syncshellId)
         {
-            if (_disposed) 
+            if (!_disposed)
             {
-                Console.WriteLine($"❌ [ReconnectionManager] Manager disposed, skipping reconnection check");
-                return;
+                _activeConnections.Add(syncshellId);
+                _pluginLog?.Debug($"[ReconnectionManager] Marked {syncshellId} as active");
             }
+        }
 
-            var syncshells = _persistence.GetAllSyncshells();
-            var eligibleCount = 0;
-            
-            foreach (var syncshell in syncshells)
+        public void MarkConnectionInactive(string syncshellId)
+        {
+            if (!_disposed)
             {
-                
-                // Only attempt reconnection for recently used syncshells
-                if (DateTime.UtcNow - syncshell.LastConnected < TimeSpan.FromDays(3))
-                {
-                    eligibleCount++;
-                    await AttemptReconnection(syncshell.SyncshellId);
-                }
-            }
-            
-            if (eligibleCount > 0)
-            {
-                _pluginLog?.Info($"Checked {eligibleCount}/{syncshells.Count} syncshells for reconnection");
+                _activeConnections.Remove(syncshellId);
+                _pluginLog?.Debug($"[ReconnectionManager] Marked {syncshellId} as inactive");
             }
         }
 
@@ -122,8 +119,8 @@ namespace FyteClub.WebRTC
             if (_disposed) return;
             _disposed = true;
             
-            _reconnectionTimer?.Dispose();
             _lastReconnectAttempt.Clear();
+            _activeConnections.Clear();
         }
     }
 }

@@ -64,7 +64,7 @@ public class StagedModApplicator
 
     public async Task<bool> ApplyModsAsync(ICharacter character, Dictionary<string, object> modData, CancellationToken cancellationToken = default)
     {
-        if (character?.Address == IntPtr.Zero)
+        if (character == null || character.Address == IntPtr.Zero)
         {
             _logger.LogWarning("Invalid character for mod application");
             return false;

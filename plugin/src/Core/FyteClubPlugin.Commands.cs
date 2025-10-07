@@ -84,6 +84,9 @@ namespace FyteClub.Core
                             }
                         }
                         break;
+                    case "testmodapply":
+                        _ = Task.Run(() => TestModApplicationFlow(parts.Length >= 2 ? parts[1] : null));
+                        break;
                     default:
                         _configWindow?.Toggle();
                         break;
@@ -127,6 +130,107 @@ namespace FyteClub.Core
             var preview = modData?.ToString();
             if (preview != null && preview.Length > 100) preview = preview[..100] + "...";
             ModularLogger.LogDebug(LogModule.ModSync, "Applying mods to {0}: {1}", playerName, preview ?? "null");
+        }
+
+        private async Task TestModApplicationFlow(string? targetPlayerName)
+        {
+            try
+            {
+                ModularLogger.LogAlways(LogModule.Core, "🧪 === TESTING MOD APPLICATION FLOW ===");
+                
+                // Step 1: Check if mod integration is available
+                if (_modSystemIntegration == null)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ FAIL: Mod system integration is NULL");
+                    return;
+                }
+                ModularLogger.LogAlways(LogModule.Core, "✅ Step 1: Mod system integration available");
+                
+                // Step 2: Find a target player
+                var targetPlayer = await _framework.RunOnFrameworkThread(() =>
+                {
+                    if (!string.IsNullOrEmpty(targetPlayerName))
+                    {
+                        return _objectTable.FirstOrDefault(obj => 
+                            obj is Dalamud.Game.ClientState.Objects.Types.ICharacter character && 
+                            character.Name.TextValue.Contains(targetPlayerName, StringComparison.OrdinalIgnoreCase));
+                    }
+                    else
+                    {
+                        // Find any nearby player character (not local player)
+                        return _objectTable.FirstOrDefault(obj => 
+                            obj is Dalamud.Game.ClientState.Objects.Types.ICharacter character && 
+                            character.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player &&
+                            !_modSystemIntegration.IsLocalPlayer(character));
+                    }
+                });
+                
+                if (targetPlayer == null)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ FAIL: No target player found (specify name or get near someone)");
+                    return;
+                }
+                
+                var character = targetPlayer as Dalamud.Game.ClientState.Objects.Types.ICharacter;
+                if (character == null)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ FAIL: Target is not a character");
+                    return;
+                }
+                
+                ModularLogger.LogAlways(LogModule.Core, "✅ Step 2: Found target player: {0}", character.Name.TextValue);
+                
+                // Step 3: Get current player mods (from local player as test data)
+                var localPlayerName = _clientState.LocalPlayer?.Name.TextValue;
+                if (string.IsNullOrEmpty(localPlayerName))
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ FAIL: Cannot get local player name");
+                    return;
+                }
+                
+                var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(localPlayerName);
+                if (playerInfo == null)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ FAIL: Cannot get player mod data");
+                    return;
+                }
+                
+                ModularLogger.LogAlways(LogModule.Core, "✅ Step 3: Got player mod data:");
+                ModularLogger.LogAlways(LogModule.Core, "   - Mods: {0}", new object[] { playerInfo.Mods?.Count ?? 0 });
+                ModularLogger.LogAlways(LogModule.Core, "   - Glamourer: {0} chars", new object[] { playerInfo.GlamourerData?.Length ?? 0 });
+                ModularLogger.LogAlways(LogModule.Core, "   - Customize+: {0} chars", new object[] { playerInfo.CustomizePlusData?.Length ?? 0 });
+                ModularLogger.LogAlways(LogModule.Core, "   - Heels: {0}", new object[] { playerInfo.SimpleHeelsOffset });
+                ModularLogger.LogAlways(LogModule.Core, "   - Honorific: {0}", new object[] { playerInfo.HonorificTitle ?? "none" });
+                
+                // Step 4: Check plugin availability
+                ModularLogger.LogAlways(LogModule.Core, "✅ Step 4: Plugin availability:");
+                ModularLogger.LogAlways(LogModule.Core, "   - Penumbra: {0}", _modSystemIntegration.IsPenumbraAvailable);
+                ModularLogger.LogAlways(LogModule.Core, "   - Glamourer: {0}", _modSystemIntegration.IsGlamourerAvailable);
+                ModularLogger.LogAlways(LogModule.Core, "   - Customize+: {0}", _modSystemIntegration.IsCustomizePlusAvailable);
+                ModularLogger.LogAlways(LogModule.Core, "   - SimpleHeels: {0}", _modSystemIntegration.IsHeelsAvailable);
+                ModularLogger.LogAlways(LogModule.Core, "   - Honorific: {0}", _modSystemIntegration.IsHonorificAvailable);
+                
+                // Step 5: Apply mods to target
+                ModularLogger.LogAlways(LogModule.Core, "🔄 Step 5: Applying mods to {0}...", character.Name.TextValue);
+                
+                var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, character.Name.TextValue);
+                
+                if (success)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "✅ SUCCESS: Mods applied to {0}!", character.Name.TextValue);
+                    ModularLogger.LogAlways(LogModule.Core, "🎉 === TEST COMPLETE: MOD APPLICATION WORKS ===");
+                }
+                else
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ FAIL: ApplyPlayerMods returned false");
+                    ModularLogger.LogAlways(LogModule.Core, "Check logs above for specific errors");
+                }
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.Core, "❌ EXCEPTION in test: {0}", ex.Message);
+                ModularLogger.LogAlways(LogModule.Core, "Stack trace: {0}", ex.StackTrace ?? "No stack trace");
+            }
         }
     }
 }

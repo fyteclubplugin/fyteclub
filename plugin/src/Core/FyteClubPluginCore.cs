@@ -231,11 +231,13 @@ namespace FyteClub.Core
             }
         }
         
-        private async Task EstablishAutomaticP2PConnection(string syncshellId, string playerName)
+        private Task EstablishAutomaticP2PConnection(string syncshellId, string playerName)
         {
-            try
+            return Task.Run(async () =>
             {
-                if (_syncshellManager == null || _turnManager == null) return;
+                try
+                {
+                    if (_syncshellManager == null || _turnManager == null) return;
                 
                 // Check if we already have a connection to this player
                 var existingConnection = _syncshellManager.GetWebRTCConnection(syncshellId + "_" + playerName);
@@ -274,13 +276,11 @@ namespace FyteClub.Core
                 }
                 
                 // Wire up P2P orchestrator events
-                connection.OnDataReceived += data => {
-                    ModularLogger.LogDebug(LogModule.Core, "📨 AUTO P2P received data from {0}: {1} bytes", playerName, data.Length);
-                    
+                connection.OnDataReceived += (data, channelIndex) => {
                     // Process data through P2P orchestrator
                     _ = Task.Run(async () => {
                         if (_modSyncOrchestrator != null)
-                            await _modSyncOrchestrator.ProcessIncomingMessage(syncshellId, data);
+                            await _modSyncOrchestrator.ProcessIncomingMessage(syncshellId, data, channelIndex);
                     });
                 };
                 
@@ -311,11 +311,12 @@ namespace FyteClub.Core
                     ModularLogger.LogDebug(LogModule.Core, "Failed to initiate automatic P2P connection to {0}", playerName);
                     connection.Dispose();
                 }
-            }
-            catch (Exception ex)
-            {
-                ModularLogger.LogDebug(LogModule.Core, "Failed to establish automatic P2P connection to {0}: {1}", playerName, ex.Message);
-            }
+                }
+                catch (Exception ex)
+                {
+                    ModularLogger.LogDebug(LogModule.Core, "Failed to establish automatic P2P connection to {0}: {1}", playerName, ex.Message);
+                }
+            });
         }
 
         private void InitializeCaches()
@@ -341,9 +342,8 @@ namespace FyteClub.Core
                 {
                     _syncshellManager.OnPeerConnected += (peerId, sendFunction) =>
                     {
-                        ModularLogger.LogAlways(LogModule.WebRTC, "OnPeerConnected EVENT TRIGGERED for peer {0}", peerId);
+                        ModularLogger.LogDebug(LogModule.WebRTC, "Peer connected: {0}", peerId);
                         _modSyncOrchestrator?.RegisterPeer(peerId, sendFunction);
-                        ModularLogger.LogAlways(LogModule.WebRTC, "Registered peer {0} with P2P orchestrator", peerId);
                         
                         // Bidirectional mod sharing - both sides share their mods
                         _ = Task.Run(async () =>
@@ -370,25 +370,28 @@ namespace FyteClub.Core
                         });
                     };
                     
+                    // Subscribe to connection drop with context for recovery
+                    _syncshellManager.OnConnectionDropWithContext += (peerId, turnServers, encryptionKey) =>
+                    {
+                        ModularLogger.LogAlways(LogModule.WebRTC, "Connection dropped for peer {0} - initiating recovery", peerId);
+                        _modSyncOrchestrator?.HandleConnectionDrop(peerId, turnServers, encryptionKey, 0);
+                    };
+                    
                     _syncshellManager.OnPeerDisconnected += (peerId) =>
                     {
                         _modSyncOrchestrator?.UnregisterPeer(peerId);
                         ModularLogger.LogDebug(LogModule.WebRTC, "Unregistered peer {0} from P2P orchestrator", peerId);
                     };
                     
-                    _syncshellManager.OnP2PMessageReceived += (peerId, data) =>
-                    {
-                        ModularLogger.LogAlways(LogModule.WebRTC, "OnP2PMessageReceived EVENT TRIGGERED for peer {0}, {1} bytes", peerId, data.Length);
-                        _ = Task.Run(async () => 
-                        {
-                            ModularLogger.LogAlways(LogModule.WebRTC, "Processing P2P message from {0} in orchestrator", peerId);
-                            if (_modSyncOrchestrator != null)
-                                await _modSyncOrchestrator.ProcessIncomingMessage(peerId, data);
-                            
-                            // Note: Removed automatic reciprocal sharing to prevent infinite loops
-                            // Initial connection sharing is sufficient for bidirectional sync
-                        });
-                    };
+                    // Legacy handler disabled - now using direct channel-aware handlers in SyncshellManager
+                    // _syncshellManager.OnP2PMessageReceived += (peerId, data) =>
+                    // {
+                    //     _ = Task.Run(async () => 
+                    //     {
+                    //         if (_modSyncOrchestrator != null)
+                    //             await _modSyncOrchestrator.ProcessIncomingMessage(peerId, data, 0); // Single channel for now
+                    //     });
+                    // };
                     
                     ModularLogger.LogDebug(LogModule.Core, "P2P orchestrator connected to WebRTC events with bidirectional sharing");
                 }
@@ -473,7 +476,7 @@ namespace FyteClub.Core
             catch (Exception ex)
             {
                 ModularLogger.LogAlways(LogModule.Core, "Failed to cache local player mods: {0}", ex.Message);
-                ModularLogger.LogAlways(LogModule.Core, "Stack trace: {0}", ex.StackTrace);
+                ModularLogger.LogAlways(LogModule.Core, "Stack trace: {0}", ex.StackTrace ?? "No stack trace available");
             }
         }
 
@@ -591,45 +594,49 @@ namespace FyteClub.Core
         /// <summary>
         /// Test streaming a single file
         /// </summary>
-        private async Task TestSingleFileStream(string localPath, string gamePath)
+        private Task TestSingleFileStream(string localPath, string gamePath)
         {
-            try
+            return Task.Run(async () =>
             {
-                var fileTransfer = new P2PFileTransfer(_pluginLog);
-                var receivedData = new List<byte[]>();
-                var totalReceived = 0L;
-                
-                ModularLogger.LogAlways(LogModule.Core, "📁 Streaming file: {0}", gamePath);
-                
-                // Stream the file
-                await fileTransfer.SendFileStream(localPath, async (chunk) =>
+                try
                 {
-                    receivedData.Add(chunk);
-                    totalReceived += chunk.Length;
+                    var fileTransfer = new P2PFileTransfer(_pluginLog);
+                    var receivedData = new List<byte[]>();
+                    var totalReceived = 0L;
                     
-                    if (receivedData.Count % 100 == 0)
+                    ModularLogger.LogAlways(LogModule.Core, "📁 Streaming file: {0}", gamePath);
+                    
+                    // Stream the file
+                    await fileTransfer.SendFileStream(localPath, async (chunk) =>
                     {
-                        ModularLogger.LogAlways(LogModule.Core, "📁 Received {0} chunks, {1} bytes", receivedData.Count, totalReceived);
+                        await Task.CompletedTask; // Suppress warning in lambda
+                        receivedData.Add(chunk);
+                        totalReceived += chunk.Length;
+                        
+                        if (receivedData.Count % 100 == 0)
+                        {
+                            ModularLogger.LogAlways(LogModule.Core, "📁 Received {0} chunks, {1} bytes", receivedData.Count, totalReceived);
+                        }
+                    });
+                    
+                    var originalSize = new System.IO.FileInfo(localPath).Length;
+                    ModularLogger.LogAlways(LogModule.Core, "📁 Stream complete: {0} chunks, {1}/{2} bytes", 
+                        receivedData.Count, totalReceived, originalSize);
+                    
+                    if (totalReceived == originalSize)
+                    {
+                        ModularLogger.LogAlways(LogModule.Core, "✅ File streaming successful - sizes match");
                     }
-                });
-                
-                var originalSize = new System.IO.FileInfo(localPath).Length;
-                ModularLogger.LogAlways(LogModule.Core, "📁 Stream complete: {0} chunks, {1}/{2} bytes", 
-                    receivedData.Count, totalReceived, originalSize);
-                
-                if (totalReceived == originalSize)
-                {
-                    ModularLogger.LogAlways(LogModule.Core, "✅ File streaming successful - sizes match");
+                    else
+                    {
+                        ModularLogger.LogAlways(LogModule.Core, "❌ File streaming failed - size mismatch");
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    ModularLogger.LogAlways(LogModule.Core, "❌ File streaming failed - size mismatch");
+                    ModularLogger.LogAlways(LogModule.Core, "❌ Single file stream test failed: {0}", ex.Message);
                 }
-            }
-            catch (Exception ex)
-            {
-                ModularLogger.LogAlways(LogModule.Core, "❌ Single file stream test failed: {0}", ex.Message);
-            }
+            });
         }
         
         /// <summary>
@@ -678,20 +685,22 @@ namespace FyteClub.Core
                 var chunkCount = 0;
                 
                 // Register a test peer that captures chunks
-                _modSyncOrchestrator.RegisterPeer(testPeerId, async (data) => {
+                _modSyncOrchestrator.RegisterPeer(testPeerId, (data) => {
                     chunkCount++;
                     receivedChunks.Add(data);
                     ModularLogger.LogAlways(LogModule.Core, "📦 Captured chunk {0}: {1} bytes", chunkCount, data.Length);
                     
                     // Process the chunk through the orchestrator to test reassembly
-                    await _modSyncOrchestrator.ProcessIncomingMessage(testPeerId + "_receiver", data);
+                    _ = _modSyncOrchestrator.ProcessIncomingMessage(testPeerId + "_receiver", data, 0);
+                    return Task.CompletedTask;
                 });
                 
                 ModularLogger.LogAlways(LogModule.Core, "📦 Registered test peer: {0}", testPeerId);
                 
                 // Register a receiver peer to test reassembly
-                _modSyncOrchestrator.RegisterPeer(testPeerId + "_receiver", async (data) => {
+                _modSyncOrchestrator.RegisterPeer(testPeerId + "_receiver", (data) => {
                     ModularLogger.LogAlways(LogModule.Core, "📦 Receiver got data: {0} bytes (should not happen in chunking test)", data.Length);
+                    return Task.CompletedTask;
                 });
                 
                 ModularLogger.LogAlways(LogModule.Core, "📦 Broadcasting mod data to test peer...");
@@ -733,9 +742,11 @@ namespace FyteClub.Core
         /// <summary>
         /// Test manual reassembly of chunks to verify data integrity
         /// </summary>
-        private async Task TestManualChunkReassembly(List<byte[]> chunks, AdvancedPlayerInfo originalPlayerInfo)
+        private Task TestManualChunkReassembly(List<byte[]> chunks, AdvancedPlayerInfo originalPlayerInfo)
         {
-            try
+            return Task.Run(() =>
+            {
+                try
             {
                 ModularLogger.LogAlways(LogModule.Core, "🔧 Testing manual chunk reassembly with {0} chunks...", chunks.Count);
                 
@@ -815,11 +826,14 @@ namespace FyteClub.Core
                     ModularLogger.LogAlways(LogModule.Core, "❌ Chunk parsing failed: got {0} chunks, expected {1}", chunkData.Count, expectedChunks);
                 }
             }
-            catch (Exception ex)
-            {
-                ModularLogger.LogAlways(LogModule.Core, "❌ Manual reassembly test failed: {0}", ex.Message);
-            }
+                catch (Exception ex)
+                {
+                    ModularLogger.LogAlways(LogModule.Core, "❌ Manual reassembly test failed: {0}", ex.Message);
+                }
+            });
         }
+
+        
         public void Dispose()
         {
             try

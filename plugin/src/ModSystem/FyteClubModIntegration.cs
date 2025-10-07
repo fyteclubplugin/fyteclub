@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Plugin;
@@ -256,7 +257,7 @@ namespace FyteClub
             _objectTable = objectTable;
             _framework = framework;
             _clientState = clientState;
-            _fileTransferSystem = new FileTransferSystem(pluginDirectory);
+            _fileTransferSystem = new FileTransferSystem(pluginDirectory, pluginLog);
             
             // Initialize advanced mod system components
             _changeDetector = new CharacterChangeDetector();
@@ -521,15 +522,11 @@ namespace FyteClub
             {
                 var modDataHash = CalculateModDataHash(playerInfo);
                 
-                // Re-enable skip logic to prevent excessive applications
                 var shouldSkip = ShouldSkipApplication(playerName, modDataHash);
                 if (shouldSkip)
                 {
-                    _pluginLog.Debug($"Skipping mod application for {playerName} - already applied recently with same hash");
                     return true;
                 }
-
-                _pluginLog.Debug($"Proceeding with mod application for {playerName}");
                 
                 var success = false;
                 var errorMessage = "";
@@ -538,35 +535,39 @@ namespace FyteClub
                 {
                     if (IsLocalPlayer(playerName))
                     {
-                        _pluginLog.Debug($"Skipping mod application - {playerName} is local player");
                         success = true; // Skip local player
                     }
                     else
                     {
                         var character = await _framework.RunOnFrameworkThread(() => FindCharacterByName(playerName));
+                        
                         if (character != null)
                         {
                             if (IsLocalPlayer(character))
                             {
-                                _pluginLog.Debug($"Skipping mod application - {playerName} is local player by ObjectIndex");
                                 success = true; // Skip local player by ObjectIndex
                             }
                             else
                             {
-                                _pluginLog.Debug($"Applying mods to {playerName} (ObjectIndex: {character.ObjectIndex})");
-                                await ApplyAdvancedPlayerInfo(character, playerInfo);
+                                _pluginLog.Info($"[MOD APPLICATION] Applying {playerInfo?.Mods?.Count ?? 0} mods to {playerName}");
+                                if (playerInfo != null)
+                                {
+                                    await ApplyAdvancedPlayerInfo(character, playerInfo);
+                                }
                                 success = true;
                             }
                         }
                         else
                         {
                             errorMessage = $"Character {playerName} not found";
+                            _pluginLog.Warning($"[MOD APPLICATION] {errorMessage}");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
                     errorMessage = ex.Message;
+                    _pluginLog.Error($"[MOD APPLICATION] Exception: {ex.Message}");
                 }
                 
                 if (success)
@@ -579,7 +580,8 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"ApplyPlayerMods failed for {playerName}: {ex.Message}");
+                _pluginLog.Error($"[MOD APPLICATION] ❌ ApplyPlayerMods failed for {playerName}: {ex.Message}");
+                _pluginLog.Error($"[MOD APPLICATION] Stack trace: {ex.StackTrace}");
                 return false;
             }
         }
@@ -740,7 +742,7 @@ namespace FyteClub
             return result;
         }
 
-        // Apply comprehensive mod data using Mare's application order: Glamourer first, then Penumbra
+    // Apply comprehensive mod data using standard mod application order: Glamourer first, then Penumbra
         public async Task ApplyAdvancedPlayerInfo(ICharacter character, AdvancedPlayerInfo playerInfo)
         {
             if (character == null || playerInfo == null) 
@@ -800,7 +802,7 @@ namespace FyteClub
                 var collectionName = $"FyteClub_{character.ObjectIndex}";
                 _pluginLog.Debug($"Applying Penumbra mods to {character.Name}: {mods.Count} files");
                 
-                var (fileReplacements, metaManipulations) = ParseAndValidateMods(mods);
+                var (fileReplacements, metaManipulations) = await ParseAndValidateMods(mods);
                 
                 if (fileReplacements.Count == 0 && metaManipulations.Count == 0)
                 {
@@ -848,9 +850,9 @@ namespace FyteClub
                             {
                                 _pluginLog.Debug($"Successfully assigned Penumbra collection to {chara.Name}");
                                 
-                                // Force immediate redraw to make changes visible
-                                _penumbraRedraw?.Invoke(chara.ObjectIndex, RedrawType.Redraw);
-                                _pluginLog.Debug($"Triggered Penumbra redraw for {chara.Name}");
+                                // Skip immediate redraw during mod application - will redraw at end
+                                // _penumbraRedraw?.Invoke(chara.ObjectIndex, RedrawType.Redraw);
+                                _pluginLog.Debug($"Skipped immediate Penumbra redraw for {chara.Name} - will redraw at end");
                             }
                             else
                             {
@@ -878,7 +880,7 @@ namespace FyteClub
             }
         }
         
-        private (Dictionary<string, string> files, List<string> meta) ParseAndValidateMods(List<string> mods)
+        private async Task<(Dictionary<string, string> files, List<string> meta)> ParseAndValidateMods(List<string> mods)
         {
             var fileReplacements = new Dictionary<string, string>();
             var metaManipulations = new List<string>();
@@ -914,7 +916,7 @@ namespace FyteClub
                             if (cachedContent != null)
                             {
                                 var tempPath = Path.GetTempFileName();
-                                File.WriteAllBytes(tempPath, cachedContent);
+                                await FileWriteHelper.WriteFileWithRetryAsync(tempPath, cachedContent, _pluginLog);
                                 fileReplacements[gamePath] = tempPath;
                                 _pluginLog.Debug($"Added cached file: {gamePath}");
                             }
@@ -1011,12 +1013,13 @@ namespace FyteClub
                             _glamourerApplyAll?.Invoke(glamourerData, chara.ObjectIndex, FYTECLUB_GLAMOURER_LOCK);
                             _pluginLog.Debug($"🎯 [GLAMOURER API] ApplyState(data={glamourerData.Length}chars, objectIndex={chara.ObjectIndex}, lock=0x{FYTECLUB_GLAMOURER_LOCK:X}) -> SUCCESS");
                             
-                            // Force immediate redraw to make changes visible
-                            if (IsPenumbraAvailable && _penumbraRedraw != null)
-                            {
-                                _penumbraRedraw.Invoke(chara.ObjectIndex, RedrawType.Redraw);
-                                _pluginLog.Debug($"Triggered redraw for Glamourer changes on {chara.Name}");
-                            }
+                            // Skip immediate redraw during Glamourer application - will redraw at end
+                            // if (IsPenumbraAvailable && _penumbraRedraw != null)
+                            // {
+                            //     _penumbraRedraw.Invoke(chara.ObjectIndex, RedrawType.Redraw);
+                            //     _pluginLog.Debug($"Triggered redraw for Glamourer changes on {chara.Name}");
+                            // }
+                            _pluginLog.Debug($"Skipped immediate redraw for Glamourer changes on {chara.Name} - will redraw at end");
                         }
                         catch (Exception apiEx)
                         {
@@ -1071,7 +1074,7 @@ namespace FyteClub
                                 return;
                             }
                             
-                            // Decode base64 data like Mare does
+                            // Decode base64 data using standard base64 decoding
                             string decodedScale = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(customizePlusData));
                             
                             if (string.IsNullOrEmpty(decodedScale))
@@ -1087,12 +1090,13 @@ namespace FyteClub
                                 _pluginLog.Debug($"🎨 [CUSTOMIZE+ API] SetTemporaryProfile(index={chara.ObjectIndex}) -> SUCCESS (ProfileId: {result?.Item2})");
                             }
                             
-                            // Force immediate redraw to make changes visible
-                            if (IsPenumbraAvailable && _penumbraRedraw != null)
-                            {
-                                _penumbraRedraw.Invoke(chara.ObjectIndex, RedrawType.Redraw);
-                                _pluginLog.Debug($"Triggered redraw for Customize+ changes on {chara.Name}");
-                            }
+                            // Skip immediate redraw during Customize+ application - will redraw at end
+                            // if (IsPenumbraAvailable && _penumbraRedraw != null)
+                            // {
+                            //     _penumbraRedraw.Invoke(chara.ObjectIndex, RedrawType.Redraw);
+                            //     _pluginLog.Debug($"Triggered redraw for Customize+ changes on {chara.Name}");
+                            // }
+                            _pluginLog.Debug($"Skipped immediate redraw for Customize+ changes on {chara.Name} - will redraw at end");
                         }
                         catch (Exception apiEx)
                         {
@@ -1136,7 +1140,7 @@ namespace FyteClub
                                 return;
                             }
                             
-                            // Format as JSON config like Mare does
+                            // Format as JSON config for plugin compatibility
                             var heelsConfig = $"{{\"Offset\":{heelsOffset:F3}}}";
                             _heelsRegisterPlayer?.InvokeAction(chara.ObjectIndex, heelsConfig);
                             _pluginLog.Debug($"🎯 [HEELS API] RegisterPlayer(index={chara.ObjectIndex}, config={heelsConfig}) -> SUCCESS");
@@ -1508,7 +1512,7 @@ namespace FyteClub
                         _redrawManager.TrackPlayerCharacter(targetCharacter);
                     }
 
-                    // Get comprehensive character data like Mare for the target character
+                    // Get comprehensive character data for the target character using Penumbra API
                     if (IsPenumbraAvailable && targetCharacter != null)
                     {
                         var characterData = await GetCharacterData(targetCharacter);
@@ -1580,7 +1584,7 @@ namespace FyteClub
                     {
                         _pluginLog.Info($"Calling Penumbra API for character {character.Name} (ObjectIndex: {character.ObjectIndex})");
                         
-                        // Mare's approach: Call the API and get the collection of dictionaries
+                        // Call the API and get the collection of dictionaries for mod resource paths
                         var resourcePathsCollection = _penumbraGetResourcePaths.Invoke(character.ObjectIndex);
                         
                         if (resourcePathsCollection == null)
@@ -1589,7 +1593,7 @@ namespace FyteClub
                             return null;
                         }
                         
-                        // Mare merges all dictionaries from the collection
+                        // Merge all dictionaries from the collection for resource paths
                         var mergedPaths = new Dictionary<string, HashSet<string>>();
                         var dictCount = 0;
                         
@@ -1632,7 +1636,7 @@ namespace FyteClub
         private List<string> ProcessFileReplacements(Dictionary<string, HashSet<string>> resourcePaths)
         {
             var mods = new List<string>();
-            _pluginLog.Info($"Processing {resourcePaths.Count} resource paths from Penumbra (Mare approach)");
+            _pluginLog.Info($"Processing {resourcePaths.Count} resource paths from Penumbra (standard approach)");
             
             var validFiles = 0;
             var gamePathsWithReplacements = 0;
@@ -1642,17 +1646,17 @@ namespace FyteClub
                 var gamePath = kvp.Key;
                 var modPaths = kvp.Value;
 
-                // Mare's exact logic: HasFileReplacement check
+                // Check for file replacements (non-vanilla files)
                 var hasReplacement = modPaths?.Count >= 1 && modPaths.Any(p => !string.Equals(p, gamePath, StringComparison.Ordinal));
                 
                 if (!hasReplacement)
                 {
-                    continue; // Skip vanilla files like Mare does
+                    continue; // Skip vanilla files (no mod applied)
                 }
                 
                 gamePathsWithReplacements++;
 
-                // Mare processes the first non-vanilla path as the replacement
+                // Process the first non-vanilla path as the replacement
                 var replacementPath = modPaths?.FirstOrDefault(p => !string.Equals(p, gamePath, StringComparison.Ordinal));
                 if (replacementPath == null) continue;
                 var resolved = ResolvePenumbraModPath(replacementPath);
@@ -1671,7 +1675,7 @@ namespace FyteClub
                     }
                     else
                     {
-                        // File doesn't exist - use direct path like Mare
+                        // File doesn't exist - use direct path for mod file
                         var modEntry = $"{gamePath}|{replacementPath}";
                         mods.Add(modEntry);
                         validFiles++;
@@ -1687,7 +1691,7 @@ namespace FyteClub
                 }
             }
             
-            _pluginLog.Info($"Mare-style processing: {gamePathsWithReplacements} paths with replacements, {validFiles} total entries");
+            _pluginLog.Info($"Processed {gamePathsWithReplacements} paths with replacements, {validFiles} total entries");
             return mods;
         }
 
@@ -1779,7 +1783,7 @@ namespace FyteClub
                 
                 _pluginLog.Info($"🎭 [GLAMOURER DEBUG] Getting state for {character.Name} (ObjectIndex: {character.ObjectIndex})");
                 
-                // Mare's approach: Get current state and take Item2 from tuple
+                // Get current state and take Item2 from tuple (Glamourer API)
                 var getState = new Glamourer.Api.IpcSubscribers.GetStateBase64(_pluginInterface);
                 var result = getState.Invoke(character.ObjectIndex);
                 
@@ -1826,7 +1830,7 @@ namespace FyteClub
                 if (!IsCustomizePlusAvailable || _customizePlusGetActiveProfile == null || _customizePlusGetProfileById == null) 
                     return Task.FromResult<string?>(null);
                 
-                // Get active profile like Mare does
+                // Get active profile using Customize+ API
                 var activeProfile = _customizePlusGetActiveProfile.InvokeFunc((ushort)character.ObjectIndex);
                 _pluginLog.Debug($"🎨 [CUSTOMIZE+ DEBUG] GetActiveProfile returned error={activeProfile.Item1}, profileId={activeProfile.Item2}");
                 
@@ -1845,7 +1849,7 @@ namespace FyteClub
                     return Task.FromResult<string?>(null);
                 }
                 
-                // Encode as base64 like Mare does
+                // Encode as base64 for transmission
                 var base64Data = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(profileData.Item2));
                 _pluginLog.Info($"🎨 [CUSTOMIZE+ DEBUG] Successfully retrieved profile for {character.Name}: {base64Data.Length} chars");
                 return Task.FromResult<string?>(base64Data);
@@ -1898,30 +1902,27 @@ namespace FyteClub
         {
             try
             {
-                _pluginLog.Info($"[REDRAW] Triggering redraw for {playerName}");
-                
                 var character = await _framework.RunOnFrameworkThread(() => FindCharacterByName(playerName));
                 if (character != null)
                 {
-                    // Use Penumbra's redraw if available
                     if (IsPenumbraAvailable && _penumbraRedraw != null)
                     {
                         _penumbraRedraw.Invoke(character.ObjectIndex, RedrawType.Redraw);
-                        _pluginLog.Info($"[REDRAW] Penumbra redraw triggered for {playerName}");
+                        _pluginLog.Info($"[REDRAW] ✅ Redraw completed for {playerName}");
                     }
                     else
                     {
-                        _pluginLog.Debug($"[REDRAW] Penumbra not available for redraw of {playerName}");
+                        _pluginLog.Warning($"[REDRAW] ❌ Penumbra not available for {playerName}");
                     }
                 }
                 else
                 {
-                    _pluginLog.Warning($"[REDRAW] Character {playerName} not found for redraw");
+                    _pluginLog.Warning($"[REDRAW] ❌ Character {playerName} not found");
                 }
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"[REDRAW] Error triggering redraw for {playerName}: {ex.Message}");
+                _pluginLog.Error($"[REDRAW] Error for {playerName}: {ex.Message}");
             }
         }
         
@@ -2010,10 +2011,10 @@ namespace FyteClub
         /// Direct mod application bypassing all redraw semaphores and coordination
         /// PROPER ORDER: Glamourer (base) -> Penumbra (textures) -> Accessories -> Redraw
         /// </summary>
-        private async Task ApplyChaosModsDirect(ICharacter character, AdvancedPlayerInfo playerInfo)
+        private Task ApplyChaosModsDirect(ICharacter character, AdvancedPlayerInfo playerInfo)
         {
             // STEP 1: Get YOUR current Glamourer appearance (base outfit/appearance)
-            string glamourerData = playerInfo.GlamourerData;
+            string? glamourerData = playerInfo.GlamourerData;
             if (string.IsNullOrEmpty(glamourerData) && IsGlamourerAvailable)
             {
                 try
@@ -2086,6 +2087,8 @@ namespace FyteClub
                 }
                 catch { }
             }
+            
+            return Task.CompletedTask;
         }
         
         /// <summary>
@@ -2177,11 +2180,13 @@ namespace FyteClub
     public class FileTransferSystem
     {
         public readonly string _cacheDirectory;
-        public readonly Dictionary<string, byte[]> _fileCache = new();
+        public readonly ConcurrentDictionary<string, byte[]> _fileCache = new();
+        private readonly IPluginLog? _pluginLog;
         
-        public FileTransferSystem(string pluginDirectory)
+        public FileTransferSystem(string pluginDirectory, IPluginLog? pluginLog = null)
         {
             _cacheDirectory = Path.Combine(pluginDirectory, "FileCache");
+            _pluginLog = pluginLog;
             Directory.CreateDirectory(_cacheDirectory);
         }
 
@@ -2232,18 +2237,25 @@ namespace FyteClub
                 
                 try
                 {
+                    if (transferableFile.Content == null)
+                    {
+                        _pluginLog?.Warning($"[FILE TRANSFER] Skipping file {gamePath}: Content is null");
+                        continue;
+                    }
+                    
                     var computedHash = ComputeFileHash(transferableFile.Content);
                     if (computedHash != transferableFile.Hash)
                         continue;
                     
                     var cacheFilePath = GetCacheFilePath(transferableFile.Hash, GetFileExtension(gamePath));
-                    await File.WriteAllBytesAsync(cacheFilePath, transferableFile.Content);
+                    await FileWriteHelper.WriteFileWithDeduplicationAsync(cacheFilePath, transferableFile.Content, _pluginLog);
                     
                     _fileCache[transferableFile.Hash] = transferableFile.Content;
                     localPaths[gamePath] = cacheFilePath;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _pluginLog?.Warning($"[FILE TRANSFER] Failed to write file {gamePath}: {ex.Message}\n{ex.StackTrace ?? "No stack trace available"}");
                     // Skip failed files
                 }
             }
