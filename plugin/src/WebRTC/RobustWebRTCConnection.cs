@@ -37,7 +37,9 @@ namespace FyteClub.WebRTC
         private readonly ConcurrentDictionary<Microsoft.MixedReality.WebRTC.DataChannel, DateTime> _lastBufferCheck = new(); // Track last check time
         private DateTime _lastChannelSwitchLog = DateTime.MinValue; // Rate limit channel switch logs
         private DateTime _lastSendTime = DateTime.MinValue; // Track last time data was sent for transfer detection
+        private DateTime _lastReceiveTime = DateTime.MinValue; // Track last time data was received for bidirectional transfer detection
         private DateTime _connectionStartTime = DateTime.MinValue; // Track when connection establishment started
+        private bool _transferInProgress = false; // Explicit flag for when transfer is starting/active (prevents premature disposal)
         private const ulong MAX_BUFFER_THRESHOLD = 8 * 1024 * 1024; // 8MB - high water mark (must wait) - reduced from 16MB to prevent overflow
         private const ulong OPTIMAL_BUFFER_THRESHOLD = 4 * 1024 * 1024; // 4MB - switch to less utilized channel - reduced from 12MB
         private const int BUFFER_CHECK_INTERVAL_MS = 50; // Check buffer state every 50ms
@@ -58,16 +60,54 @@ namespace FyteClub.WebRTC
         public bool IsConnected => _localSendingChannels.Any(c => c?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open);
         
         /// <summary>
-        /// Check if this connection is actively transferring data (sent data within the last 5 seconds)
+        /// Check if this connection is actively transferring data (sent/received data within the last 5 seconds)
+        /// CRITICAL: This protects bidirectional transfers where both peers send simultaneously
         /// </summary>
         public bool IsTransferring()
         {
-            // If we've never sent data, not transferring
-            if (_lastSendTime == DateTime.MinValue) return false;
+            // If transfer is explicitly in progress (e.g., channels just ready, about to send), protect it
+            if (_transferInProgress) return true;
             
-            // If we sent data within the last 5 seconds, consider it an active transfer
-            var timeSinceLastSend = DateTime.UtcNow - _lastSendTime;
-            return timeSinceLastSend.TotalSeconds < TRANSFER_TIMEOUT_SECONDS;
+            // CRITICAL: Check if any channels still have buffered data draining
+            // Don't dispose connection while buffers are still flushing to receiver
+            lock (_channelLock)
+            {
+                for (int i = 0; i < _localSendingChannels.Count; i++)
+                {
+                    var buffered = GetChannelBufferedAmount(i);
+                    if (buffered > 0 && buffered != ulong.MaxValue)
+                    {
+                        // Still draining - keep connection alive
+                        return true;
+                    }
+                }
+            }
+            
+            // CRITICAL: Protect bidirectional transfers - check BOTH send and receive activity
+            var now = DateTime.UtcNow;
+            
+            // If we've sent data recently, we're transferring
+            if (_lastSendTime != DateTime.MinValue)
+            {
+                var timeSinceLastSend = now - _lastSendTime;
+                if (timeSinceLastSend.TotalSeconds < TRANSFER_TIMEOUT_SECONDS)
+                {
+                    return true;
+                }
+            }
+            
+            // CRITICAL FIX: If we've received data recently, we're ALSO transferring
+            // This prevents closing the connection while the remote peer is still sending
+            if (_lastReceiveTime != DateTime.MinValue)
+            {
+                var timeSinceLastReceive = now - _lastReceiveTime;
+                if (timeSinceLastReceive.TotalSeconds < TRANSFER_TIMEOUT_SECONDS)
+                {
+                    return true;
+                }
+            }
+            
+            return false;
         }
         
         /// <summary>
@@ -170,11 +210,12 @@ namespace FyteClub.WebRTC
                         if (peer.PeerConnection != null)
                         {
                             peer.PeerConnection.DataChannelAdded += (channel) => {
-                                _pluginLog?.Debug($"[WebRTC] Remote channel added: {channel.Label} (for receiving only)");
+                                _pluginLog?.Debug($"[WebRTC] Remote channel added: {channel.Label} (bidirectional)");
                                 lock (_channelLock)
                                 {
                                     _channels.Add(channel);
-                                    // Note: Remote channels are NOT added to _localSendingChannels
+                                    // Remote channels CAN be used for sending (WebRTC is bidirectional)
+                                    _localSendingChannels.Add(channel);
                                     SetupChannelHandlers(channel, _channels.Count - 1);
                                     
                                     // Only log once when channels first become ready
@@ -627,6 +668,20 @@ namespace FyteClub.WebRTC
                 {
                     var buffered = GetChannelBufferedAmount(actualChannel);
                     
+                    // CRITICAL: Check if channel is closing/closed - abort drain immediately
+                    lock (_channelLock)
+                    {
+                        if (actualChannel < _localSendingChannels.Count)
+                        {
+                            var ch = _localSendingChannels[actualChannel];
+                            if (ch?.State != Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+                            {
+                                _pluginLog?.Warning($"[WebRTC] Channel {actualChannel} no longer open (state: {ch?.State}), aborting send");
+                                throw new InvalidOperationException($"Channel {actualChannel} is no longer open");
+                            }
+                        }
+                    }
+                    
                     // Only send if buffer is below MAX_BUFFER_THRESHOLD
                     if (buffered < MAX_BUFFER_THRESHOLD)
                     {
@@ -964,6 +1019,9 @@ namespace FyteClub.WebRTC
             };
             
             channel.MessageReceived += (data) => {
+                // Track receive time for bidirectional transfer protection
+                _lastReceiveTime = DateTime.UtcNow;
+                
                 lock (_messageLock)
                 {
                     var contentHash = System.Security.Cryptography.SHA256.HashData(data);
@@ -979,14 +1037,18 @@ namespace FyteClub.WebRTC
                         _processedMessageIds.Clear();
                     }
                 }
-                try
+                // Offload to background thread immediately to free up WebRTC receive buffer
+                _ = Task.Run(() =>
                 {
-                    OnDataReceived?.Invoke(data, index); // Pass channel index
-                }
-                catch (Exception ex)
-                {
-                    _pluginLog?.Error($"[WebRTC] Exception in OnDataReceived consumer: {ex.Message}");
-                }
+                    try
+                    {
+                        OnDataReceived?.Invoke(data, index); // Pass channel index
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog?.Error($"[WebRTC] Exception in OnDataReceived consumer: {ex.Message}");
+                    }
+                });
             };
         }
 
@@ -1055,12 +1117,40 @@ namespace FyteClub.WebRTC
                     }
                 }
                 
+                // Wait for channels to actually open before marking as ready
+                _pluginLog?.Info($"[WebRTC] Waiting for {_localSendingChannels.Count} channels to open...");
+                var openWaitStart = DateTime.UtcNow;
+                var openTimeout = TimeSpan.FromSeconds(10);
+                
+                while ((DateTime.UtcNow - openWaitStart) < openTimeout)
+                {
+                    int openCount;
+                    lock (_channelLock)
+                    {
+                        openCount = _localSendingChannels.Count(c => c?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open);
+                    }
+                    
+                    if (openCount >= _negotiatedChannelCount)
+                    {
+                        _pluginLog?.Info($"[WebRTC] All {openCount} channels are now open!");
+                        break;
+                    }
+                    
+                    _pluginLog?.Debug($"[WebRTC] {openCount}/{_negotiatedChannelCount} channels open, waiting...");
+                    await Task.Delay(500);
+                }
+                
                 lock (_channelLock)
                 {
-                    if (_localSendingChannels.Count >= _negotiatedChannelCount)
+                    var finalOpenCount = _localSendingChannels.Count(c => c?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open);
+                    if (finalOpenCount >= _negotiatedChannelCount)
                     {
                         _channelsReady = true;
-                        _pluginLog?.Info($"[WebRTC] All {_negotiatedChannelCount} local sending channels created (local: {_localSendingChannels.Count}, total: {_channels.Count})");
+                        _pluginLog?.Info($"[WebRTC] All {_negotiatedChannelCount} local sending channels created and OPEN (local: {_localSendingChannels.Count}, open: {finalOpenCount}, total: {_channels.Count})");
+                    }
+                    else
+                    {
+                        _pluginLog?.Warning($"[WebRTC] Only {finalOpenCount}/{_negotiatedChannelCount} channels opened within timeout");
                     }
                 }
             }
@@ -1120,6 +1210,24 @@ namespace FyteClub.WebRTC
         }
         
         public bool AreChannelsReady() => _channelsReady;
+        
+        /// <summary>
+        /// Mark that a transfer is about to start (prevents connection disposal during transfer setup)
+        /// </summary>
+        public void BeginTransfer()
+        {
+            _transferInProgress = true;
+            _pluginLog?.Info("[WebRTC] Transfer marked as IN PROGRESS - connection protected from disposal");
+        }
+        
+        /// <summary>
+        /// Mark that a transfer has completed (allows connection disposal if needed)
+        /// </summary>
+        public void EndTransfer()
+        {
+            _transferInProgress = false;
+            _pluginLog?.Info("[WebRTC] Transfer marked as COMPLETE - connection no longer protected");
+        }
         
         /// <summary>
         /// Get the average buffer fill ratio across all channels
