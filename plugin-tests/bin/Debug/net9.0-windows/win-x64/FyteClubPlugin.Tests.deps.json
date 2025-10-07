@@ -9,26 +9,15 @@
     ".NETCoreApp,Version=v9.0/win-x64": {
       "FyteClubPlugin.Tests/1.0.0": {
         "dependencies": {
-          "FyteClub": "4.4.0",
+          "FyteClub": "5.0.1",
           "Microsoft.NET.Test.Sdk": "17.8.0",
           "Moq": "4.20.69",
+          "Serilog": "4.0.0",
           "xunit": "2.6.1",
           "xunit.runner.visualstudio": "2.5.3"
         },
         "runtime": {
           "FyteClubPlugin.Tests.dll": {}
-        }
-      },
-      "BTCPayServer.Lightning.Common/1.3.21": {
-        "dependencies": {
-          "NBitcoin": "7.0.1",
-          "Newtonsoft.Json": "13.0.3"
-        },
-        "runtime": {
-          "lib/net6.0/BTCPayServer.Lightning.Common.dll": {
-            "assemblyVersion": "1.3.21.0",
-            "fileVersion": "1.3.21.0"
-          }
         }
       },
       "Castle.Core/5.1.1": {
@@ -43,6 +32,30 @@
         }
       },
       "DalamudPackager/13.1.0": {},
+      "LibChaCha20/1.0.1": {
+        "runtime": {
+          "lib/net8.0/ChaCha20-NetStandard.dll": {
+            "assemblyVersion": "1.0.1.0",
+            "fileVersion": "1.0.1.0"
+          }
+        }
+      },
+      "LinqKit.Core/1.2.5": {
+        "runtime": {
+          "lib/netstandard2.1/LinqKit.Core.dll": {
+            "assemblyVersion": "1.2.5.0",
+            "fileVersion": "1.2.5.0"
+          }
+        }
+      },
+      "Microsoft.Bcl.AsyncInterfaces/6.0.0": {
+        "runtime": {
+          "lib/netstandard2.1/Microsoft.Bcl.AsyncInterfaces.dll": {
+            "assemblyVersion": "6.0.0.0",
+            "fileVersion": "6.0.21.52210"
+          }
+        }
+      },
       "Microsoft.CodeCoverage/17.8.0": {
         "runtime": {
           "lib/netcoreapp3.1/Microsoft.VisualStudio.CodeCoverage.Shim.dll": {
@@ -170,7 +183,7 @@
       "Microsoft.TestPlatform.TestHost/17.8.0": {
         "dependencies": {
           "Microsoft.TestPlatform.ObjectModel": "17.8.0",
-          "Newtonsoft.Json": "13.0.3"
+          "Newtonsoft.Json": "13.0.1"
         },
         "runtime": {
           "lib/netcoreapp3.1/Microsoft.TestPlatform.CommunicationUtilities.dll": {
@@ -333,23 +346,11 @@
           }
         }
       },
-      "NBitcoin/7.0.1": {
-        "dependencies": {
-          "Microsoft.Extensions.Logging.Abstractions": "7.0.1",
-          "Newtonsoft.Json": "13.0.3"
-        },
-        "runtime": {
-          "lib/net6.0/NBitcoin.dll": {
-            "assemblyVersion": "7.0.1.0",
-            "fileVersion": "7.0.1.0"
-          }
-        }
-      },
-      "NBitcoin.Secp256k1/3.1.1": {
+      "NBitcoin.Secp256k1/3.1.6": {
         "runtime": {
           "lib/net6.0/NBitcoin.Secp256k1.dll": {
-            "assemblyVersion": "3.1.1.0",
-            "fileVersion": "3.1.1.0"
+            "assemblyVersion": "3.1.6.0",
+            "fileVersion": "3.1.6.0"
           }
         }
       },
@@ -401,27 +402,27 @@
           "System.Xml.XDocument": "4.3.0"
         }
       },
-      "Newtonsoft.Json/13.0.3": {
+      "Newtonsoft.Json/13.0.1": {
         "runtime": {
-          "lib/net6.0/Newtonsoft.Json.dll": {
+          "lib/netstandard2.0/Newtonsoft.Json.dll": {
             "assemblyVersion": "13.0.0.0",
-            "fileVersion": "13.0.3.27908"
+            "fileVersion": "13.0.1.25517"
           }
         }
       },
-      "Nostr.Client/2.0.0": {
+      "NNostr.Client/0.0.54": {
         "dependencies": {
-          "BTCPayServer.Lightning.Common": "1.3.21",
-          "Microsoft.Extensions.Logging.Abstractions": "7.0.1",
-          "NBitcoin.Secp256k1": "3.1.1",
-          "Newtonsoft.Json": "13.0.3",
-          "System.Reactive": "6.0.0",
-          "Websocket.Client": "4.6.1"
+          "LibChaCha20": "1.0.1",
+          "LinqKit.Core": "1.2.5",
+          "NBitcoin.Secp256k1": "3.1.6",
+          "System.Interactive.Async": "6.0.1",
+          "System.Text.Json": "8.0.4",
+          "System.Threading.Channels": "8.0.0"
         },
         "runtime": {
-          "lib/net7.0/Nostr.Client.dll": {
-            "assemblyVersion": "2.0.0.0",
-            "fileVersion": "2.0.0.0"
+          "lib/net8.0/NNostr.Client.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
           }
         }
       },
@@ -586,6 +587,14 @@
           "System.Private.Uri": "4.3.0"
         }
       },
+      "Serilog/4.0.0": {
+        "runtime": {
+          "lib/net8.0/Serilog.dll": {
+            "assemblyVersion": "4.0.0.0",
+            "fileVersion": "4.0.0.0"
+          }
+        }
+      },
       "System.AppContext/4.3.0": {
         "dependencies": {
           "System.Runtime": "4.3.0"
@@ -704,6 +713,17 @@
           "System.Runtime.InteropServices": "4.3.0"
         }
       },
+      "System.Interactive.Async/6.0.1": {
+        "dependencies": {
+          "System.Linq.Async": "6.0.1"
+        },
+        "runtime": {
+          "lib/net6.0/System.Interactive.Async.dll": {
+            "assemblyVersion": "6.0.0.0",
+            "fileVersion": "6.0.1.35981"
+          }
+        }
+      },
       "System.IO/4.3.0": {
         "dependencies": {
           "Microsoft.NETCore.Platforms": "1.1.0",
@@ -771,6 +791,17 @@
           "System.Resources.ResourceManager": "4.3.0",
           "System.Runtime": "4.3.0",
           "System.Runtime.Extensions": "4.3.0"
+        }
+      },
+      "System.Linq.Async/6.0.1": {
+        "dependencies": {
+          "Microsoft.Bcl.AsyncInterfaces": "6.0.0"
+        },
+        "runtime": {
+          "lib/net6.0/System.Linq.Async.dll": {
+            "assemblyVersion": "6.0.0.0",
+            "fileVersion": "6.0.1.35981"
+          }
         }
       },
       "System.Linq.Expressions/4.3.0": {
@@ -875,14 +906,6 @@
         "dependencies": {
           "Microsoft.NETCore.Platforms": "1.1.0",
           "Microsoft.NETCore.Targets": "1.1.0"
-        }
-      },
-      "System.Reactive/6.0.0": {
-        "runtime": {
-          "lib/net6.0/System.Reactive.dll": {
-            "assemblyVersion": "6.0.0.0",
-            "fileVersion": "6.0.0.1"
-          }
         }
       },
       "System.Reflection/4.3.0": {
@@ -1180,6 +1203,12 @@
           "runtime.any.System.Text.Encoding.Extensions": "4.3.0"
         }
       },
+      "System.Text.Encodings.Web/8.0.0": {},
+      "System.Text.Json/8.0.4": {
+        "dependencies": {
+          "System.Text.Encodings.Web": "8.0.0"
+        }
+      },
       "System.Text.RegularExpressions/4.3.0": {
         "dependencies": {
           "System.Runtime": "4.3.0"
@@ -1191,7 +1220,7 @@
           "System.Threading.Tasks": "4.3.0"
         }
       },
-      "System.Threading.Channels/5.0.0": {},
+      "System.Threading.Channels/8.0.0": {},
       "System.Threading.Overlapped/4.3.0": {
         "dependencies": {
           "Microsoft.NETCore.Platforms": "1.1.0",
@@ -1258,18 +1287,6 @@
           "System.Xml.ReaderWriter": "4.3.0"
         }
       },
-      "Websocket.Client/4.6.1": {
-        "dependencies": {
-          "System.Reactive": "6.0.0",
-          "System.Threading.Channels": "5.0.0"
-        },
-        "runtime": {
-          "lib/net6.0/Websocket.Client.dll": {
-            "assemblyVersion": "4.6.1.0",
-            "fileVersion": "4.6.1.0"
-          }
-        }
-      },
       "xunit/2.6.1": {
         "dependencies": {
           "xunit.analyzers": "1.4.0",
@@ -1325,18 +1342,19 @@
         }
       },
       "xunit.runner.visualstudio/2.5.3": {},
-      "FyteClub/4.4.0": {
+      "FyteClub/5.0.1": {
         "dependencies": {
           "DalamudPackager": "13.1.0",
           "Glamourer.Api": "2.6.0",
+          "Microsoft.Extensions.Logging.Abstractions": "7.0.1",
           "Microsoft.MixedReality.WebRTC": "0.1.0",
-          "Nostr.Client": "2.0.0",
+          "NNostr.Client": "0.0.54",
           "Penumbra.Api": "5.12.0"
         },
         "runtime": {
           "FyteClub.dll": {
-            "assemblyVersion": "4.4.0.0",
-            "fileVersion": "4.4.0.0"
+            "assemblyVersion": "5.0.1.0",
+            "fileVersion": "5.0.1.0"
           }
         }
       },
@@ -1372,13 +1390,6 @@
       "serviceable": false,
       "sha512": ""
     },
-    "BTCPayServer.Lightning.Common/1.3.21": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-KK9jI98l4CjY7m2l7BML97KWNBZIgNwEXYBB8Wy85o8+zJ/BcD9Fz+NemRhCtdvuR7cotvlfDyCmacchiU05MQ==",
-      "path": "btcpayserver.lightning.common/1.3.21",
-      "hashPath": "btcpayserver.lightning.common.1.3.21.nupkg.sha512"
-    },
     "Castle.Core/5.1.1": {
       "type": "package",
       "serviceable": true,
@@ -1392,6 +1403,27 @@
       "sha512": "sha512-XdoNhJGyFby5M/sdcRhnc5xTop9PHy+H50PTWpzLhJugjB19EDBiHD/AsiDF66RETM+0qKUdJBZrNuebn7qswQ==",
       "path": "dalamudpackager/13.1.0",
       "hashPath": "dalamudpackager.13.1.0.nupkg.sha512"
+    },
+    "LibChaCha20/1.0.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-pLKTZWVPKf5vd1MthOCph/p7iR3DM8PQOeBLe7e5VGXVqju4GOWT+JAgKReQ+7sWU4HDC+hJF/Thrj08YFkugg==",
+      "path": "libchacha20/1.0.1",
+      "hashPath": "libchacha20.1.0.1.nupkg.sha512"
+    },
+    "LinqKit.Core/1.2.5": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-+5UKyagtVX33TSeOGorYzDXus/ypAISfM7HFfrix4BEmuuGF+nhSjf8P9csejLQ79ny5ms33M5/lQ2SkwC0Jxw==",
+      "path": "linqkit.core/1.2.5",
+      "hashPath": "linqkit.core.1.2.5.nupkg.sha512"
+    },
+    "Microsoft.Bcl.AsyncInterfaces/6.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-UcSjPsst+DfAdJGVDsu346FX0ci0ah+lw3WRtn18NUwEqRt70HaOQ7lI72vy3+1LxtqI3T5GWwV39rQSrCzAeg==",
+      "path": "microsoft.bcl.asyncinterfaces/6.0.0",
+      "hashPath": "microsoft.bcl.asyncinterfaces.6.0.0.nupkg.sha512"
     },
     "Microsoft.CodeCoverage/17.8.0": {
       "type": "package",
@@ -1456,19 +1488,12 @@
       "path": "moq/4.20.69",
       "hashPath": "moq.4.20.69.nupkg.sha512"
     },
-    "NBitcoin/7.0.1": {
+    "NBitcoin.Secp256k1/3.1.6": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-42vGnCcbTR2Gi7feOJT4qQUZaRHqYVbDb7A5yN7pdUsKzQK7WPkZUISKh9WaLKtAM3BJT6ntCDg/gA7zuid2Uw==",
-      "path": "nbitcoin/7.0.1",
-      "hashPath": "nbitcoin.7.0.1.nupkg.sha512"
-    },
-    "NBitcoin.Secp256k1/3.1.1": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-ekF91qDK2+TI9FFhXvjClfUOQ3DWxNhvjh8Eoqawk1KPk/hCURpc8xoyeprtAiIoM5wgPnWeFxQybVWhl2NsHA==",
-      "path": "nbitcoin.secp256k1/3.1.1",
-      "hashPath": "nbitcoin.secp256k1.3.1.1.nupkg.sha512"
+      "sha512": "sha512-Ao9jN/16lhQoI0aMdUxgiEfuyFdg2nd2SdinqqEFuCyYl1NH6upa++Tp0wbXHTr6jf7klXh3wjmsX+ArzliZRQ==",
+      "path": "nbitcoin.secp256k1/3.1.6",
+      "hashPath": "nbitcoin.secp256k1.3.1.6.nupkg.sha512"
     },
     "NETStandard.Library/1.6.1": {
       "type": "package",
@@ -1477,19 +1502,19 @@
       "path": "netstandard.library/1.6.1",
       "hashPath": "netstandard.library.1.6.1.nupkg.sha512"
     },
-    "Newtonsoft.Json/13.0.3": {
+    "Newtonsoft.Json/13.0.1": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ==",
-      "path": "newtonsoft.json/13.0.3",
-      "hashPath": "newtonsoft.json.13.0.3.nupkg.sha512"
+      "sha512": "sha512-ppPFpBcvxdsfUonNcvITKqLl3bqxWbDCZIzDWHzjpdAHRFfZe0Dw9HmA0+za13IdyrgJwpkDTDA9fHaxOrt20A==",
+      "path": "newtonsoft.json/13.0.1",
+      "hashPath": "newtonsoft.json.13.0.1.nupkg.sha512"
     },
-    "Nostr.Client/2.0.0": {
+    "NNostr.Client/0.0.54": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-3R63+9kSmTVjE65o6Cq5dx7p+fVgG2LAsOuVUHVwV3+wp0RkxcmCRe9tGJoW1ys4zG2nR3kqCfYtkjN/aW21aw==",
-      "path": "nostr.client/2.0.0",
-      "hashPath": "nostr.client.2.0.0.nupkg.sha512"
+      "sha512": "sha512-wN/7Thnu7g0l7LedUcO7DzXinw3bu9C5nKn2p6VZSNG3vymRuyH35VG64Qr63wEM+bHfPuxrQ9IyQNOwwKl4Mg==",
+      "path": "nnostr.client/0.0.54",
+      "hashPath": "nnostr.client.0.0.54.nupkg.sha512"
     },
     "NuGet.Frameworks/6.5.0": {
       "type": "package",
@@ -1778,6 +1803,13 @@
       "path": "runtime.win.system.runtime.extensions/4.3.0",
       "hashPath": "runtime.win.system.runtime.extensions.4.3.0.nupkg.sha512"
     },
+    "Serilog/4.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-2jDkUrSh5EofOp7Lx5Zgy0EB+7hXjjxE2ktTb1WVQmU00lDACR2TdROGKU0K1pDTBSJBN1PqgYpgOZF8mL7NJw==",
+      "path": "serilog/4.0.0",
+      "hashPath": "serilog.4.0.0.nupkg.sha512"
+    },
     "System.AppContext/4.3.0": {
       "type": "package",
       "serviceable": true,
@@ -1869,6 +1901,13 @@
       "path": "system.globalization.extensions/4.3.0",
       "hashPath": "system.globalization.extensions.4.3.0.nupkg.sha512"
     },
+    "System.Interactive.Async/6.0.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-f8H1O4ZWDQo344y5NQU76G4SIjWMuKDVXL9OM1dg6K5YZnLkc8iCdQDybBvMcC6ufk61jzXGVAX6UCDu0qDSjA==",
+      "path": "system.interactive.async/6.0.1",
+      "hashPath": "system.interactive.async.6.0.1.nupkg.sha512"
+    },
     "System.IO/4.3.0": {
       "type": "package",
       "serviceable": true,
@@ -1910,6 +1949,13 @@
       "sha512": "sha512-5DbqIUpsDp0dFftytzuMmc0oeMdQwjcP/EWxsksIz/w1TcFRkZ3yKKz0PqiYFMmEwPSWw+qNVqD7PJ889JzHbw==",
       "path": "system.linq/4.3.0",
       "hashPath": "system.linq.4.3.0.nupkg.sha512"
+    },
+    "System.Linq.Async/6.0.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-0YhHcaroWpQ9UCot3Pizah7ryAzQhNvobLMSxeDIGmnXfkQn8u5owvpOH0K6EVB+z9L7u6Cc4W17Br/+jyttEQ==",
+      "path": "system.linq.async/6.0.1",
+      "hashPath": "system.linq.async.6.0.1.nupkg.sha512"
     },
     "System.Linq.Expressions/4.3.0": {
       "type": "package",
@@ -1959,13 +2005,6 @@
       "sha512": "sha512-I4SwANiUGho1esj4V4oSlPllXjzCZDE+5XXso2P03LW2vOda2Enzh8DWOxwN6hnrJyp314c7KuVu31QYhRzOGg==",
       "path": "system.private.uri/4.3.0",
       "hashPath": "system.private.uri.4.3.0.nupkg.sha512"
-    },
-    "System.Reactive/6.0.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-31kfaW4ZupZzPsI5PVe77VhnvFF55qgma7KZr/E0iFTs6fmdhhG8j0mgEx620iLTey1EynOkEfnyTjtNEpJzGw==",
-      "path": "system.reactive/6.0.0",
-      "hashPath": "system.reactive.6.0.0.nupkg.sha512"
     },
     "System.Reflection/4.3.0": {
       "type": "package",
@@ -2156,6 +2195,20 @@
       "path": "system.text.encoding.extensions/4.3.0",
       "hashPath": "system.text.encoding.extensions.4.3.0.nupkg.sha512"
     },
+    "System.Text.Encodings.Web/8.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-yev/k9GHAEGx2Rg3/tU6MQh4HGBXJs70y7j1LaM1i/ER9po+6nnQ6RRqTJn1E7Xu0fbIFK80Nh5EoODxrbxwBQ==",
+      "path": "system.text.encodings.web/8.0.0",
+      "hashPath": "system.text.encodings.web.8.0.0.nupkg.sha512"
+    },
+    "System.Text.Json/8.0.4": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-bAkhgDJ88XTsqczoxEMliSrpijKZHhbJQldhAmObj/RbrN3sU5dcokuXmWJWsdQAhiMJ9bTayWsL1C9fbbCRhw==",
+      "path": "system.text.json/8.0.4",
+      "hashPath": "system.text.json.8.0.4.nupkg.sha512"
+    },
     "System.Text.RegularExpressions/4.3.0": {
       "type": "package",
       "serviceable": true,
@@ -2170,12 +2223,12 @@
       "path": "system.threading/4.3.0",
       "hashPath": "system.threading.4.3.0.nupkg.sha512"
     },
-    "System.Threading.Channels/5.0.0": {
+    "System.Threading.Channels/8.0.0": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-RLBIxntLaG9pRmmuVDwY1kc8Bvp/FQzSxPU+19VekkScKkWtVP9r8bLhm28ama3usc816UBrmkg3vv3jUea/hw==",
-      "path": "system.threading.channels/5.0.0",
-      "hashPath": "system.threading.channels.5.0.0.nupkg.sha512"
+      "sha512": "sha512-CMaFr7v+57RW7uZfZkPExsPB6ljwzhjACWW1gfU35Y56rk72B/Wu+sTqxVmGSk4SFUlPc3cjeKND0zktziyjBA==",
+      "path": "system.threading.channels/8.0.0",
+      "hashPath": "system.threading.channels.8.0.0.nupkg.sha512"
     },
     "System.Threading.Overlapped/4.3.0": {
       "type": "package",
@@ -2218,13 +2271,6 @@
       "sha512": "sha512-5zJ0XDxAIg8iy+t4aMnQAu0MqVbqyvfoUVl1yDV61xdo3Vth45oA2FoY4pPkxYAH5f8ixpmTqXeEIya95x0aCQ==",
       "path": "system.xml.xdocument/4.3.0",
       "hashPath": "system.xml.xdocument.4.3.0.nupkg.sha512"
-    },
-    "Websocket.Client/4.6.1": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-6ccH+gNepmlQILnp8L+9J3PvN8Nk9qmdWWhb7aBZC8TvhisgK/JMq6H1evtzRJ3MRM/FWjumP6J/HPEt+DXwuQ==",
-      "path": "websocket.client/4.6.1",
-      "hashPath": "websocket.client.4.6.1.nupkg.sha512"
     },
     "xunit/2.6.1": {
       "type": "package",
@@ -2282,7 +2328,7 @@
       "path": "xunit.runner.visualstudio/2.5.3",
       "hashPath": "xunit.runner.visualstudio.2.5.3.nupkg.sha512"
     },
-    "FyteClub/4.4.0": {
+    "FyteClub/5.0.1": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

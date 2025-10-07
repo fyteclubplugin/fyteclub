@@ -222,72 +222,91 @@ namespace FyteClub.Plugin.ModSystem
         }
         
         /// <summary>
-        /// Send files using multi-channel progressive transfer with buffer-aware routing
+        /// Send files using multi-channel progressive transfer with work-stealing queue
         /// 
-        /// This method distributes files across channels for balanced completion, but the actual
-        /// channel selection is dynamic based on buffer utilization. If a channel's buffer is full,
-        /// the data will be automatically routed to the least utilized channel.
+        /// Each channel pulls one file at a time from a shared queue, ensuring balanced load
+        /// distribution without needing to know file sizes upfront. First-come-first-serve.
         /// </summary>
         private async Task SendFilesMultiChannel(Dictionary<string, TransferableFile> files, int channelCount, Func<byte[], int, Task> multiChannelSend)
         {
             try
             {
-                _pluginLog.Info($"[SmartTransfer] SendFilesMultiChannel CALLED with {files.Count} files and {channelCount} channels");
+                _pluginLog.Info($"[SmartTransfer] 🚀 SendFilesMultiChannel with {files.Count} files and {channelCount} channels (work-stealing queue)");
                 
-                // Convert files to ModFile format for queuing
-                var modFiles = files.Select(f => new ModFile
-                {
-                    GamePath = f.Key,
-                    SizeBytes = Math.Max(f.Value.Content?.Length ?? 0, (int)f.Value.Size), // Use accurate size for load balancing
-                    Content = f.Value.Content ?? Array.Empty<byte>(),
-                    Hash = f.Value.Hash ?? ""
-                }).ToList();
+                // Create a shared queue of files (thread-safe)
+                var fileQueue = new System.Collections.Concurrent.ConcurrentQueue<KeyValuePair<string, TransferableFile>>(files);
+                var totalFiles = files.Count;
+                var completedCount = 0;
+                var completedLock = new object();
                 
-                // Queue mods across channels for balanced completion
-                // Note: This is the initial distribution - actual sending may use different channels
-                // based on real-time buffer utilization (buffer-aware routing)
-                var channelQueues = ChannelNegotiation.QueueModsForBalancedCompletion(modFiles, channelCount);
+                _pluginLog.Info($"[SmartTransfer] 📦 Created shared queue with {fileQueue.Count} files");
                 
-                _pluginLog.Info($"[SmartTransfer] Distributing {files.Count} files across {channelCount} channels (buffer-aware routing enabled)");
-                
-                // Send each channel's files in parallel
+                // Spawn worker tasks for each channel
                 var channelTasks = new List<Task>();
                 
-                for (int channelIndex = 0; channelIndex < channelQueues.Count; channelIndex++)
+                for (int channelIndex = 0; channelIndex < channelCount; channelIndex++)
                 {
-                    var queue = channelQueues[channelIndex];
                     var currentChannelIndex = channelIndex; // Capture for closure
                     
-                    if (queue.Count > 0)
+                    var channelTask = Task.Run(async () =>
                     {
-                        var channelTask = Task.Run(async () =>
+                        var filesProcessed = 0;
+                        var bytesProcessed = 0L;
+                        
+                        _pluginLog.Info($"[SmartTransfer] 🏃 Channel {currentChannelIndex} worker started");
+                        
+                        // Pull files from queue until empty
+                        while (fileQueue.TryDequeue(out var fileEntry))
                         {
-                            var channelSize = queue.Sum(f => f.SizeMB);
-                            _pluginLog.Info($"[SmartTransfer] Channel {currentChannelIndex}: {queue.Count} files, {channelSize:F1} MB (preferred channel, may route to others if busy)");
+                            var fileName = fileEntry.Key;
+                            var file = fileEntry.Value;
                             
-                            foreach (var modFile in queue)
+                            if (file.Content != null && file.Content.Length > 0)
                             {
-                                if (modFile.Content.Length > 0)
+                                var fileSizeMB = file.Content.Length / (1024.0 * 1024.0);
+                                _pluginLog.Info($"[SmartTransfer] 📤 Channel {currentChannelIndex} sending: {fileName} ({fileSizeMB:F2} MB)");
+                                
+                                try
                                 {
-                                    // SendFileOnChannel will use buffer-aware routing
-                                    // The preferred channel is currentChannelIndex, but it may switch
-                                    // to a less utilized channel if buffers are full
-                                    await SendFileOnChannel(modFile, currentChannelIndex, multiChannelSend);
+                                    await SendFileOnChannel(new ModFile
+                                    {
+                                        GamePath = fileName,
+                                        Content = file.Content,
+                                        Hash = file.Hash ?? "",
+                                        SizeBytes = file.Content.Length
+                                    }, currentChannelIndex, multiChannelSend);
+                                    
+                                    filesProcessed++;
+                                    bytesProcessed += file.Content.Length;
+                                    
+                                    lock (completedLock)
+                                    {
+                                        completedCount++;
+                                        _pluginLog.Info($"[SmartTransfer] ✅ Channel {currentChannelIndex} completed {fileName} | Progress: {completedCount}/{totalFiles} files");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _pluginLog.Error($"[SmartTransfer] ❌ Channel {currentChannelIndex} failed to send {fileName}: {ex.Message}");
+                                    throw; // Re-throw to fail the entire transfer
                                 }
                             }
-                        });
+                        }
                         
-                        channelTasks.Add(channelTask);
-                    }
+                        var totalMB = bytesProcessed / (1024.0 * 1024.0);
+                        _pluginLog.Info($"[SmartTransfer] 🏁 Channel {currentChannelIndex} finished: {filesProcessed} files, {totalMB:F2} MB");
+                    });
+                    
+                    channelTasks.Add(channelTask);
                 }
                 
-                // Wait for all channels to complete
+                // Wait for all channel workers to complete
                 await Task.WhenAll(channelTasks);
-                _pluginLog.Info($"[SmartTransfer] Multi-channel transfer completed");
+                _pluginLog.Info($"[SmartTransfer] 🎉 Multi-channel transfer completed: {completedCount}/{totalFiles} files sent");
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"[SmartTransfer] Multi-channel transfer failed: {ex.Message}");
+                _pluginLog.Error($"[SmartTransfer] ❌ Multi-channel transfer failed: {ex.Message}");
                 throw;
             }
         }
@@ -305,19 +324,8 @@ namespace FyteClub.Plugin.ModSystem
                     modFile.Hash,
                     async chunk =>
                     {
-                        var chunkMessage = new FileChunkMessage
-                        {
-                            Chunk = chunk,
-                            MessageId = Guid.NewGuid().ToString(),
-                            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                        };
-                        
-                        var jsonOptions = new System.Text.Json.JsonSerializerOptions
-                        {
-                            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
-                            PropertyNameCaseInsensitive = true
-                        };
-                        var chunkBytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(chunkMessage, jsonOptions);
+                        // Use binary protocol instead of JSON for massive speed boost
+                        var binaryMessage = SerializeFileChunkToBinary(chunk);
                         
                         // Send on specific channel with retry logic
                         var retries = 3;
@@ -325,7 +333,7 @@ namespace FyteClub.Plugin.ModSystem
                         {
                             try
                             {
-                                await multiChannelSend(chunkBytes, channelIndex);
+                                await multiChannelSend(binaryMessage, channelIndex);
                                 break;
                             }
                             catch (InvalidOperationException ex)
@@ -342,6 +350,67 @@ namespace FyteClub.Plugin.ModSystem
                 _pluginLog.Error($"[SmartTransfer] Failed to send {modFile.GamePath} on channel {channelIndex}: {ex.Message}");
                 throw;
             }
+        }
+        
+        /// <summary>
+        /// Serialize FileChunk to binary format (much faster than JSON)
+        /// Format: MAGIC(4) + SessionIDLen(4) + SessionID(n) + ChunkIdx(4) + TotalChunks(4) + ChannelIdx(4) + 
+        ///         FileNameLen(4) + FileName(n) + HashLen(4) + Hash(n) + DataLen(4) + Data(n)
+        /// </summary>
+        private byte[] SerializeFileChunkToBinary(ProgressiveFileTransfer.FileChunk chunk)
+        {
+            var sessionIdBytes = System.Text.Encoding.UTF8.GetBytes(chunk.SessionId);
+            var fileNameBytes = System.Text.Encoding.UTF8.GetBytes(chunk.FileName);
+            var hashBytes = System.Text.Encoding.UTF8.GetBytes(chunk.FileHash);
+            var dataBytes = chunk.Data;
+            
+            // Calculate total size
+            var totalSize = 4 + 4 + sessionIdBytes.Length + 4 + 4 + 4 + 4 + fileNameBytes.Length + 4 + hashBytes.Length + 4 + dataBytes.Length;
+            var buffer = new byte[totalSize];
+            var offset = 0;
+            
+            // Magic bytes "FCHK"
+            buffer[offset++] = (byte)'F';
+            buffer[offset++] = (byte)'C';
+            buffer[offset++] = (byte)'H';
+            buffer[offset++] = (byte)'K';
+            
+            // Session ID
+            BitConverter.GetBytes(sessionIdBytes.Length).CopyTo(buffer, offset);
+            offset += 4;
+            Array.Copy(sessionIdBytes, 0, buffer, offset, sessionIdBytes.Length);
+            offset += sessionIdBytes.Length;
+            
+            // Chunk index
+            BitConverter.GetBytes(chunk.ChunkIndex).CopyTo(buffer, offset);
+            offset += 4;
+            
+            // Total chunks
+            BitConverter.GetBytes(chunk.TotalChunks).CopyTo(buffer, offset);
+            offset += 4;
+            
+            // Channel index
+            BitConverter.GetBytes(chunk.ChannelIndex).CopyTo(buffer, offset);
+            offset += 4;
+            
+            // File name
+            BitConverter.GetBytes(fileNameBytes.Length).CopyTo(buffer, offset);
+            offset += 4;
+            Array.Copy(fileNameBytes, 0, buffer, offset, fileNameBytes.Length);
+            offset += fileNameBytes.Length;
+            
+            // Hash
+            BitConverter.GetBytes(hashBytes.Length).CopyTo(buffer, offset);
+            offset += 4;
+            Array.Copy(hashBytes, 0, buffer, offset, hashBytes.Length);
+            offset += hashBytes.Length;
+            
+            // Data
+            BitConverter.GetBytes(dataBytes.Length).CopyTo(buffer, offset);
+            offset += 4;
+            Array.Copy(dataBytes, 0, buffer, offset, dataBytes.Length);
+            
+            return buffer;
         }
         
         /// <summary>

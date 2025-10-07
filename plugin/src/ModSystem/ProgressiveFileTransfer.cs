@@ -16,10 +16,12 @@ namespace FyteClub.Plugin.ModSystem
         private readonly IPluginLog _pluginLog;
         private readonly ConcurrentDictionary<string, TransferSession> _activeSessions = new();
         
-        // Conservative limits for WebRTC with backpressure handling
-        private const int CHUNK_SIZE = 16 * 1024; // 16KB chunks to reduce buffer pressure
-        private const int MAX_CONCURRENT_CHUNKS = 1; // Serialize to prevent overwhelming
-        private const int CHUNK_DELAY_MS = 50; // Increased delay to allow better buffer draining
+        // Reduced chunk size to prevent receiver saturation
+        // Even with binary protocol, large chunks overwhelm the receiver's processing
+        // Smaller chunks = more granular flow control = less saturation
+        private const int CHUNK_SIZE = 128 * 1024; // 128KB chunks - balanced for throughput vs saturation
+        private const int MAX_CONCURRENT_CHUNKS = 2; // Allow some parallelism per channel
+        private const int CHUNK_DELAY_MS = 15; // 15ms delay to prevent receiver overwhelm
         
         public ProgressiveFileTransfer(IPluginLog pluginLog)
         {

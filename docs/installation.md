@@ -24,5 +24,10 @@
 3. Share invite codes with friends
 4. Mods sync automatically when near other players
 
+
 ## Supported Mod Systems
-- Penumbra, Glamourer, CustomizePlus, SimpleHeels, Honorific
+- Penumbra
+- Glamourer
+- CustomizePlus
+- SimpleHeels
+- Honorific

@@ -91,7 +91,7 @@ namespace FyteClub.Core
             InitializeEventHandlers();
             InitializeCaches();
             
-            ModularLogger.LogAlways(LogModule.Core, "FyteClub v4.5.9 initialized - P2P mod sharing with distributed TURN servers");
+            ModularLogger.LogAlways(LogModule.Core, "FyteClub v5.0.2 initialized - P2P mod sharing with distributed TURN servers");
         }
 
         private void InitializeCore()
@@ -345,28 +345,39 @@ namespace FyteClub.Core
                         ModularLogger.LogDebug(LogModule.WebRTC, "Peer connected: {0}", peerId);
                         _modSyncOrchestrator?.RegisterPeer(peerId, sendFunction);
                         
-                        // Bidirectional mod sharing - both sides share their mods
-                        _ = Task.Run(async () =>
+                        // Bidirectional mod sharing - EXACT same logic as "Don't Do It" button
+                        _framework.RunOnFrameworkThread(() =>
                         {
-                            await Task.Delay(2000); // Brief delay to ensure connection is stable
+                            var localPlayer = _clientState?.LocalPlayer;
+                            var localPlayerName = localPlayer?.Name?.TextValue;
                             
-                            var localPlayerName = await _framework.RunOnFrameworkThread(() => _clientState?.LocalPlayer?.Name?.TextValue);
-                            if (!string.IsNullOrEmpty(localPlayerName) && _modSystemIntegration != null)
+                            if (string.IsNullOrEmpty(localPlayerName))
                             {
-                                try
+                                ModularLogger.LogDebug(LogModule.WebRTC, "No local player found for auto-broadcast");
+                                return;
+                            }
+                            
+                            var capturedPlayerName = localPlayerName;
+                            
+                            _ = Task.Run(async () =>
+                            {
+                                if (_modSystemIntegration != null)
                                 {
-                                    var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(localPlayerName);
-                                    if (playerInfo != null && _modSyncOrchestrator != null)
+                                    try
                                     {
-                                        await _modSyncOrchestrator.BroadcastPlayerMods(playerInfo);
-                                        ModularLogger.LogDebug(LogModule.WebRTC, "Auto-shared local mods to peer {0}", peerId);
+                                        var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
+                                        if (playerInfo != null && _modSyncOrchestrator != null)
+                                        {
+                                            await _modSyncOrchestrator.BroadcastPlayerMods(playerInfo);
+                                            ModularLogger.LogDebug(LogModule.WebRTC, "Auto-shared local mods to peer {0}", peerId);
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        ModularLogger.LogAlways(LogModule.WebRTC, "Failed to auto-share mods to peer {0}: {1}", peerId, ex.Message);
                                     }
                                 }
-                                catch (Exception ex)
-                                {
-                                    ModularLogger.LogAlways(LogModule.WebRTC, "Failed to auto-share mods to peer {0}: {1}", peerId, ex.Message);
-                                }
-                            }
+                            });
                         });
                     };
                     
@@ -413,7 +424,9 @@ namespace FyteClub.Core
                 var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
                 if (playerInfo != null)
                 {
-                    ModularLogger.LogAlways(LogModule.Core, "Retrieved player info with {0} mods", playerInfo.Mods?.Count ?? 0);
+                    ModularLogger.LogAlways(LogModule.Core, "Retrieved player info with {0} mods, Glamourer: {1} chars", 
+                        playerInfo.Mods?.Count ?? 0, 
+                        playerInfo.GlamourerData?.Length ?? 0);
                     
                     // Debug: Log the actual mods being cached
                     if (playerInfo.Mods?.Count > 0)

@@ -41,6 +41,9 @@ namespace FyteClub
         // Performance tracking
         private readonly ConcurrentDictionary<string, DateTime> _lastSyncTimes = new();
         private const int MIN_SYNC_INTERVAL_MS = 5000; // Minimum 5 seconds between syncs per peer
+        
+        // Message logging throttle
+        private int _messageCounter = 0;
 
         public EnhancedP2PModSyncOrchestrator(
             IPluginLog pluginLog,
@@ -86,28 +89,42 @@ namespace FyteClub
             // Wire file chunk handler to progressive receiver
             _protocol.OnFileChunkReceived += async (fcm) =>
             {
-                var completed = await _smartTransfer.HandleFileChunk(fcm.Chunk);
-                if (completed != null)
+                // Fire-and-forget chunk processing to avoid blocking WebRTC receive buffers
+                _ = Task.Run(async () =>
                 {
-                    _pluginLog.Info($"[EnhancedP2PSync] ✅ Completed progressive receive: {fcm.Chunk.FileName} ({completed.Length / 1024.0 / 1024.0:F1} MB)");
-                    
-                    // CRITICAL: Write the completed file to disk so Penumbra can access it
                     try
                     {
-                        await WriteReceivedFileToDisk(fcm.Chunk.FileName, completed);
-                        _pluginLog.Info($"[EnhancedP2PSync] ✅ Wrote file to disk: {fcm.Chunk.FileName}");
+                        var completed = await _smartTransfer.HandleFileChunk(fcm.Chunk);
+                        if (completed != null)
+                        {
+                            _pluginLog.Info($"[EnhancedP2PSync] ✅ Completed progressive receive: {fcm.Chunk.FileName} ({completed.Length / 1024.0 / 1024.0:F1} MB)");
+                            
+                            // CRITICAL: Write the completed file to disk so Penumbra can access it
+                            try
+                            {
+                                await WriteReceivedFileToDisk(fcm.Chunk.FileName, completed);
+                                _pluginLog.Info($"[EnhancedP2PSync] ✅ Wrote file to disk: {fcm.Chunk.FileName}");
+                            }
+                            catch (Exception ex)
+                            {
+                                _pluginLog.Error($"[EnhancedP2PSync] ❌ Failed to write file to disk: {ex.Message}");
+                            }
+                            
+                            var playerName = GetPlayerNameFromChunk(fcm.Chunk);
+                            _pluginLog.Info($"[EnhancedP2PSync] Extracted player name from chunk: '{playerName}'");
+                            
+                            // Check if this completes all files for the player - use actual channel index from chunk
+                            await CheckAndTriggerPlayerModCompletion(fcm.Chunk.FileName, playerName, fcm.Chunk.ChannelIndex);
+                        }
                     }
                     catch (Exception ex)
                     {
-                        _pluginLog.Error($"[EnhancedP2PSync] ❌ Failed to write file to disk: {ex.Message}");
+                        _pluginLog.Error($"[EnhancedP2PSync] Error processing file chunk: {ex.Message}");
                     }
-                    
-                    var playerName = GetPlayerNameFromChunk(fcm.Chunk);
-                    _pluginLog.Info($"[EnhancedP2PSync] Extracted player name from chunk: '{playerName}'");
-                    
-                    // Check if this completes all files for the player - use actual channel index from chunk
-                    await CheckAndTriggerPlayerModCompletion(fcm.Chunk.FileName, playerName, fcm.Chunk.ChannelIndex);
-                }
+                });
+                
+                // Return immediately to free WebRTC buffer
+                await Task.CompletedTask;
             };
             
             // Wire up reconnection protocol handlers
@@ -433,7 +450,36 @@ namespace FyteClub
         {
             try
             {
-                _pluginLog.Info($"[EnhancedP2PSync] 📨 ENTRY: Received {messageData.Length} bytes from peer {peerId} on channel {channelIndex}");
+                // Reduce log spam: only log every 10th message or large messages
+                if (messageData.Length > 100000 || _messageCounter++ % 10 == 0)
+                {
+                    _pluginLog.Debug($"[EnhancedP2PSync] 📨 Received {messageData.Length} bytes from peer {peerId} on channel {channelIndex}");
+                }
+                
+                // Check for binary file chunk format (MAGIC: "FCHK")
+                if (messageData.Length >= 4 && 
+                    messageData[0] == 'F' && messageData[1] == 'C' && 
+                    messageData[2] == 'H' && messageData[3] == 'K')
+                {
+                    var fileChunk = DeserializeBinaryFileChunk(messageData);
+                    if (fileChunk != null)
+                    {
+                        // Map physical WebRTC channel index to logical channel index
+                        var logicalChannelIndex = MapPhysicalToLogicalChannel(channelIndex);
+                        fileChunk.ChannelIndex = logicalChannelIndex;
+                        
+                        // Create FileChunkMessage wrapper for compatibility
+                        var chunkMessage = new FyteClub.ModSystem.FileChunkMessage
+                        {
+                            Chunk = fileChunk,
+                            MessageId = Guid.NewGuid().ToString(),
+                            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                        };
+                        
+                        await _protocol.ProcessMessage(chunkMessage);
+                        return;
+                    }
+                }
                 
                 var message = _protocol.DeserializeMessage(messageData);
                 if (message == null)
@@ -450,7 +496,11 @@ namespace FyteClub
                     return;
                 }
                 
-                _pluginLog.Info($"[EnhancedP2PSync] 📨 Deserialized message type: {message.GetType().Name} from {peerId}");
+                // Only log non-chunk messages to reduce spam
+                if (!(message is FyteClub.ModSystem.FileChunkMessage))
+                {
+                    _pluginLog.Info($"[EnhancedP2PSync] 📨 {message.GetType().Name} from {peerId}");
+                }
 
                 // Extract player name from message for proper attribution
                 string? playerName = null;
@@ -520,6 +570,71 @@ namespace FyteClub
             {
                 _pluginLog.Error($"[EnhancedP2PSync] ❌ Error processing message from {peerId}: {ex.Message}");
                 _pluginLog.Error($"[EnhancedP2PSync] Stack trace: {ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// Deserialize binary file chunk format (FCHK protocol)
+        /// Format: MAGIC(4) + SessionIDLen(4) + SessionID(n) + ChunkIdx(4) + TotalChunks(4) + ChannelIdx(4) + 
+        ///         FileNameLen(4) + FileName(n) + HashLen(4) + Hash(n) + DataLen(4) + Data(n)
+        /// </summary>
+        private ProgressiveFileTransfer.FileChunk? DeserializeBinaryFileChunk(byte[] data)
+        {
+            try
+            {
+                var offset = 4; // Skip "FCHK" magic bytes
+                
+                // Session ID
+                var sessionIdLen = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                var sessionId = System.Text.Encoding.UTF8.GetString(data, offset, sessionIdLen);
+                offset += sessionIdLen;
+                
+                // Chunk index
+                var chunkIndex = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                
+                // Total chunks
+                var totalChunks = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                
+                // Channel index
+                var channelIndex = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                
+                // File name
+                var fileNameLen = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                var fileName = System.Text.Encoding.UTF8.GetString(data, offset, fileNameLen);
+                offset += fileNameLen;
+                
+                // Hash
+                var hashLen = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                var hash = System.Text.Encoding.UTF8.GetString(data, offset, hashLen);
+                offset += hashLen;
+                
+                // Data
+                var dataLen = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                var chunkData = new byte[dataLen];
+                Array.Copy(data, offset, chunkData, 0, dataLen);
+                
+                return new ProgressiveFileTransfer.FileChunk
+                {
+                    SessionId = sessionId,
+                    FileName = fileName,
+                    ChunkIndex = chunkIndex,
+                    TotalChunks = totalChunks,
+                    Data = chunkData,
+                    FileHash = hash,
+                    ChannelIndex = channelIndex
+                };
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"[EnhancedP2PSync] Failed to deserialize binary file chunk: {ex.Message}");
+                return null;
             }
         }
 
@@ -1170,13 +1285,21 @@ namespace FyteClub
                     response.PlayerName = normalizedPlayerName;
                     await ProcessReceivedModData("broadcast", response);
                     
-                    // Clear transfer context since mods are already applied (must be done inside lock)
+                    // Clear transfer context only if it matches this player (avoid clearing active transfers)
                     lock (_fileTrackingLock)
                     {
-                        _currentTransferPlayerName = null;
-                        _expectedFiles.Clear();
-                        _completedFiles.Clear();
-                        _isApplyingMods = false;
+                        if (_currentTransferPlayerName == normalizedPlayerName)
+                        {
+                            _pluginLog.Info($"[EnhancedP2PSync] Clearing transfer context for {normalizedPlayerName} (no files to transfer)");
+                            _currentTransferPlayerName = null;
+                            _expectedFiles.Clear();
+                            _completedFiles.Clear();
+                            _isApplyingMods = false;
+                        }
+                        else
+                        {
+                            _pluginLog.Info($"[EnhancedP2PSync] NOT clearing transfer context - current={_currentTransferPlayerName}, completed={normalizedPlayerName}");
+                        }
                     }
                     _pluginLog.Info($"[EnhancedP2PSync] Mods applied immediately - cleared transfer context");
                 }
@@ -1482,8 +1605,10 @@ namespace FyteClub
                     
                     if (webrtcConn is RobustWebRTCConnection connection)
                     {
-                        _pluginLog.Info($"[CHANNEL] Setting negotiated channel count to {response.YourChannels} for {peerId}");
-                        connection.SetNegotiatedChannelCount(response.YourChannels);
+                        // Use MyChannels because that's OUR allocation (the receiver's allocation)
+                        // YourChannels is for the sender to create
+                        _pluginLog.Info($"[CHANNEL] Setting negotiated channel count to {response.MyChannels} for {peerId}");
+                        connection.SetNegotiatedChannelCount(response.MyChannels);
                         // Trigger channel creation now that we know the negotiated count
                         await connection.CreateAdditionalChannelsAsync();
                     }
@@ -1596,6 +1721,7 @@ namespace FyteClub
             if (playerInfo?.PlayerName == null) return;
 
             _pluginLog.Info($"Broadcasting mods for {playerInfo.PlayerName}: {playerInfo.Mods?.Count ?? 0} mods");
+            _pluginLog.Info($"[GLAMOURER DEBUG] Broadcasting with GlamourerData: {playerInfo.GlamourerData?.Length ?? 0} chars");
 
             // Prepare actual file content for broadcast
             var fileReplacements = new Dictionary<string, TransferableFile>();
@@ -1705,15 +1831,25 @@ namespace FyteClub
                         {
                             _pluginLog.Info($"[MULTI-CHANNEL] Found WebRTC connection for peer {peerId}, waiting for channels...");
                             
-                            // Wait up to 5 seconds for channels to be created and ready
+                            // Wait up to 15 seconds for channels to be created and ready (channel creation takes ~7s with 2s stabilization delay)
                             var waitStart = DateTime.UtcNow;
-                            while (!connection.AreChannelsReady() && (DateTime.UtcNow - waitStart).TotalSeconds < 5)
+                            var lastReportedCount = 0;
+                            while (!connection.AreChannelsReady() && (DateTime.UtcNow - waitStart).TotalSeconds < 15)
                             {
+                                var currentCount = connection.GetAvailableChannelCount();
+                                if (currentCount != lastReportedCount)
+                                {
+                                    _pluginLog.Info($"[MULTI-CHANNEL] Waiting for channels: {currentCount} available so far (ready={connection.AreChannelsReady()})");
+                                    lastReportedCount = currentCount;
+                                }
                                 await Task.Delay(100);
                             }
                             
                             var channelCount = connection.GetAvailableChannelCount();
-                            _pluginLog.Info($"[MULTI-CHANNEL] Peer {peerId} has {channelCount} channels ready");
+                            _pluginLog.Info($"[MULTI-CHANNEL] Peer {peerId} has {channelCount} channels ready after wait (ready={connection.AreChannelsReady()})");
+                            
+                            // Mark transfer as starting to prevent connection disposal
+                            connection.BeginTransfer();
                             
                             if (channelCount > 1)
                             {
@@ -1728,6 +1864,12 @@ namespace FyteClub
                         }
                         
                         await _smartTransfer.SyncModsToPeer(peerId, playerInfo, fileReplacements, sendFunction);
+                        
+                        // Mark transfer as complete
+                        if (connection != null)
+                        {
+                            connection.EndTransfer();
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -2104,14 +2246,54 @@ namespace FyteClub
                     if (cachedModData.ModPayload != null && cachedModData.ModPayload.Count > 0)
                     {
                         _pluginLog.Info($"[MOD COMPLETION] Payload keys: {string.Join(", ", cachedModData.ModPayload.Keys)}");
+                        
+                        // Debug: Check what's in the mods payload
+                        if (cachedModData.ModPayload.ContainsKey("mods"))
+                        {
+                            var modsObj = cachedModData.ModPayload["mods"];
+                            var modsType = modsObj?.GetType().Name ?? "null";
+                            _pluginLog.Info($"[MOD COMPLETION] 🔍 Mods payload type: {modsType}");
+                            
+                            if (modsObj is List<string> directModsList)
+                            {
+                                _pluginLog.Info($"[MOD COMPLETION] 🔍 Mods list has {directModsList.Count} entries");
+                            }
+                            else if (modsObj is System.Text.Json.JsonElement jsonElement)
+                            {
+                                _pluginLog.Info($"[MOD COMPLETION] 🔍 Mods is JsonElement, kind: {jsonElement.ValueKind}");
+                            }
+                            else
+                            {
+                                _pluginLog.Warning($"[MOD COMPLETION] ⚠️ Mods is unexpected type: {modsType}");
+                            }
+                        }
+                    }
+                    
+                    // Extract mods list with proper type conversion
+                    var modsList = new List<string>();
+                    if (cachedModData.ModPayload?.ContainsKey("mods") == true)
+                    {
+                        var modsObj = cachedModData.ModPayload["mods"];
+                        if (modsObj is List<string> directList)
+                        {
+                            modsList = directList;
+                        }
+                        else if (modsObj is System.Text.Json.JsonElement jsonElement && jsonElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                        {
+                            // Deserialize from JsonElement
+                            modsList = System.Text.Json.JsonSerializer.Deserialize<List<string>>(jsonElement.GetRawText()) ?? new List<string>();
+                        }
+                        else if (modsObj is IEnumerable<object> enumerable)
+                        {
+                            // Try to convert from generic enumerable
+                            modsList = enumerable.Select(o => o?.ToString() ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
+                        }
                     }
                     
                     var playerInfo = new AdvancedPlayerInfo
                     {
                         PlayerName = normalizedPlayerName,
-                        Mods = cachedModData.ModPayload?.ContainsKey("mods") == true ? 
-                               (cachedModData.ModPayload["mods"] as List<string> ?? new List<string>()) : 
-                               new List<string>(),
+                        Mods = modsList,
                         GlamourerData = ExtractStringFromPayload(cachedModData.ModPayload, "glamourerDesign"),
                         CustomizePlusData = ExtractStringFromPayload(cachedModData.ModPayload, "customizePlusProfile"),
                         SimpleHeelsOffset = ExtractFloatFromPayload(cachedModData.ModPayload, "simpleHeelsOffset"),
@@ -2119,6 +2301,8 @@ namespace FyteClub
                     };
                     
                     _pluginLog.Info($"[MOD COMPLETION] Applying {playerInfo.Mods.Count} mods for {normalizedPlayerName}");
+                    _pluginLog.Info($"[MOD COMPLETION] GlamourerData length: {playerInfo.GlamourerData?.Length ?? 0}");
+                    _pluginLog.Info($"[MOD COMPLETION] CustomizePlus length: {playerInfo.CustomizePlusData?.Length ?? 0}");
                     
                     var success = await _modIntegration.ApplyPlayerMods(playerInfo, normalizedPlayerName);
                     
@@ -2156,16 +2340,24 @@ namespace FyteClub
                     }
                 }
                 
-                // Clean up all tracking (must be done inside lock)
+                // Clean up tracking only if it matches this player (avoid clearing active transfers)
                 lock (_fileTrackingLock)
                 {
-                    _completedFiles.Clear();
-                    _expectedFiles.Clear();
-                    _channelExpectedFiles.Clear();
-                    _channelCompletedFiles.Clear();
-                    _fileToChannelMap.Clear();
-                    _currentTransferPlayerName = null;
-                    _isApplyingMods = false; // Reset flag for next transfer
+                    if (_currentTransferPlayerName == normalizedPlayerName)
+                    {
+                        _pluginLog.Info($"[MOD COMPLETION] Clearing transfer context for {normalizedPlayerName} after mod application");
+                        _completedFiles.Clear();
+                        _expectedFiles.Clear();
+                        _channelExpectedFiles.Clear();
+                        _channelCompletedFiles.Clear();
+                        _fileToChannelMap.Clear();
+                        _currentTransferPlayerName = null;
+                        _isApplyingMods = false; // Reset flag for next transfer
+                    }
+                    else
+                    {
+                        _pluginLog.Info($"[MOD COMPLETION] NOT clearing transfer context - current={_currentTransferPlayerName}, completed={normalizedPlayerName}");
+                    }
                 }
             }
             catch (Exception ex)
