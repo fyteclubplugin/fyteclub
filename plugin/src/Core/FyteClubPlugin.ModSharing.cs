@@ -259,7 +259,7 @@ namespace FyteClub.Core
                             return;
                         }
                         
-                        ModularLogger.LogDebug(LogModule.ModSync, "🚀 CHAOS MODE: Targeting {0} characters with {1} mods - DIRECT APPLICATION", targets.Count, playerInfo.Mods.Count);
+                        ModularLogger.LogDebug(LogModule.ModSync, "🚀 CHAOS MODE: Targeting {0} characters with {1} mods - DIRECT APPLICATION", targets.Count, playerInfo.Mods?.Count ?? 0);
                         
                         // Apply mods DIRECTLY with maximum parallelism - NO P2P OVERHEAD
                         var tasks = targets.Select(async target =>
@@ -421,7 +421,7 @@ namespace FyteClub.Core
                         var random = new Random();
                         var victim = victims[random.Next(victims.Count)];
                         
-                        ModularLogger.LogDebug(LogModule.ModSync, "Applying {0} mods to '{1}'", playerInfo.Mods.Count, victim);
+                        ModularLogger.LogDebug(LogModule.ModSync, "Applying {0} mods to '{1}'", playerInfo.Mods?.Count ?? 0, victim);
                         
                         // Test individual plugin APIs first
                         await TestIndividualPluginAPIs(victim!);
@@ -514,7 +514,7 @@ namespace FyteClub.Core
                     {
                         foreach (var obj in _objectTable)
                         {
-                            if (obj is IPlayerCharacter player && player.Name?.TextValue != null)
+                            if (obj is IPlayerCharacter player && !string.IsNullOrEmpty(player.Name?.TextValue))
                             {
                                 var dx = localPosition.X - player.Position.X;
                                 var dy = localPosition.Y - player.Position.Y;
@@ -522,7 +522,7 @@ namespace FyteClub.Core
                                 var distance = (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
                                 if (distance <= maxDistance)
                                 {
-                                    proximityPlayers.Add(player.Name.TextValue);
+                                    proximityPlayers.Add(player.Name?.TextValue ?? "");
                                 }
                             }
                         }
@@ -643,7 +643,7 @@ namespace FyteClub.Core
                 }
                 
                 // Test SimpleHeels API
-                if (_modSystemIntegration.IsHeelsAvailable)
+                if (_modSystemIntegration?.IsHeelsAvailable == true)
                 {
                     try
                     {
@@ -670,7 +670,7 @@ namespace FyteClub.Core
                 }
                 
                 // Test Honorific API
-                if (_modSystemIntegration.IsHonorificAvailable)
+                if (_modSystemIntegration?.IsHonorificAvailable == true)
                 {
                     try
                     {

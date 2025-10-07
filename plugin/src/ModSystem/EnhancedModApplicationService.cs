@@ -36,7 +36,7 @@ namespace FyteClub
         }
 
         /// <summary>
-        /// Apply a complete outfit atomically using Mare's proven patterns.
+    /// Apply a complete outfit atomically using proven mod application patterns.
         /// </summary>
         public async Task<ModApplicationResult> ApplyOutfitAtomic(string playerId, PeerModState modState)
         {
@@ -50,7 +50,7 @@ namespace FyteClub
             {
                 _pluginLog.Info($"[ModApplication] Starting atomic outfit application for {playerId} ({modState.ComponentReferences.Count} components)");
 
-                // Wait for character to be ready (Mare's pattern)
+                // Wait for character to be ready (standard mod application pattern)
                 if (!await WaitForCharacterReady(playerId))
                 {
                     var error = "Character not ready for mod application";

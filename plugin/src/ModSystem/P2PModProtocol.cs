@@ -10,11 +10,12 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
+using FyteClub.Plugin.ModSystem;
 
 namespace FyteClub.ModSystem
 {
     /// <summary>
-    /// P2P message types for mod synchronization following Mare's architecture
+    /// P2P message types for mod synchronization following FyteClub's architecture
     /// </summary>
     public enum P2PModMessageType
     {
@@ -26,7 +27,15 @@ namespace FyteClub.ModSystem
         ModApplicationResponse,
         SyncComplete,
         Error,
-        ChunkedMessage
+        ChunkedMessage,
+        FileChunkMessage,
+        MemberListRequest,
+        MemberListResponse,
+        ChannelNegotiation,
+        ChannelNegotiationResponse,
+        ReconnectOffer,          // WebRTC offer for reconnection
+        ReconnectAnswer,         // WebRTC answer for reconnection
+        RecoveryRequest          // Request delta transfer after reconnection
     }
 
     /// <summary>
@@ -49,6 +58,36 @@ namespace FyteClub.ModSystem
         
         public string PlayerName { get; set; } = string.Empty;
         public string? LastKnownHash { get; set; } // For incremental updates
+    }
+
+    /// <summary>
+    /// Request for a syncshell member list
+    /// </summary>
+    public class MemberListRequestMessage : P2PModMessage
+    {
+        public MemberListRequestMessage()
+        {
+            Type = P2PModMessageType.MemberListRequest;
+        }
+
+        public string SyncshellId { get; set; } = string.Empty;
+        public string RequestedBy { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Response containing syncshell member list details
+    /// </summary>
+    public class MemberListResponseMessage : P2PModMessage
+    {
+        public MemberListResponseMessage()
+        {
+            Type = P2PModMessageType.MemberListResponse;
+        }
+
+        public string SyncshellId { get; set; } = string.Empty;
+        public string HostName { get; set; } = string.Empty;
+        public List<string> Members { get; set; } = new();
+        public bool IsHost { get; set; }
     }
 
     /// <summary>
@@ -170,6 +209,83 @@ namespace FyteClub.ModSystem
 
 
     /// <summary>
+    /// Message carrying a progressive file chunk
+    /// </summary>
+    public class FileChunkMessage : P2PModMessage
+    {
+        public FileChunkMessage() { Type = P2PModMessageType.FileChunkMessage; }
+        public ProgressiveFileTransfer.FileChunk Chunk { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Channel negotiation capabilities message
+    /// </summary>
+    public class ChannelNegotiationMessage : P2PModMessage
+    {
+        public ChannelNegotiationMessage() { Type = P2PModMessageType.ChannelNegotiation; }
+        
+        public int ModCount { get; set; }
+        public int LargeModCount { get; set; }
+        public int SmallModCount { get; set; }
+        public ulong AvailableMemoryMB { get; set; }
+        public ulong TotalDataMB { get; set; }
+        public int RequestedChannels { get; set; }
+        public string PlayerName { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Channel negotiation response with agreed channel counts
+    /// </summary>
+    public class ChannelNegotiationResponse : P2PModMessage
+    {
+        public ChannelNegotiationResponse() { Type = P2PModMessageType.ChannelNegotiationResponse; }
+        
+        public int MyChannels { get; set; }
+        public int YourChannels { get; set; }
+        public ulong LimitingMemoryMB { get; set; }
+        public string PlayerName { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// WebRTC reconnection offer message (relayed through host)
+    /// </summary>
+    public class ReconnectOfferMessage : P2PModMessage
+    {
+        public ReconnectOfferMessage() { Type = P2PModMessageType.ReconnectOffer; }
+        
+        public string TargetPeerId { get; set; } = string.Empty;
+        public string SourcePeerId { get; set; } = string.Empty;
+        public string OfferSdp { get; set; } = string.Empty;
+        public string RecoverySessionId { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// WebRTC reconnection answer message (relayed through host)
+    /// </summary>
+    public class ReconnectAnswerMessage : P2PModMessage
+    {
+        public ReconnectAnswerMessage() { Type = P2PModMessageType.ReconnectAnswer; }
+        
+        public string TargetPeerId { get; set; } = string.Empty;
+        public string SourcePeerId { get; set; } = string.Empty;
+        public string AnswerSdp { get; set; } = string.Empty;
+        public string RecoverySessionId { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Recovery request for delta transfer after reconnection
+    /// </summary>
+    public class RecoveryRequestMessage : P2PModMessage
+    {
+        public RecoveryRequestMessage() { Type = P2PModMessageType.RecoveryRequest; }
+        
+        public string SyncshellId { get; set; } = string.Empty;
+        public string PeerId { get; set; } = string.Empty;
+        public List<string> CompletedFiles { get; set; } = new();
+        public Dictionary<string, string> CompletedHashes { get; set; } = new();
+    }
+
+    /// <summary>
     /// P2P protocol handler for mod synchronization
     /// </summary>
     public class P2PModProtocol
@@ -207,6 +323,14 @@ namespace FyteClub.ModSystem
         public event Action<SyncCompleteMessage>? OnSyncComplete;
         public event Action<ErrorMessage>? OnError;
         public event Func<ModDataResponse, Task>? OnModDataReceived;
+        public event Func<FileChunkMessage, Task>? OnFileChunkReceived;
+        public event Func<MemberListRequestMessage, Task<MemberListResponseMessage>>? OnMemberListRequested;
+        public event Action<MemberListResponseMessage>? OnMemberListResponseReceived;
+        public event Func<ChannelNegotiationMessage, Task<ChannelNegotiationResponse>>? OnChannelNegotiationRequested;
+        public event Action<ChannelNegotiationResponse>? OnChannelNegotiationResponseReceived;
+        public event Func<ReconnectOfferMessage, Task<ReconnectAnswerMessage>>? OnReconnectOfferReceived;
+        public event Action<ReconnectAnswerMessage>? OnReconnectAnswerReceived;
+        public event Action<RecoveryRequestMessage>? OnRecoveryRequestReceived;
 
         public P2PModProtocol(IPluginLog pluginLog)
         {
@@ -223,21 +347,36 @@ namespace FyteClub.ModSystem
             // Always use direct file streaming for ModDataResponse messages
             if (message is ModDataResponse modResponse)
             {
-                _pluginLog.Info($"[P2P] 📡 Using file streaming ({data.Length / 1024.0 / 1024.0:F1} MB)");
+                // Using file streaming for large data
                 await SendModDataWithFileStreaming(modResponse, sendFunction);
                 return;
             }
             
             if (data.Length <= CHUNK_SIZE)
             {
-                await sendFunction(data);
+                // Retry a few times if the channel is temporarily closed
+                var retries = 3;
+                for (int attempt = 0; attempt < retries; attempt++)
+                {
+                    try
+                    {
+                        await sendFunction(data);
+                        break;
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        _pluginLog.Warning($"[P2P] Send attempt {attempt + 1}/{retries} failed: {ex.Message}");
+                        await Task.Delay(150);
+                        if (attempt == retries - 1) return;
+                    }
+                }
                 return;
             }
 
             var chunkId = Guid.NewGuid().ToString();
             var totalChunks = (data.Length + CHUNK_SIZE - 1) / CHUNK_SIZE;
             
-            _pluginLog.Info($"[P2P] 📤 JSON chunking {data.Length} bytes as {totalChunks} chunks ({data.Length / 1024.0 / 1024.0:F1} MB)");
+            // JSON chunking for large data
 
             var metadata = new Dictionary<string, object>
             {
@@ -279,12 +418,7 @@ namespace FyteClub.ModSystem
                 var chunkBytes = SerializeMessage(chunk);
                 await sendFunction(chunkBytes);
                 
-                // Log progress every 25%
-                var progress = (i + 1) * 100.0 / totalChunks;
-                if (progress >= 25 && (i + 1) % (totalChunks / 4) == 0)
-                {
-                    _pluginLog.Info($"[P2P] 📤 Sent {progress:F0}% ({i + 1}/{totalChunks} chunks)");
-                }
+                // Progress tracking for large transfers
                 
                 if (i % 100 == 0)
                     await Task.Yield();
@@ -357,7 +491,8 @@ namespace FyteClub.ModSystem
                 }
 
                 byte[] jsonBytes;
-                bool isCompressed = data[0] == 1;
+                bool hasFraming = data[0] == 0 || data[0] == 1;
+                bool isCompressed = hasFraming && data[0] == 1;
 
                 if (isCompressed)
                 {
@@ -384,20 +519,25 @@ namespace FyteClub.ModSystem
                 }
                 else
                 {
-                    jsonBytes = data[1..];
+                    // Support legacy/unframed JSON payloads (no leading compression flag)
+                    if (hasFraming)
+                    {
+                        jsonBytes = data[1..];
+                    }
+                    else
+                    {
+                        jsonBytes = data; // Do not drop the first byte (e.g., '{')
+                    }
                 }
 
                 var json = Encoding.UTF8.GetString(jsonBytes);
                 
                 // Parse the base message to determine type
-                _pluginLog.Info($"[P2P] 🔍 Parsing JSON message ({json.Length} chars)");
                 
                 // Check for null bytes or encoding issues
                 if (json.Contains('\0'))
                 {
-                    _pluginLog.Warning($"[P2P] ⚠️ JSON contains null bytes, cleaning...");
                     json = json.Replace("\0", "");
-                    _pluginLog.Info($"[P2P] 🧹 Cleaned JSON length: {json.Length} chars");
                 }
                 
                 JsonDocument document;
@@ -415,74 +555,178 @@ namespace FyteClub.ModSystem
                 
                 using (document)
                 {
+                    // Try case-sensitive 'type' first
                     if (!document.RootElement.TryGetProperty("type", out var typeElement))
-                {
-                    _pluginLog.Warning("[P2P] ❌ Message missing type property - attempting legacy format detection");
-                    _pluginLog.Warning($"[P2P] 📄 JSON content: {json.Substring(0, Math.Min(500, json.Length))}...");
-                    
-                    // Try to detect legacy message format
-                    var legacyMessage = TryParseLegacyMessage(json, document.RootElement);
-                    if (legacyMessage != null)
                     {
-                        _pluginLog.Info($"[P2P] ✅ Successfully parsed as legacy {legacyMessage.Type} message");
-                        return legacyMessage;
-                    }
-                    
-                    _pluginLog.Error("[P2P] ❌ Failed to parse as both enhanced and legacy format");
-                    return null;
-                }
-
-                var messageType = (P2PModMessageType)typeElement.GetInt32();
-                _pluginLog.Info($"[P2P] ✅ Detected message type: {messageType}");
-                
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                    PropertyNameCaseInsensitive = true
-                };
-
-                // Handle chunked messages specially since they may return null while collecting chunks
-                if (messageType == P2PModMessageType.ChunkedMessage)
-                {
-                    var chunkedMessage = JsonSerializer.Deserialize<ChunkedMessage>(json, options);
-                    var result = HandleChunkedMessage(chunkedMessage);
-                    
-                    // For chunked messages, null return is normal (still collecting chunks)
-                    // Only log progress every 25% to reduce spam
-                    if (result == null && chunkedMessage != null)
-                    {
-                        var progress = (chunkedMessage.ChunkIndex + 1) * 100.0 / chunkedMessage.TotalChunks;
-                        if (progress >= 25 && (chunkedMessage.ChunkIndex + 1) % (chunkedMessage.TotalChunks / 4) == 0)
+                        // Fallback: check for 'Type' (PascalCase) and other casing issues
+                        if (document.RootElement.TryGetProperty("Type", out var typeElementPascal))
                         {
-                            _pluginLog.Info($"[P2P] 📦 Progress: {progress:F0}% ({chunkedMessage.ChunkIndex + 1}/{chunkedMessage.TotalChunks} chunks)");
+                            _pluginLog.Warning("[P2P] ⚠️ Detected 'Type' property (PascalCase). Proceeding with it.");
+                            typeElement = typeElementPascal;
+                        }
+                        else
+                        {
+                            // Special-case: progressive chunk messages that came without 'type'
+                            if (document.RootElement.TryGetProperty("chunk", out _) || document.RootElement.TryGetProperty("Chunk", out _))
+                            {
+                                _pluginLog.Info("[P2P] 🎯 Treating message as FileChunkMessage based on presence of 'chunk' property");
+                                var chunkDeserializeOptions = new JsonSerializerOptions
+                                {
+                                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                                    PropertyNameCaseInsensitive = true
+                                };
+                                var fcm = JsonSerializer.Deserialize<FileChunkMessage>(json, chunkDeserializeOptions);
+                                if (fcm != null)
+                                {
+                                    // Ensure type is set in case sender omitted it
+                                    fcm.Type = P2PModMessageType.FileChunkMessage;
+                                    _pluginLog.Info($"[P2P] 📦 Received file chunk: {fcm.Chunk.FileName} {fcm.Chunk.ChunkIndex + 1}/{fcm.Chunk.TotalChunks}");
+                                    return fcm;
+                                }
+                            }
+
+                            _pluginLog.Warning("[P2P] ❌ Message missing type property - attempting legacy format detection");
+                            _pluginLog.Warning($"[P2P] 📄 JSON content: {json.Substring(0, Math.Min(500, json.Length))}...");
+                            
+                            // Try to detect legacy message format
+                            var legacyMessage = TryParseLegacyMessage(json, document.RootElement);
+                            if (legacyMessage != null)
+                            {
+                                _pluginLog.Info($"[P2P] ✅ Successfully parsed as legacy {legacyMessage.Type} message");
+                                return legacyMessage;
+                            }
+                            
+                            _pluginLog.Error("[P2P] ❌ Failed to parse as both enhanced and legacy format");
+                            return null;
                         }
                     }
-                    
-                    return result;
-                }
-                
-                // Handle streaming data - check if this is part of a streamed message
-                if (messageType == P2PModMessageType.ModDataResponse)
-                {
-                    var modResponse = JsonSerializer.Deserialize<ModDataResponse>(json, options);
-                    if (modResponse != null)
-                    {
-                        _pluginLog.Info($"[P2P] 📡 Received streamed ModDataResponse for {modResponse.PlayerName}: {modResponse.FileReplacements.Count} files");
-                    }
-                    return modResponse;
-                }
 
-                return messageType switch
+                    P2PModMessageType messageType;
+if (typeElement.ValueKind == JsonValueKind.Number)
+{
+    var typeInt = typeElement.GetInt32();
+    if (!Enum.IsDefined(typeof(P2PModMessageType), typeInt))
+    {
+        _pluginLog.Error($"[P2P] ❌ Unknown numeric type value: {typeInt}");
+        _pluginLog.Error($"[P2P] 📄 JSON preview: {json.Substring(0, Math.Min(500, json.Length))}...");
+        return null;
+    }
+    messageType = (P2PModMessageType)typeInt;
+}
+else if (typeElement.ValueKind == JsonValueKind.String)
+{
+    var rawType = typeElement.GetString() ?? string.Empty;
+    // Map known legacy string type names to enum for compatibility
+    var lowered = rawType.Trim().ToLowerInvariant();
+    switch (lowered)
+    {
+        case "member_list_request":
+        case "memberlistrequest":
+        case "get_member_list":
+            messageType = P2PModMessageType.MemberListRequest;
+            break;
+        case "member_list_response":
+        case "memberlistresponse":
+            messageType = P2PModMessageType.MemberListResponse;
+            break;
+        case "mod_sync_request":
+        case "modsyncrequest":
+        case "apply_mods":
+            messageType = P2PModMessageType.ModApplicationRequest;
+            break;
+        case "client_ready":
+        case "sync_complete":
+        case "syncomplete":
+            messageType = P2PModMessageType.SyncComplete;
+            break;
+        default:
+            if (int.TryParse(rawType, out var typeInt))
+            {
+                if (!Enum.IsDefined(typeof(P2PModMessageType), typeInt))
                 {
-                    P2PModMessageType.ModDataRequest => JsonSerializer.Deserialize<ModDataRequest>(json, options),
-                    P2PModMessageType.ComponentRequest => JsonSerializer.Deserialize<ComponentRequest>(json, options),
-                    P2PModMessageType.ComponentResponse => JsonSerializer.Deserialize<ComponentResponse>(json, options),
-                    P2PModMessageType.ModApplicationRequest => JsonSerializer.Deserialize<ModApplicationRequest>(json, options),
-                    P2PModMessageType.ModApplicationResponse => JsonSerializer.Deserialize<ModApplicationResponse>(json, options),
-                    P2PModMessageType.SyncComplete => JsonSerializer.Deserialize<SyncCompleteMessage>(json, options),
-                    P2PModMessageType.Error => JsonSerializer.Deserialize<ErrorMessage>(json, options),
-                    _ => null
-                };
+                    _pluginLog.Error($"[P2P] ❌ Unknown numeric-string type value: {rawType}");
+                    _pluginLog.Error($"[P2P] 📄 JSON preview: {json.Substring(0, Math.Min(500, json.Length))}...");
+                    return null;
+                }
+                messageType = (P2PModMessageType)typeInt;
+            }
+            else if (Enum.TryParse<P2PModMessageType>(rawType, true, out var parsed))
+            {
+                messageType = parsed;
+            }
+            else
+            {
+                _pluginLog.Warning($"[P2P] ⚠️ Unsupported string type '{rawType}', attempting legacy parse bypass");
+                // Fallback: try legacy parser on full JSON to route away from enhanced protocol
+                var legacy = TryParseLegacyMessage(json, document.RootElement);
+                if (legacy != null)
+                {
+                    _pluginLog.Info($"[P2P] ✅ Routed as legacy message ({legacy.Type})");
+                    return legacy;
+                }
+                _pluginLog.Error($"[P2P] ❌ Unsupported string type value: '{rawType}'");
+                _pluginLog.Error($"[P2P] 📄 JSON preview: {json.Substring(0, Math.Min(500, json.Length))}...");
+                return null;
+            }
+            break;
+    }
+}
+else
+{
+    _pluginLog.Error($"[P2P] ❌ Unsupported 'type' JSON kind: {typeElement.ValueKind}");
+    _pluginLog.Error($"[P2P] 📄 JSON preview: {json.Substring(0, Math.Min(500, json.Length))}...");
+    return null;
+}
+                    // Message type detected
+                    
+                    var options = new JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                        PropertyNameCaseInsensitive = true
+                    };
+
+                    // Handle chunked messages specially since they may return null while collecting chunks
+                    if (messageType == P2PModMessageType.ChunkedMessage)
+                    {
+                        var chunkedMessage = JsonSerializer.Deserialize<ChunkedMessage>(json, options);
+                        var result = HandleChunkedMessage(chunkedMessage);
+                        
+                        // For chunked messages, null return is normal (still collecting chunks)
+                        
+                        return result;
+                    }
+                    
+                    // Handle streaming data - check if this is part of a streamed message
+                    if (messageType == P2PModMessageType.ModDataResponse)
+                    {
+                        var modResponse = JsonSerializer.Deserialize<ModDataResponse>(json, options);
+                        return modResponse;
+                    }
+
+                    if (messageType == P2PModMessageType.FileChunkMessage)
+                    {
+                        var fcm = JsonSerializer.Deserialize<FileChunkMessage>(json, options);
+                        return fcm;
+                    }
+
+                    return messageType switch
+                    {
+                        P2PModMessageType.ModDataRequest => JsonSerializer.Deserialize<ModDataRequest>(json, options),
+                        P2PModMessageType.MemberListRequest => JsonSerializer.Deserialize<MemberListRequestMessage>(json, options),
+                        P2PModMessageType.MemberListResponse => JsonSerializer.Deserialize<MemberListResponseMessage>(json, options),
+                        P2PModMessageType.ComponentRequest => JsonSerializer.Deserialize<ComponentRequest>(json, options),
+                        P2PModMessageType.ComponentResponse => JsonSerializer.Deserialize<ComponentResponse>(json, options),
+                        P2PModMessageType.ModApplicationRequest => JsonSerializer.Deserialize<ModApplicationRequest>(json, options),
+                        P2PModMessageType.ModApplicationResponse => JsonSerializer.Deserialize<ModApplicationResponse>(json, options),
+                        P2PModMessageType.SyncComplete => JsonSerializer.Deserialize<SyncCompleteMessage>(json, options),
+                        P2PModMessageType.Error => JsonSerializer.Deserialize<ErrorMessage>(json, options),
+                        P2PModMessageType.ChannelNegotiation => JsonSerializer.Deserialize<ChannelNegotiationMessage>(json, options),
+                        P2PModMessageType.ChannelNegotiationResponse => JsonSerializer.Deserialize<ChannelNegotiationResponse>(json, options),
+                        P2PModMessageType.ReconnectOffer => JsonSerializer.Deserialize<ReconnectOfferMessage>(json, options),
+                        P2PModMessageType.ReconnectAnswer => JsonSerializer.Deserialize<ReconnectAnswerMessage>(json, options),
+                        P2PModMessageType.RecoveryRequest => JsonSerializer.Deserialize<RecoveryRequestMessage>(json, options),
+                        _ => null
+                    };
                 }
             }
             catch (JsonException ex)
@@ -507,57 +751,99 @@ namespace FyteClub.ModSystem
         {
             try
             {
-                _pluginLog.Info($"[P2P] 🔄 Processing {message.Type} message: {message.MessageId}");
-
                 // Check if this is a response to a pending request
                 if (!string.IsNullOrEmpty(message.ResponseTo))
                 {
-                    _pluginLog.Info($"[P2P] 📬 Message is response to request: {message.ResponseTo}");
                     lock (_requestLock)
                     {
                         if (_pendingRequests.TryGetValue(message.ResponseTo, out var tcs))
                         {
                             _pendingRequests.Remove(message.ResponseTo);
                             tcs.SetResult(message);
-                            _pluginLog.Info($"[P2P] ✅ Completed pending request: {message.ResponseTo}");
                             return;
                         }
                     }
-                    _pluginLog.Warning($"[P2P] ⚠️ No pending request found for response: {message.ResponseTo}");
                 }
 
                 // Handle different message types with explicit logging
                 switch (message)
                 {
                     case ModDataRequest request:
-                        _pluginLog.Info($"[P2P] 📥 Handling ModDataRequest for player: {request.PlayerName}");
                         if (OnModDataRequested != null)
                         {
                             var response = await OnModDataRequested(request);
                             response.ResponseTo = request.MessageId;
-                            _pluginLog.Info($"[P2P] ✅ Generated ModDataResponse for: {request.PlayerName}");
                             // Response will be sent by the caller
-                        }
-                        else
-                        {
-                            _pluginLog.Warning($"[P2P] ⚠️ No handler registered for ModDataRequest");
                         }
                         break;
 
                     case ModDataResponse response:
-                        _pluginLog.Info($"[P2P] 🎯 Handling ModDataResponse for player: {response.PlayerName}");
-                        _pluginLog.Info($"[P2P] 📊 Response contains: {response.PlayerInfo.Mods?.Count ?? 0} mods, {response.FileReplacements.Count} files");
                         // Handle received mod data (from broadcasts)
+                        _pluginLog.Info($"[P2P] Processing ModDataResponse for {response.PlayerName} with {response.FileReplacements.Count} files");
                         if (OnModDataReceived != null)
                         {
-                            _pluginLog.Info($"[P2P] 🚀 Triggering OnModDataReceived event for: {response.PlayerName}");
                             await OnModDataReceived(response);
-                            _pluginLog.Info($"[P2P] ✅ Completed OnModDataReceived event for: {response.PlayerName}");
                         }
                         else
                         {
-                            _pluginLog.Error($"[P2P] ❌ No handler registered for OnModDataReceived! This is the critical issue!");
+                            _pluginLog.Error($"[P2P] No handler registered for OnModDataReceived!");
                         }
+                        break;
+
+                    case FileChunkMessage fcm:
+                        if (OnFileChunkReceived != null)
+                        {
+                            await OnFileChunkReceived(fcm);
+                        }
+                        break;
+
+                    case MemberListRequestMessage memberListRequest:
+                        if (OnMemberListRequested != null)
+                        {
+                            var response = await OnMemberListRequested(memberListRequest);
+                            if (response != null)
+                            {
+                                response.ResponseTo = memberListRequest.MessageId;
+                            }
+                        }
+                        break;
+
+                    case MemberListResponseMessage memberListResponse:
+                        OnMemberListResponseReceived?.Invoke(memberListResponse);
+                        break;
+
+                    case ChannelNegotiationMessage channelNegotiation:
+                        if (OnChannelNegotiationRequested != null)
+                        {
+                            var response = await OnChannelNegotiationRequested(channelNegotiation);
+                            if (response != null)
+                            {
+                                response.ResponseTo = channelNegotiation.MessageId;
+                            }
+                        }
+                        break;
+
+                    case ChannelNegotiationResponse channelResponse:
+                        OnChannelNegotiationResponseReceived?.Invoke(channelResponse);
+                        break;
+
+                    case ReconnectOfferMessage reconnectOffer:
+                        if (OnReconnectOfferReceived != null)
+                        {
+                            var answer = await OnReconnectOfferReceived(reconnectOffer);
+                            if (answer != null)
+                            {
+                                answer.ResponseTo = reconnectOffer.MessageId;
+                            }
+                        }
+                        break;
+
+                    case ReconnectAnswerMessage reconnectAnswer:
+                        OnReconnectAnswerReceived?.Invoke(reconnectAnswer);
+                        break;
+
+                    case RecoveryRequestMessage recoveryRequest:
+                        OnRecoveryRequestReceived?.Invoke(recoveryRequest);
                         break;
 
                     case ComponentRequest request:
@@ -589,7 +875,7 @@ namespace FyteClub.ModSystem
             }
             catch (Exception ex)
             {
-                _pluginLog.Error($"[P2P] Error processing message {message.MessageId}: {ex.Message}");
+                _pluginLog.Error($"[P2P] Error processing message {message.MessageId}: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
@@ -639,29 +925,51 @@ namespace FyteClub.ModSystem
 
             lock (_requestLock)
             {
-                if (!_chunkBuffers.TryGetValue(chunk.ChunkId, out var buffer))
+                if (string.IsNullOrEmpty(chunk.ChunkId) || !_chunkBuffers.TryGetValue(chunk.ChunkId, out var buffer))
                 {
                     var totalSize = chunk.TotalChunks * CHUNK_SIZE; // Estimate, will be exact for last chunk
                     buffer = new ChunkBuffer(chunk.TotalChunks, totalSize, chunk.OriginalMessageType, chunk.OriginalMessageTypeName, chunk.MessageMetadata);
                     _chunkBuffers[chunk.ChunkId] = buffer;
                 }
 
-                // Direct copy to pre-allocated buffer
+                // Direct copy to pre-allocated buffer with bounds checks
                 var offset = chunk.ChunkIndex * CHUNK_SIZE;
-                Buffer.BlockCopy(chunk.ChunkData, 0, buffer.Data, offset, chunk.ChunkData.Length);
-                buffer.ReceivedChunks++;
+                var copyLen = chunk.ChunkData?.Length ?? 0;
+                var remaining = buffer.Data.Length - offset;
+                if (chunk.ChunkIndex < 0 || chunk.ChunkIndex >= buffer.TotalChunks)
+                {
+                    _pluginLog.Warning($"[P2P] Ignoring out-of-range chunk {chunk.ChunkIndex}/{buffer.TotalChunks} for {chunk.ChunkId}");
+                }
+                else if (copyLen <= 0)
+                {
+                    _pluginLog.Warning($"[P2P] Received empty chunk {chunk.ChunkIndex} for {chunk.ChunkId}");
+                }
+                else if (remaining <= 0)
+                {
+                    _pluginLog.Error($"[P2P] No remaining space for chunk {chunk.ChunkIndex} at offset {offset} (buffer {buffer.Data.Length}) for {chunk.ChunkId}");
+                }
+                else
+                {
+                    var safeLen = Math.Min(copyLen, remaining);
+                    if (chunk.ChunkData != null) Buffer.BlockCopy(chunk.ChunkData, 0, buffer.Data, offset, safeLen);
+                    buffer.ReceivedChunks++;
+                }
                 
                 // Log progress every 25%
-                var progress = buffer.ReceivedChunks * 100.0 / buffer.TotalChunks;
-                if (progress >= 25 && buffer.ReceivedChunks % (buffer.TotalChunks / 4) == 0)
+                var progress = buffer.ReceivedChunks * 100.0 / Math.Max(1, buffer.TotalChunks);
+                if (buffer.TotalChunks >= 4)
                 {
-                    _pluginLog.Info($"[P2P] 📥 Received {progress:F0}% ({buffer.ReceivedChunks}/{buffer.TotalChunks} chunks)");
+                    var quarter = buffer.TotalChunks / 4; // integer division, >=1
+                    if (progress >= 25 && buffer.ReceivedChunks % quarter == 0)
+                    {
+                        _pluginLog.Info($"[P2P] 📥 Received {progress:F0}% ({buffer.ReceivedChunks}/{buffer.TotalChunks} chunks)");
+                    }
                 }
                 
                 if (buffer.ReceivedChunks == buffer.TotalChunks)
                 {
                     // Calculate actual size (last chunk might be smaller)
-                    var actualSize = (buffer.TotalChunks - 1) * CHUNK_SIZE + chunk.ChunkData.Length;
+                    var actualSize = (buffer.TotalChunks - 1) * CHUNK_SIZE + (chunk.ChunkData?.Length ?? 0);
                     var finalData = actualSize == buffer.Data.Length ? buffer.Data : buffer.Data[..actualSize];
                     
                     _chunkBuffers.Remove(chunk.ChunkId);
@@ -751,6 +1059,8 @@ namespace FyteClub.ModSystem
                         P2PModMessageType.ModApplicationResponse => JsonSerializer.Deserialize<ModApplicationResponse>(json, options),
                         P2PModMessageType.SyncComplete => JsonSerializer.Deserialize<SyncCompleteMessage>(json, options),
                         P2PModMessageType.Error => JsonSerializer.Deserialize<ErrorMessage>(json, options),
+                        P2PModMessageType.ChannelNegotiation => JsonSerializer.Deserialize<ChannelNegotiationMessage>(json, options),
+                        P2PModMessageType.ChannelNegotiationResponse => JsonSerializer.Deserialize<ChannelNegotiationResponse>(json, options),
                         _ => null
                     };
                 }
@@ -802,7 +1112,7 @@ namespace FyteClub.ModSystem
         {
             try
             {
-                var options = new JsonSerializerOptions
+                var legacyOptions = new JsonSerializerOptions
                 {
                     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                     PropertyNameCaseInsensitive = true
@@ -830,7 +1140,7 @@ namespace FyteClub.ModSystem
                 if (hasPlayerInfo && hasFiles)
                 {
                     _pluginLog.Info("[P2P] 🎯 Detected legacy ModDataResponse format");
-                    var response = JsonSerializer.Deserialize<ModDataResponse>(json, options);
+                    var response = JsonSerializer.Deserialize<ModDataResponse>(json, legacyOptions);
                     if (response != null)
                     {
                         response.Type = P2PModMessageType.ModDataResponse;
@@ -840,7 +1150,7 @@ namespace FyteClub.ModSystem
                 else if (hasPlayerName && !hasFiles && !hasComponentId)
                 {
                     _pluginLog.Info("[P2P] 🎯 Detected legacy ModDataRequest format");
-                    var request = JsonSerializer.Deserialize<ModDataRequest>(json, options);
+                    var request = JsonSerializer.Deserialize<ModDataRequest>(json, legacyOptions);
                     if (request != null)
                     {
                         request.Type = P2PModMessageType.ModDataRequest;
@@ -850,7 +1160,7 @@ namespace FyteClub.ModSystem
                 else if (hasComponentId && !hasFileData)
                 {
                     _pluginLog.Info("[P2P] 🎯 Detected legacy ComponentRequest format");
-                    var request = JsonSerializer.Deserialize<ComponentRequest>(json, options);
+                    var request = JsonSerializer.Deserialize<ComponentRequest>(json, legacyOptions);
                     if (request != null)
                     {
                         request.Type = P2PModMessageType.ComponentRequest;
@@ -860,7 +1170,7 @@ namespace FyteClub.ModSystem
                 else if (hasComponentId && hasFileData)
                 {
                     _pluginLog.Info("[P2P] 🎯 Detected legacy ComponentResponse format");
-                    var response = JsonSerializer.Deserialize<ComponentResponse>(json, options);
+                    var response = JsonSerializer.Deserialize<ComponentResponse>(json, legacyOptions);
                     if (response != null)
                     {
                         response.Type = P2PModMessageType.ComponentResponse;
@@ -870,7 +1180,7 @@ namespace FyteClub.ModSystem
                 else if (hasError)
                 {
                     _pluginLog.Info("[P2P] 🎯 Detected legacy ErrorMessage format");
-                    var error = JsonSerializer.Deserialize<ErrorMessage>(json, options);
+                    var error = JsonSerializer.Deserialize<ErrorMessage>(json, legacyOptions);
                     if (error != null)
                     {
                         error.Type = P2PModMessageType.Error;
@@ -880,7 +1190,7 @@ namespace FyteClub.ModSystem
                 else if (hasSuccess)
                 {
                     _pluginLog.Info("[P2P] 🎯 Detected legacy SyncComplete format");
-                    var complete = JsonSerializer.Deserialize<SyncCompleteMessage>(json, options);
+                    var complete = JsonSerializer.Deserialize<SyncCompleteMessage>(json, legacyOptions);
                     if (complete != null)
                     {
                         complete.Type = P2PModMessageType.SyncComplete;
@@ -909,10 +1219,10 @@ namespace FyteClub.ModSystem
                 
                 // Send complete mod data response directly - same as test streaming
                 var streamingBytes = SerializeMessage(modResponse);
-                _pluginLog.Info($"[P2P] 📡 Streaming {streamingBytes.Length} bytes ({streamingBytes.Length / 1024.0 / 1024.0:F1} MB)");
+                // Streaming large data transfer
                 
                 // Stream in chunks to avoid overwhelming the connection
-                const int STREAM_CHUNK_SIZE = 64 * 1024; // 64KB chunks for streaming
+                const int STREAM_CHUNK_SIZE = 32 * 1024; // 32KB chunks for streaming (reduced from 64KB to be more WebRTC-friendly)
                 var totalChunks = (streamingBytes.Length + STREAM_CHUNK_SIZE - 1) / STREAM_CHUNK_SIZE;
                 
                 for (int i = 0; i < totalChunks; i++)
@@ -922,13 +1232,38 @@ namespace FyteClub.ModSystem
                     var chunk = new byte[chunkSize];
                     Buffer.BlockCopy(streamingBytes, offset, chunk, 0, chunkSize);
                     
-                    await sendFunction(chunk);
+                    // Add retry logic for WebRTC send failures
+                    int retryCount = 0;
+                    const int maxRetries = 3;
                     
-                    // Log every 25% of progress
-                    var progress = (i + 1) * 100.0 / totalChunks;
-                    if (progress >= 25 && (i + 1) % (totalChunks / 4) == 0)
+                    while (retryCount < maxRetries)
                     {
-                        _pluginLog.Info($"[P2P] 📡 Streamed {progress:F0}% ({i + 1}/{totalChunks} chunks)");
+                        try
+                        {
+                            await sendFunction(chunk);
+                            break; // Success, exit retry loop
+                        }
+                        catch (Exception ex)
+                        {
+                            retryCount++;
+                            _pluginLog.Warning($"[P2P] Chunk {i + 1}/{totalChunks} send failed (attempt {retryCount}/{maxRetries}): {ex.Message}");
+                            
+                            if (retryCount >= maxRetries)
+                            {
+                                throw new Exception($"Failed to send chunk {i + 1}/{totalChunks} after {maxRetries} attempts: {ex.Message}");
+                            }
+                            
+                            // Exponential backoff: 100ms, 200ms, 400ms
+                            await Task.Delay(100 * (int)Math.Pow(2, retryCount - 1));
+                        }
+                    }
+                    
+                    // Progress tracking for streaming
+                    
+                    // Add flow control - delay every 5 chunks to prevent overwhelming WebRTC
+                    if (i % 5 == 0 && i > 0)
+                    {
+                        await Task.Delay(10); // Small delay to prevent buffer overflow
                     }
                     
                     // Yield control every 10 chunks
@@ -936,7 +1271,7 @@ namespace FyteClub.ModSystem
                         await Task.Yield();
                 }
                 
-                _pluginLog.Info($"[P2P] ✅ File streaming complete: {totalChunks} chunks, {streamingBytes.Length / 1024.0 / 1024.0:F1} MB");
+                _pluginLog.Info($"[P2P] File streaming complete: {totalChunks} chunks, {streamingBytes.Length / 1024.0 / 1024.0:F1} MB");
             }
             catch (Exception ex)
             {

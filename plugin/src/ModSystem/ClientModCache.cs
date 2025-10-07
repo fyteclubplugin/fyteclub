@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
+using FyteClub.ModSystem;
 
 namespace FyteClub
 {
@@ -166,7 +167,7 @@ namespace FyteClub
                     // Store content if not already cached (deduplication)
                     if (!File.Exists(contentPath))
                     {
-                        await File.WriteAllBytesAsync(contentPath, mod.Content);
+                        await FileWriteHelper.WriteFileWithRetryAsync(contentPath, mod.Content, _pluginLog);
                         newContentCount++;
                         
                         // Update metadata
@@ -195,7 +196,7 @@ namespace FyteClub
                     if (mod.Configuration != null)
                     {
                         var configPath = Path.Combine(_metadataDir, $"{playerId}_{contentHash}.config");
-                        await File.WriteAllBytesAsync(configPath, mod.Configuration);
+                        await FileWriteHelper.WriteFileWithRetryAsync(configPath, mod.Configuration, _pluginLog);
                     }
 
                     modReferences.Add(new ModReference
@@ -604,7 +605,7 @@ namespace FyteClub
                 {
                     // Store new content
                     var contentData = System.Text.Encoding.UTF8.GetBytes(recipeData?.ToString() ?? "");
-                    await File.WriteAllBytesAsync(contentPath, contentData);
+                    await FileWriteHelper.WriteFileWithRetryAsync(contentPath, contentData, _pluginLog);
                     
                     // Update metadata with reference count
                     _modMetadata.TryAdd(contentHash, new CachedModInfo

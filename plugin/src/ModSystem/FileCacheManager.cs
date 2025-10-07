@@ -61,7 +61,8 @@ namespace FyteClub.ModSystem
                 var cacheFilePath = GetCacheFilePath(hash);
                 if (!File.Exists(cacheFilePath))
                 {
-                    await File.WriteAllBytesAsync(cacheFilePath, await File.ReadAllBytesAsync(filePath));
+                    var fileContent = await File.ReadAllBytesAsync(filePath);
+                    await FileWriteHelper.WriteFileWithRetryAsync(cacheFilePath, fileContent, _pluginLog);
                 }
                 entry.CachedPath = cacheFilePath;
             }

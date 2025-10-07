@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
@@ -33,7 +34,12 @@ namespace FyteClub
             // Force TURN server usage for reliable connections
             try
             {
-                var robustConnection = new WebRTC.RobustWebRTCConnection(_pluginLog);
+                // Use proper config directory for syncshell persistence
+                var configDirectory = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "XIVLauncher", "pluginConfigs", "FyteClub"
+                );
+                var robustConnection = new WebRTC.RobustWebRTCConnection(_pluginLog, configDirectory);
 
                 // Wire the local player name resolver if provided
                 if (_localPlayerNameResolver != null)
@@ -199,12 +205,14 @@ namespace FyteClub
         bool IsConnected { get; }
         event Action? OnConnected;
         event Action? OnDisconnected;
-        event Action<byte[]>? OnDataReceived;
+        event Action<byte[], int>? OnDataReceived; // byte[] data, int channelIndex
 
         Task<bool> InitializeAsync();
         Task<string> CreateOfferAsync();
         Task<string> CreateAnswerAsync(string offerSdp);
         Task SetRemoteAnswerAsync(string answerSdp);
         Task SendDataAsync(byte[] data);
+        bool IsTransferring(); // Check if actively sending data
+        bool IsEstablishing(); // Check if connection handshake is in progress
     }
 }
