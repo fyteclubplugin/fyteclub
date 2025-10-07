@@ -146,6 +146,13 @@ namespace FyteClub.ModSystem
                 // Accept both framed (leading 0/1) and raw JSON ('{' or '[') protocol messages
                 var first = data[0];
                 var looksLikeProtocol = first == 0 || first == 1 || first == (byte)'{' || first == (byte)'[';
+                
+                // Also check for FCHK magic bytes (binary file chunk protocol)
+                if (data.Length >= 4 && data[0] == 'F' && data[1] == 'C' && data[2] == 'H' && data[3] == 'K')
+                {
+                    looksLikeProtocol = true;
+                }
+                
                 if (!looksLikeProtocol)
                 {
                     return false;
@@ -168,7 +175,22 @@ namespace FyteClub.ModSystem
         {
             try
             {
+                // Safety check: Don't try to parse binary data as JSON
+                if (data.Length >= 4 && data[0] == 'F' && data[1] == 'C' && data[2] == 'H' && data[3] == 'K')
+                {
+                    _pluginLog.Debug($"[P2PModSyncIntegration] Skipping binary file chunk in legacy handler");
+                    return;
+                }
+                
                 var json = System.Text.Encoding.UTF8.GetString(data);
+                
+                // Additional safety: check if first character looks like JSON
+                if (json.Length > 0 && json[0] != '{' && json[0] != '[')
+                {
+                    _pluginLog.Debug($"[P2PModSyncIntegration] Data doesn't look like JSON, skipping (starts with '{json[0]}')");
+                    return;
+                }
+                
                 using var document = JsonDocument.Parse(json);
                 
                 if (!document.RootElement.TryGetProperty("type", out var typeElement))

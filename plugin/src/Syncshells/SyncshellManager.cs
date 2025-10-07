@@ -24,6 +24,7 @@ namespace FyteClub
         private readonly Dictionary<string, List<string>> _syncshellConnectionRegistry = new(); // Track connections per syncshell
         private readonly HashSet<string> _processedMessageHashes = new();
         private readonly object _messageLock = new();
+        private readonly object _connectionLock = new(); // Prevent race conditions when creating/replacing connections
 
         private string _lastAnswerCode = "";
 
@@ -160,6 +161,24 @@ namespace FyteClub
             {
                 Console.WriteLine($"Bootstrap connection available - Peer: {bootstrapInfo.PublicKey}");
                 Console.WriteLine($"Direct connection to {bootstrapInfo.IpAddress}:{bootstrapInfo.Port}");
+            }
+
+            // CRITICAL: Check if we already have a healthy connection before creating a new one
+            if (IsConnectionHealthy(syncshellId))
+            {
+                SecureLogger.LogWarning("⚠️ PREVENTED: Attempted to create new connection for {0} but healthy connection already exists! Reusing existing connection.", syncshellId);
+                
+                // Return existing session if available
+                var existingSession = _sessions.Values.FirstOrDefault(s => s.Identity.GetSyncshellHash() == syncshellId);
+                if (existingSession != null)
+                {
+                    return existingSession;
+                }
+                
+                // If no session exists but connection is healthy, create session with existing connection
+                var newSession = new SyncshellSession(identity, null, isHost: false);
+                _sessions[identity.GetSyncshellHash()] = newSession;
+                return newSession;
             }
 
             var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
@@ -318,31 +337,40 @@ namespace FyteClub
                     var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
                     if (syncshell == null) return string.Empty;
                     
-                    // Create host WebRTC connection if not exists
-                    if (!_webrtcConnections.ContainsKey(syncshellId))
+                    // Create host WebRTC connection if not exists OR if existing connection is dead
+                    if (!_webrtcConnections.ContainsKey(syncshellId) || !IsConnectionHealthy(syncshellId))
                     {
-                        var hostConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
-                        await hostConnection.InitializeAsync();
-                    
-                    // CRITICAL: Wire up data handler BEFORE storing connection
-                    hostConnection.OnDataReceived += (data, channelIndex) => {
-                        // Notify P2P orchestrator first for new protocol messages
-                        OnP2PMessageReceived?.Invoke(syncshellId, data);
+                        // Only create new connection if no healthy connection exists
+                        if (IsConnectionHealthy(syncshellId))
+                        {
+                            SecureLogger.LogInfo("✅ Reusing existing healthy connection for syncshell {0}", syncshellId);
+                        }
+                        else
+                        {
+                            SecureLogger.LogInfo("🔧 Creating new host connection for syncshell {0}", syncshellId);
+                            var hostConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
+                            await hostConnection.InitializeAsync();
                         
-                        // Then handle with legacy system
-                        HandleModData(syncshellId, data);
-                    };
-                    hostConnection.OnConnected += () => {
-                        SecureLogger.LogInfo("Host P2P connection established for syncshell {0}", syncshellId);
-                        
-                        // Notify P2P orchestrator of new peer connection
-                        OnPeerConnected?.Invoke(syncshellId, async (data) => {
-                            await hostConnection.SendDataAsync(data);
-                        });
-                    };
-                    
-                    ReplaceWebRTCConnection(syncshellId, hostConnection);
-                }
+                            // CRITICAL: Wire up data handler BEFORE storing connection
+                            hostConnection.OnDataReceived += (data, channelIndex) => {
+                                // Notify P2P orchestrator first for new protocol messages
+                                OnP2PMessageReceived?.Invoke(syncshellId, data);
+                                
+                                // Then handle with legacy system
+                                HandleModData(syncshellId, data);
+                            };
+                            hostConnection.OnConnected += () => {
+                                SecureLogger.LogInfo("Host P2P connection established for syncshell {0}", syncshellId);
+                                
+                                // Notify P2P orchestrator of new peer connection
+                                OnPeerConnected?.Invoke(syncshellId, async (data) => {
+                                    await hostConnection.SendDataAsync(data);
+                                });
+                            };
+                            
+                            ReplaceWebRTCConnection(syncshellId, hostConnection);
+                        }
+                    }
                 
                 // Generate Nostr offer URI using RobustWebRTCConnection
                 if (_webrtcConnections[syncshellId] is WebRTC.RobustWebRTCConnection robustConnection)
@@ -412,13 +440,15 @@ namespace FyteClub
         {
             try
             {
-                // Check if we already have a connection for this syncshell
-                if (_webrtcConnections.ContainsKey(syncshellId))
+                // CRITICAL: Check if we already have a healthy connection for this peer
+                var peerKey = syncshellId + "_" + peerAddress;
+                if (IsConnectionHealthy(peerKey))
                 {
-                    Console.WriteLine($"Already connected to peer in {syncshellId}");
+                    SecureLogger.LogWarning("⚠️ PREVENTED: Already have healthy connection to peer {0} in {1}, skipping duplicate creation", peerAddress, syncshellId);
                     return true;
                 }
                 
+                SecureLogger.LogInfo("🔧 Creating new connection to peer {0} in {1}", peerAddress, syncshellId);
                 var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                 await connection.InitializeAsync();
                 
@@ -474,6 +504,13 @@ namespace FyteClub
         {
             try
             {
+                // CRITICAL: Check if we already have a healthy connection before creating a new one
+                if (IsConnectionHealthy(syncshellId))
+                {
+                    SecureLogger.LogWarning("⚠️ PREVENTED: Attempted to accept connection for {0} but healthy connection already exists! Reusing existing connection.", syncshellId);
+                    return true; // Connection already exists and is healthy
+                }
+                
                 var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                 await connection.InitializeAsync();
                 
@@ -658,8 +695,15 @@ namespace FyteClub
                 
                 // Reduced logging for file transfers
                 
-                // Check if this is binary data (compressed P2P protocol) or JSON (legacy)
+                // Check if this is binary data (compressed P2P protocol, or binary file chunks with FCHK magic) or JSON (legacy)
                 bool isBinaryData = data.Length > 0 && (data[0] == 0x01 || data[0] == 0x1f || data[0] < 0x20);
+                
+                // Also check for FCHK magic bytes (binary file chunk protocol)
+                if (data.Length >= 4 && data[0] == 'F' && data[1] == 'C' && data[2] == 'H' && data[3] == 'K')
+                {
+                    isBinaryData = true;
+                    ModularLogger.LogDebug(LogModule.Syncshells, "HandleModData: Detected FCHK binary chunk, skipping JSON parsing");
+                }
                 
                 if (isBinaryData)
                 {
@@ -668,8 +712,20 @@ namespace FyteClub
                     return;
                 }
                 
-                // Legacy JSON handling
+                // Legacy JSON handling - add extra safety check
                 var modData = Encoding.UTF8.GetString(data);
+                
+                // Additional safety: Check if the UTF-8 decoded string looks like JSON
+                if (string.IsNullOrEmpty(modData) || (modData[0] != '{' && modData[0] != '['))
+                {
+                    // Log first few bytes for debugging
+                    var preview = data.Length >= 8 
+                        ? $"{data[0]:X2} {data[1]:X2} {data[2]:X2} {data[3]:X2} {data[4]:X2} {data[5]:X2} {data[6]:X2} {data[7]:X2}"
+                        : string.Join(" ", data.Take(data.Length).Select(b => $"{b:X2}"));
+                    SecureLogger.LogDebug("HandleModData: Data doesn't look like JSON (first char: '{0}', hex: {1}), skipping", 
+                        modData.Length > 0 ? modData[0].ToString() : "empty", preview);
+                    return;
+                }
                 
                 var parsedData = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(modData);
                 if (parsedData != null)
@@ -955,6 +1011,14 @@ namespace FyteClub
                         try
                         {
                             Console.WriteLine($"Processing WebRTC offer for syncshell {syncshellId}");
+                            
+                            // CRITICAL: Check if we already have a healthy connection before creating a new one
+                            if (IsConnectionHealthy(syncshellId))
+                            {
+                                SecureLogger.LogWarning("⚠️ PREVENTED: Attempted to create new connection for {0} but healthy connection already exists! Skipping offer processing.", syncshellId);
+                                return JoinResult.Success; // Connection already exists and is healthy
+                            }
+                            
                             // Create connection and process offer
                             var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                             await connection.InitializeAsync();
@@ -1083,14 +1147,15 @@ namespace FyteClub
                     // This ensures we can process data received during bootstrap
                     SecureLogger.LogInfo("[P2P] Pre-wiring mod data handler for immediate bootstrap processing");
                     
-                    // Check if connection already exists to prevent duplicates
-                    if (_webrtcConnections.ContainsKey(syncshellId))
+                    // Check if connection already exists and is healthy to prevent duplicates
+                    if (IsConnectionHealthy(syncshellId))
                     {
-                        SecureLogger.LogInfo("WebRTC connection already exists for syncshell {0}, skipping duplicate creation", syncshellId);
+                        SecureLogger.LogWarning("⚠️ PREVENTED: WebRTC connection already exists and is healthy for syncshell {0}, skipping duplicate creation", syncshellId);
                     }
                     else
                     {
                         // Create WebRTC connection and process Nostr offer
+                        SecureLogger.LogInfo("🔧 Creating new WebRTC connection for syncshell {0}", syncshellId);
                         var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                         await connection.InitializeAsync();
                         
@@ -1206,7 +1271,16 @@ namespace FyteClub
                         // Found an existing peer in this syncshell
                         SecureLogger.LogInfo("Found existing peer connection for mesh routing: {0}", existingConnection.Key);
                         
+                        // CRITICAL: Check if we already have a healthy connection before creating a new one
+                        var meshKey = syncshellId + "_mesh";
+                        if (IsConnectionHealthy(meshKey))
+                        {
+                            SecureLogger.LogWarning("⚠️ PREVENTED: Mesh connection already exists and is healthy for {0}, skipping duplicate creation", meshKey);
+                            return true;
+                        }
+                        
                         // Route through this existing peer
+                        SecureLogger.LogInfo("🔧 Creating new mesh connection for {0}", meshKey);
                         var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                         await connection.InitializeAsync();
                         
@@ -1619,7 +1693,15 @@ namespace FyteClub
                         syncshell.Members.Add("You (Host)");
                     }
                     
+                    // CRITICAL: Check if we already have a healthy connection before creating a new one
+                    if (IsConnectionHealthy(syncshellId))
+                    {
+                        SecureLogger.LogWarning("⚠️ PREVENTED: Host connection already exists and is healthy for {0}, skipping duplicate creation", syncshellId);
+                        return;
+                    }
+                    
                     // Create host WebRTC connection ready to accept peers
+                    SecureLogger.LogInfo("🔧 Creating new host connection for syncshell {0}", syncshellId);
                     var hostConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
                     await hostConnection.InitializeAsync();
                     
@@ -1799,6 +1881,14 @@ namespace FyteClub
             {
                 try
                 {
+                    // CRITICAL: Check if we already have a healthy connection before creating a new one
+                    if (IsConnectionHealthy(syncshellId))
+                    {
+                        SecureLogger.LogWarning("⚠️ PREVENTED: Attempted to process WebRTC offer for {0} but healthy connection already exists! Skipping offer processing.", syncshellId);
+                        return;
+                    }
+                    
+                    SecureLogger.LogInfo("🔧 Creating new connection to process WebRTC offer for {0}", syncshellId);
                     var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                 await connection.InitializeAsync();
                 
@@ -1878,6 +1968,19 @@ namespace FyteClub
             var connectionKey = $"{syncshellId}_{peerId}";
             if (_webrtcConnections.TryGetValue(connectionKey, out var connection))
             {
+                // CRITICAL: Don't dispose if actively transferring or establishing
+                if (connection.IsTransferring())
+                {
+                    SecureLogger.LogInfo("⏸️ Deferring disconnect from peer {0} - transfer in progress (buffers draining or recent send)", peerId);
+                    return;
+                }
+                
+                if (connection.IsEstablishing())
+                {
+                    SecureLogger.LogInfo("⏸️ Deferring disconnect from peer {0} - connection still establishing", peerId);
+                    return;
+                }
+                
                 connection.Dispose();
                 _webrtcConnections.Remove(connectionKey);
                 SecureLogger.LogInfo("Disconnected from peer {0} in syncshell {1}", peerId, syncshellId);
@@ -1889,10 +1992,25 @@ namespace FyteClub
             var keysToRemove = _webrtcConnections.Keys.Where(k => k.StartsWith(syncshellId)).ToList();
             foreach (var key in keysToRemove)
             {
-                _webrtcConnections[key].Dispose();
+                var connection = _webrtcConnections[key];
+                
+                // CRITICAL: Check if transfer is active before disposing
+                if (connection.IsTransferring())
+                {
+                    SecureLogger.LogInfo("⏸️ Deferring disconnect from syncshell {0} - connection {1} has active transfer", syncshellId, key);
+                    continue; // Skip this connection, leave it for later cleanup
+                }
+                
+                if (connection.IsEstablishing())
+                {
+                    SecureLogger.LogInfo("⏸️ Deferring disconnect from syncshell {0} - connection {1} still establishing", syncshellId, key);
+                    continue;
+                }
+                
+                connection.Dispose();
                 _webrtcConnections.Remove(key);
             }
-            SecureLogger.LogInfo("Disconnected all peers from syncshell {0}", syncshellId);
+            SecureLogger.LogInfo("Disconnected all ready peers from syncshell {0}", syncshellId);
         }
         
         private void HandlePhonebookRequest(string syncshellId, Dictionary<string, object> requestData)
@@ -2125,54 +2243,90 @@ namespace FyteClub
         }
 
         /// <summary>
+        /// Check if an existing connection is healthy and should be reused
+        /// </summary>
+        private bool IsConnectionHealthy(string key)
+        {
+            lock (_connectionLock)
+            {
+                if (_webrtcConnections.TryGetValue(key, out var connection))
+                {
+                    // Connection is healthy if it's connected, establishing, or actively transferring
+                    bool isHealthy = connection.IsConnected || connection.IsEstablishing() || connection.IsTransferring();
+                    
+                    if (isHealthy)
+                    {
+                        SecureLogger.LogInfo("✅ Existing connection for key {0} is healthy (IsConnected={1}, IsEstablishing={2}, IsTransferring={3})", 
+                            key, connection.IsConnected, connection.IsEstablishing(), connection.IsTransferring());
+                    }
+                    
+                    return isHealthy;
+                }
+                return false;
+            }
+        }
+        
+        /// <summary>
         /// Safely replaces a WebRTC connection, disposing the old one first to prevent channel leaks
+        /// CRITICAL: This method uses a lock to prevent race conditions
         /// </summary>
         private void ReplaceWebRTCConnection(string key, IWebRTCConnection newConnection)
         {
-            // Dispose old connection if it exists
-            if (_webrtcConnections.TryGetValue(key, out var oldConnection))
+            lock (_connectionLock)
             {
-                try
+                // Dispose old connection if it exists
+                if (_webrtcConnections.TryGetValue(key, out var oldConnection))
                 {
-                    // Safety check 1: Is the connection actively transferring data?
-                    if (oldConnection.IsTransferring())
+                    try
                     {
-                        SecureLogger.LogWarning("⚠️ Cannot replace WebRTC connection for key {0} - active transfer in progress! Keeping existing connection.", key);
-                        // Dispose the new connection instead and keep the old one
-                        newConnection?.Dispose();
-                        return;
+                        // Log connection states for debugging
+                        SecureLogger.LogInfo("🔍 ReplaceWebRTCConnection for key {0}: oldConnection.IsConnected={1}, IsTransferring={2}, IsEstablishing={3}", 
+                            key, oldConnection.IsConnected, oldConnection.IsTransferring(), oldConnection.IsEstablishing());
+                        
+                        // Safety check 1: Is the connection actively transferring data?
+                        if (oldConnection.IsTransferring())
+                        {
+                            SecureLogger.LogWarning("⚠️ BLOCKED: Cannot replace WebRTC connection for key {0} - active transfer in progress! Keeping existing connection.", key);
+                            // Dispose the new connection instead and keep the old one
+                            newConnection?.Dispose();
+                            return;
+                        }
+                        
+                        // Safety check 2: Is the connection still establishing (handshake in progress)?
+                        if (oldConnection.IsEstablishing())
+                        {
+                            SecureLogger.LogWarning("⚠️ BLOCKED: Cannot replace WebRTC connection for key {0} - connection still establishing! Keeping existing connection.", key);
+                            // Dispose the new connection instead and keep the old one
+                            newConnection?.Dispose();
+                            return;
+                        }
+                        
+                        // Safety check 3: Is the connection actually disconnected? Only replace dead connections!
+                        if (oldConnection.IsConnected)
+                        {
+                            SecureLogger.LogWarning("⚠️ BLOCKED: Cannot replace WebRTC connection for key {0} - existing connection is still CONNECTED and healthy! Keeping existing connection.", key);
+                            // Dispose the new connection instead and keep the working one
+                            newConnection?.Dispose();
+                            return;
+                        }
+                        
+                        SecureLogger.LogInfo("✅ Disposing old WebRTC connection for key: {0} (connection is disconnected, not transferring, and not establishing)", key);
+                        oldConnection.Dispose();
                     }
-                    
-                    // Safety check 2: Is the connection still establishing (handshake in progress)?
-                    if (oldConnection.IsEstablishing())
+                    catch (Exception ex)
                     {
-                        SecureLogger.LogWarning("⚠️ Cannot replace WebRTC connection for key {0} - connection still establishing! Keeping existing connection.", key);
-                        // Dispose the new connection instead and keep the old one
-                        newConnection?.Dispose();
-                        return;
+                        SecureLogger.LogError("Error disposing old WebRTC connection: {0}", ex.Message);
                     }
-                    
-                    // Safety check 3: Is the connection actually disconnected? Only replace dead connections!
-                    if (oldConnection.IsConnected)
-                    {
-                        SecureLogger.LogWarning("⚠️ Cannot replace WebRTC connection for key {0} - existing connection is still CONNECTED and healthy! Keeping existing connection.", key);
-                        // Dispose the new connection instead and keep the working one
-                        newConnection?.Dispose();
-                        return;
-                    }
-                    
-                    SecureLogger.LogInfo("Disposing old WebRTC connection for key: {0} (connection is disconnected, not transferring, and not establishing)", key);
-                    oldConnection.Dispose();
                 }
-                catch (Exception ex)
+                else
                 {
-                    SecureLogger.LogError("Error disposing old WebRTC connection: {0}", ex.Message);
+                    SecureLogger.LogInfo("✅ No existing connection for key {0}, adding new connection", key);
                 }
+                
+                // Assign new connection
+                _webrtcConnections[key] = newConnection;
+                SecureLogger.LogInfo("✅ Replaced WebRTC connection for key: {0}", key);
             }
-            
-            // Assign new connection
-            _webrtcConnections[key] = newConnection;
-            SecureLogger.LogInfo("Replaced WebRTC connection for key: {0}", key);
         }
     }
 

@@ -14,7 +14,6 @@ c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\FyteClubP
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\FyteClubPlugin.Tests.runtimeconfig.json
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\FyteClubPlugin.Tests.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\FyteClubPlugin.Tests.pdb
-c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\BTCPayServer.Lightning.Common.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Castle.Core.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Microsoft.VisualStudio.CodeCoverage.Shim.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Microsoft.Extensions.Logging.Abstractions.dll
@@ -26,15 +25,11 @@ c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Microsoft
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Microsoft.TestPlatform.Utilities.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Microsoft.VisualStudio.TestPlatform.Common.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Moq.dll
-c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\NBitcoin.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\NBitcoin.Secp256k1.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Newtonsoft.Json.dll
-c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Nostr.Client.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\NuGet.Frameworks.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\System.Diagnostics.EventLog.Messages.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\System.Diagnostics.EventLog.dll
-c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\System.Reactive.dll
-c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Websocket.Client.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\xunit.abstractions.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\xunit.assert.dll
 c:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\xunit.core.dll
@@ -117,3 +112,10 @@ c:\Users\Me\git\fyteclub\plugin-tests\obj\Debug\net9.0-windows\win-x64\refint\Fy
 c:\Users\Me\git\fyteclub\plugin-tests\obj\Debug\net9.0-windows\win-x64\FyteClubPlugin.Tests.pdb
 c:\Users\Me\git\fyteclub\plugin-tests\obj\Debug\net9.0-windows\win-x64\FyteClubPlugin.Tests.genruntimeconfig.cache
 c:\Users\Me\git\fyteclub\plugin-tests\obj\Debug\net9.0-windows\win-x64\ref\FyteClubPlugin.Tests.dll
+C:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\ChaCha20-NetStandard.dll
+C:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\LinqKit.Core.dll
+C:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Microsoft.Bcl.AsyncInterfaces.dll
+C:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\NNostr.Client.dll
+C:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\Serilog.dll
+C:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\System.Interactive.Async.dll
+C:\Users\Me\git\fyteclub\plugin-tests\bin\Debug\net9.0-windows\win-x64\System.Linq.Async.dll

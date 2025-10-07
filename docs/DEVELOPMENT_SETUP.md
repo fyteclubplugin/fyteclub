@@ -130,62 +130,23 @@ private void SetupPenumbraIPC()
 }
 ```
 
-## Testing Strategy
 
-### 1. Local Testing
-- Use `/fyteclub` command to verify plugin loads
-- Test player detection with friends in-game
-- Verify IPC communication with FyteClub client
+## Testing & Troubleshooting
 
-### 2. Integration Testing
-- Test with actual mod files
-- Verify Penumbra integration
-- Test network communication with FyteClub servers
-
-### 3. Performance Testing
-- Monitor memory usage during long sessions
-- Test with many nearby players
-- Verify no FPS impact during mod switching
-
-## Common Issues and Solutions
-
-### Plugin Won't Load
-```
-Error: Could not load plugin FyteClub
-```
-**Solution**: Check .NET version, ensure all dependencies are included
-
-### Penumbra IPC Fails
-```
-Error: IPC subscriber not found
-```
-**Solution**: Ensure Penumbra is installed and enabled, check IPC method names
-
-### Memory Access Violations
-```
-Error: AccessViolationException
-```
-**Solution**: Use Dalamud's safe object table, avoid direct memory access
+- Use `/fyteclub` in-game to verify plugin loads and mod sync works
+- Test with friends to confirm P2P connections and mod sharing
+- If you encounter issues, check dependencies and plugin configuration
 
 ## Distribution
 
-### 1. Plugin Repository Submission
-- Submit to official Dalamud plugin repository
-- Requires code review and approval
-- Automatic updates for users
+- Submit to official Dalamud plugin repository for automatic updates
+- Manual distribution: provide DLL and JSON files for devPlugins folder
 
-### 2. Manual Distribution
-- Provide DLL and JSON files
-- Users manually copy to devPlugins folder
-- Requires manual updates
+## Development Focus
+1. Complete plugin structure
+2. Implement player detection
+3. Integrate Penumbra mod management
+4. Add configuration UI
+5. Test real mod synchronization
 
-## Next Development Steps
-
-1. **Complete basic plugin structure**
-2. **Implement player detection**
-3. **Add FyteClub client IPC**
-4. **Integrate Penumbra mod management**
-5. **Add configuration UI**
-6. **Test with real mod synchronization**
-
-The Dalamud framework handles all the complex memory management and game compatibility - we just focus on the FyteClub-specific logic! 🎮
+The Dalamud framework handles game compatibility and memory management—focus on FyteClub logic!

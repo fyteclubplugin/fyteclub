@@ -1,164 +1,66 @@
-# FyteClub vv5.0.1 (P2P Development)
-
-Share FFXIV mods with friends automatically using peer-to-peer technology.
-
-## What it does
-
-When you're near other players in FFXIV, it syncs your mods directly between players using WebRTC P2P connections. No servers needed - just create or join a syncshell with friends. The plugin detects when you change your mods and shares them automatically.
-
-## New in vv5.0.1 (Performance Fix)
-
-- **Fixed excessive logging spam** - local player name now only logged when it changes instead of every 20ms
-- Reduced framework thread overhead for better game performance
-- Improved plugin responsiveness during gameplay
-
-## Previous in vv5.0.1 (Critical Stability Fixes)
-
-- **Fixed game exit hanging** - removed blocking waits from TURN server disposal
-- **Fixed plugin loading crash** - moved local player access to framework thread
-- **Fixed self-filtering bug** - joiner now properly processes host's mod data
-- Aggressive disposal system prevents resource leaks during shutdown
-- Improved WebRTC connection cleanup for better stability
-
-## Previous in vv5.0.1 (Relay Synchronization Fix)
-
-- **Fixed Nostr relay mismatch** between host and joiner connections
-- Host and joiner now use identical relay lists for reliable P2P signaling
-- Improved WebRTC connection establishment success rate
-- All 5 Nostr relays now properly synchronized in invite codes
-
-## Previous in vv5.0.1 (Simplified Architecture)
-
-- **Switched to simplified P2P architecture** for better maintainability and debugging
-- Fixed WebRTC crashes by using ProximityVoiceChat's stable WebRTC library
-- Added duplicate syncshell detection ("You are already in this syncshell")
-- Implemented proper native DLL loading with SetDllDirectory
-- WebRTC P2P connections now working instead of mock implementation
-- Graceful fallback system when WebRTC unavailable
-- Cleaner component separation while preserving all working functionality
-
-## Features
-
-- Works with Penumbra, Glamourer, CustomizePlus, SimpleHeels, Honorific
-- Automatic mod change detection and sharing
-- Detects nearby players (50m range)
-- End-to-end encrypted mod sharing
-- Peer-to-peer connections (no servers)
-- Join multiple syncshells (friend groups)
-- WebRTC with NAT traversal
-- Manual sync button when you need it
-
-## How to use
-
-1. Someone creates a syncshell and shares the invite code
-2. Everyone else joins using the invite code
-3. Play FFXIV together - mods sync automatically via P2P
-4. Each friend group has their own private syncshell
-
-## Use cases
-
-- Share mods with friends without public uploads
-- Keep mod sharing private within your group
-- No server hosting or technical setup required
-- Your home IP stays private (WebRTC handles NAT)
-
-## How it works
-
-### Plugin (FFXIV)
-- Scans for nearby players (50m range)
-- Connects to friends via WebRTC P2P
-- Integrates with mod plugins (Penumbra, Glamourer, etc.)
-- Encrypts mod data before sending
-
-### P2P Architecture
-- WebRTC data channels for direct communication
-- Syncshells use persistent membership tokens
-- NAT traversal via free STUN servers
-- No central servers or data collection
-
-## Installation
-
-### Plugin (P2P Version)
-1. Install XIVLauncher and Dalamud
-2. Add experimental repository: `https://raw.githubusercontent.com/fyteclubplugin/fyteclub/main/plugin/repo.json`
-3. Install FyteClub from Dalamud plugin installer
-4. Use `/fyteclub` command in-game
-
-### No Server Required!
-The P2P version eliminates the need for server setup. Just install the plugin and join syncshells with friends.
-
-## Requirements
-
-### Plugin (FFXIV)
-- Final Fantasy XIV Online
-- XIVLauncher and Dalamud
-- Windows 10/11, macOS, or Linux
-- Internet connection (for WebRTC signaling)
-
-### No Server Requirements
-P2P architecture eliminates server hosting requirements.
-
-## Configuration
-
-### Joining Syncshells
-Use `/fyteclub` in-game to:
-- Create new syncshells
-- Join syncshells with invite codes
-- View syncshell members
-- Manage P2P connections
-
-## Privacy & Security
-
-Your mod data is encrypted with AES-256 before being sent anywhere. P2P connections are direct between friends - no servers can see your data. Your home IP is protected by WebRTC NAT traversal.
-
-## Development
-
-### Building from Source
-```bash
-# Build plugin
-cd plugin
 dotnet build -c Release
 
-# Run tests
-cd plugin-tests
-dotnet test
+# FyteClub v5.x – Peer-to-Peer Mod Sync for FFXIV
 
-# Create release package
-build-p2p-release.bat
+FyteClub is a plugin for Final Fantasy XIV that enables automatic, secure mod sharing between friends using direct peer-to-peer (P2P) connections. No servers, no uploads—just instant, encrypted mod sync within your private groups.
+
+## Overview
+FyteClub leverages WebRTC to connect players in-game and synchronize mods automatically. When you’re near other players, your mods are shared directly—no central server required. Syncshells let you create private groups for mod sharing.
+
+## Features
+- Automatic mod sync with nearby players (50m range)
+- Supports Penumbra, Glamourer, CustomizePlus, SimpleHeels, Honorific
+- End-to-end encrypted transfers (AES-256)
+- Pure P2P architecture—no central server
+- Private syncshells for friend groups
+- NAT traversal for easy connectivity
+- Manual sync button for on-demand updates
+
+## Architecture
+- WebRTC data channels for direct, encrypted communication
+- Plugin detects mod changes and syncs with group members
+- Integrates with popular mod plugins for seamless experience
+- No data collection—your mod data stays private
+
+## Quick Start
+1. Install XIVLauncher and Dalamud
+2. Add the experimental repo: `https://raw.githubusercontent.com/fyteclubplugin/fyteclub/main/plugin/repo.json`
+3. Install FyteClub from the Dalamud plugin installer
+4. Use `/fyteclub` in-game to create or join a syncshell
+
+## Usage
+- Create a syncshell and share the invite code with friends
+- Join syncshells using invite codes
+- Play FFXIV together—mods sync automatically
+- Use `/fyteclub` to manage connections and view group members
+
+## Requirements
+- Final Fantasy XIV Online
+- XIVLauncher + Dalamud
+- Windows 10/11, macOS, or Linux
+- Internet connection (for signaling)
+
+## Development
+To build from source:
+```bash
+cd plugin
+dotnet build -c Release
 ```
+WebRTC DLLs are included via NuGet or project references.
 
-### Project Structure
-- `plugin/` - Main FFXIV plugin (C#)
-- `plugin-tests/` - Unit tests
-- `native/` - WebRTC C++ wrapper
-- `docs/` - Documentation
-- `server/` - Optional server components
-
-### WebRTC Dependencies
-The plugin includes:
-- `Microsoft.MixedReality.WebRTC.dll` - ProximityVoiceChat's stable WebRTC library
-- `mrwebrtc.dll` - Native WebRTC runtime (from ProximityVoiceChat)
-- `webrtc_native.dll` - Custom native wrapper (optional)
-
-See `docs/` for detailed documentation.
+## Repository Structure
+- `plugin/` – Main plugin source
+- `native/` – Optional native WebRTC wrapper
+- `docs/` – Documentation
 
 ## Documentation
-
 See the `docs/` folder for:
 - Installation guide
-- User guide
 - Architecture overview
 - Build instructions
-- API reference
 - Security details
-- Troubleshooting
-
-## Support
-
-Check the documentation in `docs/` or open an issue if you run into problems.
 
 ## License
+MIT License. See LICENSE for details.
 
-MIT License - See LICENSE file for details.
-
-This project is not affiliated with Square Enix or Final Fantasy XIV.
+FyteClub is not affiliated with Square Enix or Final Fantasy XIV.

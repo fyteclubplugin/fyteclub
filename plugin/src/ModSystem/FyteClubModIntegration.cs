@@ -412,7 +412,7 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    _pluginLog.Error($"Glamourer detection failed: {ex.Message}");
+                    _pluginLog.Warning($"Glamourer not available: {ex.Message}");
                     IsGlamourerAvailable = false;
                 }
                 
@@ -443,7 +443,7 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    _pluginLog.Error($"Customize+ detection failed: {ex.Message}");
+                    _pluginLog.Warning($"Customize+ not available: {ex.Message}");
                     IsCustomizePlusAvailable = false;
                 }
                 
@@ -792,6 +792,13 @@ namespace FyteClub
             catch (Exception ex)
             {
                 _pluginLog.Error($"ApplyAdvancedPlayerInfo failed: {ex.Message}");
+                _pluginLog.Error($"Exception type: {ex.GetType().FullName}");
+                _pluginLog.Error($"Stack trace: {ex.StackTrace}");
+                if (ex.InnerException != null)
+                {
+                    _pluginLog.Error($"Inner exception: {ex.InnerException.Message}");
+                    _pluginLog.Error($"Inner stack trace: {ex.InnerException.StackTrace}");
+                }
             }
         }
 
@@ -877,6 +884,13 @@ namespace FyteClub
             catch (Exception ex)
             {
                 _pluginLog.Error($"Error applying Penumbra mods: {ex.Message}");
+                _pluginLog.Error($"Penumbra exception type: {ex.GetType().FullName}");
+                _pluginLog.Error($"Stack trace: {ex.StackTrace}");
+                if (ex.InnerException != null)
+                {
+                    _pluginLog.Error($"Inner exception: {ex.InnerException.Message}");
+                    _pluginLog.Error($"Inner stack trace: {ex.InnerException.StackTrace}");
+                }
             }
         }
         
@@ -908,17 +922,37 @@ namespace FyteClub
                             continue;
                         }
                         
-                        // Handle cached files
+                        // Handle cached files - use persistent cache directory instead of temp files
                         if (localPath.StartsWith("CACHED:"))
                         {
                             var hash = localPath.Substring(7);
+                            
+                            // Get cached content
                             var cachedContent = _fileTransferSystem.GetCachedFile(hash);
                             if (cachedContent != null)
                             {
-                                var tempPath = Path.GetTempFileName();
-                                await FileWriteHelper.WriteFileWithRetryAsync(tempPath, cachedContent, _pluginLog);
-                                fileReplacements[gamePath] = tempPath;
-                                _pluginLog.Debug($"Added cached file: {gamePath}");
+                                try
+                                {
+                                    // Write to persistent cache directory (not temp)
+                                    var fileExtension = Path.GetExtension(gamePath).TrimStart('.');
+                                    var cachePath = _fileTransferSystem.GetCacheFilePath(hash, fileExtension);
+                                    
+                                    // Only write if not already cached
+                                    if (!File.Exists(cachePath))
+                                    {
+                                        await FileWriteHelper.WriteFileWithRetryAsync(cachePath, cachedContent, _pluginLog);
+                                        _pluginLog.Debug($"Cached file to persistent storage: {cachePath} ({cachedContent.Length} bytes)");
+                                    }
+                                    
+                                    fileReplacements[gamePath] = cachePath;
+                                    _pluginLog.Debug($"Added cached file: {gamePath} -> {cachePath}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    _pluginLog.Error($"Failed to cache file for {gamePath}: {ex.Message}");
+                                    _pluginLog.Error($"Exception type: {ex.GetType().FullName}");
+                                    _pluginLog.Error($"Stack trace: {ex.StackTrace}");
+                                }
                             }
                             else
                             {
@@ -1040,6 +1074,12 @@ namespace FyteClub
             catch (Exception ex)
             {
                 _pluginLog.Error($"Failed to apply Glamourer data: {ex.Message}");
+                _pluginLog.Error($"Glamourer exception type: {ex.GetType().FullName}");
+                _pluginLog.Error($"Stack trace: {ex.StackTrace}");
+                if (ex.InnerException != null)
+                {
+                    _pluginLog.Error($"Inner exception: {ex.InnerException.Message}");
+                }
             }
         }
 
@@ -1473,7 +1513,7 @@ namespace FyteClub
                     // If ObjectIndex is 0 (cutscene), try to find character with matching appearance or tracked addresses
                     if (targetCharacter?.ObjectIndex == 0 && IsLocalPlayer(playerName))
                     {
-                        _pluginLog.Debug($"ObjectIndex 0 for local player {playerName} - attempting character re-establishment");
+                        _pluginLog.Info($"🎭 [GLAMOURER DEBUG] ObjectIndex 0 for local player {playerName} - attempting character re-establishment");
                         
                         // First try tracked addresses
                         var availableCharacters = _objectTable.OfType<ICharacter>().Where(c => c.ObjectIndex != 0);
@@ -1482,10 +1522,11 @@ namespace FyteClub
                         if (trackedCharacter != null)
                         {
                             targetCharacter = trackedCharacter;
-                            _pluginLog.Debug($"Re-established character from tracked address for {playerName} - using ObjectIndex {trackedCharacter.ObjectIndex}");
+                            _pluginLog.Info($"🎭 [GLAMOURER DEBUG] Re-established character from tracked address for {playerName} - using ObjectIndex {trackedCharacter.ObjectIndex}");
                         }
                         else
                         {
+                            _pluginLog.Info($"🎭 [GLAMOURER DEBUG] No tracked character found, trying appearance hash matching");
                             // Fallback to appearance hash matching
                             var localPlayerHash = GetCharacterAppearanceHash(targetCharacter);
                             if (!string.IsNullOrEmpty(localPlayerHash))
@@ -1498,10 +1539,19 @@ namespace FyteClub
                                     {
                                         targetCharacter = character;
                                         _redrawManager.TrackPlayerCharacter(character); // Track this new reference
-                                        _pluginLog.Debug($"Found character with matching appearance hash for {playerName} - using ObjectIndex {character.ObjectIndex}");
+                                        _pluginLog.Info($"🎭 [GLAMOURER DEBUG] Found character with matching appearance hash for {playerName} - using ObjectIndex {character.ObjectIndex}");
                                         break;
                                     }
                                 }
+                            }
+                            else
+                            {
+                                _pluginLog.Info($"🎭 [GLAMOURER DEBUG] Could not compute appearance hash for character re-establishment");
+                            }
+                            
+                            if (targetCharacter?.ObjectIndex == 0)
+                            {
+                                _pluginLog.Warning($"🎭 [GLAMOURER DEBUG] Failed to re-establish character - ObjectIndex still 0. Character likely in cutscene or loading.");
                             }
                         }
                     }
@@ -1531,7 +1581,13 @@ namespace FyteClub
                     // Get Glamourer data for the same target character
                     if (IsGlamourerAvailable && targetCharacter != null)
                     {
+                        _pluginLog.Info($"🎭 [GLAMOURER DEBUG] IsGlamourerAvailable=true, targetCharacter={targetCharacter.Name} (ObjectIndex={targetCharacter.ObjectIndex})");
                         playerInfo.GlamourerData = await GetGlamourerData(targetCharacter);
+                        _pluginLog.Info($"🎭 [GLAMOURER DEBUG] GetGlamourerData returned: {playerInfo.GlamourerData?.Length ?? 0} chars");
+                    }
+                    else
+                    {
+                        _pluginLog.Info($"🎭 [GLAMOURER DEBUG] Skipped: IsGlamourerAvailable={IsGlamourerAvailable}, targetCharacter={(targetCharacter != null ? targetCharacter.Name.TextValue : "null")}");
                     }
 
                     // Get Penumbra meta manipulations (mod configurations)
@@ -1774,13 +1830,6 @@ namespace FyteClub
         {
             try
             {
-                // Skip during cutscenes when ObjectIndex is 0 (invalid)
-                if (character.ObjectIndex == 0)
-                {
-                    _pluginLog.Debug($"🎭 [GLAMOURER DEBUG] Skipping {character.Name} - ObjectIndex 0 (likely cutscene)");
-                    return Task.FromResult<string?>(null);
-                }
-                
                 _pluginLog.Info($"🎭 [GLAMOURER DEBUG] Getting state for {character.Name} (ObjectIndex: {character.ObjectIndex})");
                 
                 // Get current state and take Item2 from tuple (Glamourer API)

@@ -754,13 +754,19 @@ else
                 // Check if this is a response to a pending request
                 if (!string.IsNullOrEmpty(message.ResponseTo))
                 {
+                    _pluginLog.Info($"[PROTOCOL] Received response to request {message.ResponseTo}, message type: {message.Type}");
                     lock (_requestLock)
                     {
                         if (_pendingRequests.TryGetValue(message.ResponseTo, out var tcs))
                         {
+                            _pluginLog.Info($"[PROTOCOL] Found pending request {message.ResponseTo}, completing with response");
                             _pendingRequests.Remove(message.ResponseTo);
                             tcs.SetResult(message);
                             return;
+                        }
+                        else
+                        {
+                            _pluginLog.Warning($"[PROTOCOL] No pending request found for {message.ResponseTo}");
                         }
                     }
                 }
