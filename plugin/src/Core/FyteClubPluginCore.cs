@@ -69,6 +69,9 @@ namespace FyteClub.Core
         private bool _hasPerformedInitialUpload = false;
         private string? _lastLocalPlayerName = null;
         private bool _p2pMessageHandlingWired = false;
+    private TaskCompletionSource<bool>? _penumbraReadyTcs;
+    private readonly object _penumbraGateLock = new();
+    private readonly HashSet<string> _penumbraPendingPlayers = new(StringComparer.OrdinalIgnoreCase);
 
         public FyteClubPlugin(
             IDalamudPluginInterface pluginInterface,
@@ -94,6 +97,49 @@ namespace FyteClub.Core
             ModularLogger.LogAlways(LogModule.Core, "FyteClub v5.0.2 initialized - P2P mod sharing with distributed TURN servers");
         }
 
+        private void InitializePenumbraReadinessGate()
+        {
+            lock (_penumbraGateLock)
+            {
+                _penumbraReadyTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                _penumbraPendingPlayers.Clear();
+
+                if (_modSystemIntegration != null)
+                {
+                    _modSystemIntegration.PenumbraReady -= OnPenumbraReady;
+
+                    if (_modSystemIntegration.IsPenumbraReady)
+                    {
+                        _penumbraReadyTcs.TrySetResult(true);
+                        ModularLogger.LogDebug(LogModule.Core, "Penumbra reported ready during initialization");
+                    }
+                    else
+                    {
+                        _modSystemIntegration.PenumbraReady += OnPenumbraReady;
+                    }
+                }
+            }
+        }
+
+        private void OnPenumbraReady()
+        {
+            TaskCompletionSource<bool>? readinessTask;
+
+            lock (_penumbraGateLock)
+            {
+                readinessTask = _penumbraReadyTcs;
+                _penumbraPendingPlayers.Clear();
+
+                if (_modSystemIntegration != null)
+                {
+                    _modSystemIntegration.PenumbraReady -= OnPenumbraReady;
+                }
+            }
+
+            ModularLogger.LogAlways(LogModule.Core, "Penumbra reported ready for initial mod broadcast");
+            readinessTask?.TrySetResult(true);
+        }
+
         private void InitializeCore()
         {
             SecureLogger.Initialize(_pluginLog);
@@ -108,6 +154,7 @@ namespace FyteClub.Core
         private void InitializeServices()
         {
             _modSystemIntegration = new FyteClubModIntegration(_pluginInterface, _pluginLog, _objectTable, _framework, _clientState, _pluginInterface.AssemblyLocation.Directory?.FullName ?? "");
+            InitializePenumbraReadinessGate();
             _safeModIntegration = new SafeModIntegration(_pluginInterface, _pluginLog);
             _redrawCoordinator = new FyteClubRedrawCoordinator(_pluginLog, _mediator, _modSystemIntegration);
             _playerDetection = new PlayerDetectionService(_objectTable, _mediator, _pluginLog);
@@ -130,7 +177,7 @@ namespace FyteClub.Core
                     _ = Task.Run(async () =>
                     {
                         await Task.Delay(3000); // Wait for mod systems to initialize
-                        await CacheLocalPlayerMods(localPlayerName);
+                        await CacheLocalPlayerModsWhenReady(localPlayerName).ConfigureAwait(false);
                     });
                 }
             });
@@ -361,21 +408,14 @@ namespace FyteClub.Core
                             
                             _ = Task.Run(async () =>
                             {
-                                if (_modSystemIntegration != null)
+                                try
                                 {
-                                    try
-                                    {
-                                        var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
-                                        if (playerInfo != null && _modSyncOrchestrator != null)
-                                        {
-                                            await _modSyncOrchestrator.BroadcastPlayerMods(playerInfo);
-                                            ModularLogger.LogDebug(LogModule.WebRTC, "Auto-shared local mods to peer {0}", peerId);
-                                        }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        ModularLogger.LogAlways(LogModule.WebRTC, "Failed to auto-share mods to peer {0}: {1}", peerId, ex.Message);
-                                    }
+                                    await CacheLocalPlayerModsWhenReady(capturedPlayerName).ConfigureAwait(false);
+                                    ModularLogger.LogDebug(LogModule.WebRTC, "Auto-shared local mods to peer {0}", peerId);
+                                }
+                                catch (Exception ex)
+                                {
+                                    ModularLogger.LogAlways(LogModule.WebRTC, "Failed to auto-share mods to peer {0}: {1}", peerId, ex.Message);
                                 }
                             });
                         });
@@ -413,6 +453,69 @@ namespace FyteClub.Core
         
         // Methods implemented in respective partial class files
         
+        private Task CacheLocalPlayerModsWhenReady(string playerName)
+        {
+            if (string.IsNullOrEmpty(playerName))
+            {
+                return Task.CompletedTask;
+            }
+
+            var integration = _modSystemIntegration;
+            if (integration == null)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (integration.IsPenumbraReady)
+            {
+                return CacheLocalPlayerMods(playerName);
+            }
+
+            Task readinessTask;
+
+            lock (_penumbraGateLock)
+            {
+                _penumbraReadyTcs ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
+                readinessTask = _penumbraReadyTcs.Task;
+
+                if (_penumbraPendingPlayers.Add(playerName))
+                {
+                    ModularLogger.LogDebug(LogModule.Core, "Penumbra not ready - deferring mod broadcast for {0}", playerName);
+                }
+            }
+
+            return WaitForPenumbraAndCache(playerName, readinessTask);
+        }
+
+        private async Task WaitForPenumbraAndCache(string playerName, Task readinessTask)
+        {
+            try
+            {
+                await readinessTask.ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                ModularLogger.LogAlways(LogModule.Core, "Penumbra readiness wait failed: {0}", ex.Message);
+                return;
+            }
+
+            await CacheLocalPlayerMods(playerName).ConfigureAwait(false);
+        }
+
+        private Task WaitForPenumbraReadyAsync()
+        {
+            lock (_penumbraGateLock)
+            {
+                if (_modSystemIntegration?.IsPenumbraReady == true)
+                {
+                    return Task.CompletedTask;
+                }
+
+                _penumbraReadyTcs ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
+                return _penumbraReadyTcs.Task;
+            }
+        }
+
         private async Task CacheLocalPlayerMods(string playerName)
         {
             try
@@ -864,6 +967,16 @@ namespace FyteClub.Core
                     _pluginInterface.UiBuilder.OpenConfigUi -= () => _configWindow.Toggle();
                 }
                 _commandManager.RemoveHandler(CommandName);
+
+                if (_modSystemIntegration != null)
+                {
+                    _modSystemIntegration.PenumbraReady -= OnPenumbraReady;
+                }
+
+                lock (_penumbraGateLock)
+                {
+                    _penumbraReadyTcs?.TrySetResult(true);
+                }
                 
                 try { _turnManager?.Dispose(); } catch { }
                 try { _syncshellManager?.Dispose(); } catch { }

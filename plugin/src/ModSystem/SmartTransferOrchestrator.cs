@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
 using FyteClub.ModSystem;
@@ -21,6 +23,7 @@ namespace FyteClub.Plugin.ModSystem
         private readonly Dictionary<string, Func<byte[], int, Task>> _peerMultiChannelSendFunctions = new();
         private readonly TransferCoordinator _transferCoordinator;
         private readonly TransferProtocolHandler _protocolHandler;
+    private readonly ChannelPacingManager _channelPacing;
         
         // Size thresholds for different transfer strategies
         private const long SMALL_TRANSFER_THRESHOLD = 1 * 1024 * 1024; // 1MB - use direct streaming
@@ -37,6 +40,10 @@ namespace FyteClub.Plugin.ModSystem
             // Initialize coordination system
             _transferCoordinator = new TransferCoordinator(pluginLog);
             _protocolHandler = new TransferProtocolHandler(pluginLog, _transferCoordinator);
+            _channelPacing = new ChannelPacingManager(
+                capacityBytes: 5 * 1024 * 1024,
+                refillBytesPerSecond: 3 * 1024 * 1024,
+                pluginLog: pluginLog);
             
             // Wire up events
             _transferCoordinator.OnChannelCompleted += OnChannelCompleted;
@@ -333,6 +340,7 @@ namespace FyteClub.Plugin.ModSystem
                         {
                             try
                             {
+                                await _channelPacing.WaitAsync(channelIndex, binaryMessage.Length, CancellationToken.None).ConfigureAwait(false);
                                 await multiChannelSend(binaryMessage, channelIndex);
                                 break;
                             }
@@ -733,6 +741,94 @@ namespace FyteClub.Plugin.ModSystem
         {
             _pluginLog.Info($"[SmartTransfer] 🏁 Transfer session {sessionId} fully completed!");
             // TODO: Clean up resources, notify UI, etc.
+        }
+
+        private sealed class ChannelPacingManager
+        {
+            private readonly long _capacityBytes;
+            private readonly double _refillBytesPerSecond;
+            private readonly ConcurrentDictionary<int, ChannelBucket> _buckets = new();
+            private readonly IPluginLog _log;
+
+            public ChannelPacingManager(long capacityBytes, double refillBytesPerSecond, IPluginLog pluginLog)
+            {
+                _capacityBytes = capacityBytes;
+                _refillBytesPerSecond = refillBytesPerSecond;
+                _log = pluginLog;
+            }
+
+            public async Task WaitAsync(int channelIndex, int bytes, CancellationToken cancellationToken)
+            {
+                if (bytes <= 0)
+                {
+                    return;
+                }
+
+                var bucket = _buckets.GetOrAdd(channelIndex, _ => new ChannelBucket(_capacityBytes));
+
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var waitMs = bucket.TryConsume(bytes, _refillBytesPerSecond);
+                    if (waitMs <= 0)
+                    {
+                        return;
+                    }
+
+                    if (waitMs > 50)
+                    {
+                        _log.Debug($"[SmartTransfer] Channel {channelIndex} pacing delay {waitMs}ms (bytes={bytes})");
+                    }
+
+                    var delay = Math.Min(waitMs, 500);
+                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            private sealed class ChannelBucket
+            {
+                private readonly long _capacity;
+                private double _tokens;
+                private DateTime _lastRefill;
+
+                public ChannelBucket(long capacity)
+                {
+                    _capacity = capacity;
+                    _tokens = capacity;
+                    _lastRefill = DateTime.UtcNow;
+                }
+
+                public int TryConsume(int bytes, double refillBytesPerSecond)
+                {
+                    Refill(refillBytesPerSecond);
+
+                    if (_tokens >= bytes)
+                    {
+                        _tokens -= bytes;
+                        return 0;
+                    }
+
+                    var needed = bytes - _tokens;
+                    var seconds = needed / Math.Max(1, refillBytesPerSecond);
+                    return (int)Math.Ceiling(seconds * 1000);
+                }
+
+                private void Refill(double refillBytesPerSecond)
+                {
+                    var now = DateTime.UtcNow;
+                    var elapsed = now - _lastRefill;
+                    if (elapsed <= TimeSpan.Zero)
+                    {
+                        return;
+                    }
+
+                    var refill = refillBytesPerSecond * elapsed.TotalSeconds;
+                    if (refill > 0)
+                    {
+                        _tokens = Math.Min(_capacity, _tokens + refill);
+                        _lastRefill = now;
+                    }
+                }
+            }
         }
 
         /// <summary>

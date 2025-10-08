@@ -68,6 +68,8 @@ namespace FyteClub.Core
         private async Task SharePlayerModsToSyncshells(string playerName)
         {
             if (_modSystemIntegration == null || _modSyncOrchestrator == null) return;
+
+            await WaitForPenumbraReadyAsync().ConfigureAwait(false);
             
             var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
             if (playerInfo != null)
@@ -92,6 +94,8 @@ namespace FyteClub.Core
                         await Task.Delay(1000); // Brief delay for changes to apply
                         
                         if (_modSystemIntegration == null) return;
+
+                        await WaitForPenumbraReadyAsync().ConfigureAwait(false);
                         
                         var updatedMods = await _modSystemIntegration.GetCurrentPlayerMods(playerName);
                         if (updatedMods != null && _componentCache != null)
@@ -150,6 +154,8 @@ namespace FyteClub.Core
                             ModularLogger.LogDebug(LogModule.ModSync, "Mod system integration not available");
                             return;
                         }
+
+                        await WaitForPenumbraReadyAsync().ConfigureAwait(false);
                         
                         var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
                         if (playerInfo == null)
@@ -241,6 +247,8 @@ namespace FyteClub.Core
                         ModularLogger.LogDebug(LogModule.ModSync, "🚀 CHAOS MODE: Bypassing ALL P2P systems for maximum speed");
                         
                         // Get your mods DIRECTLY - no P2P involvement
+                        await WaitForPenumbraReadyAsync().ConfigureAwait(false);
+
                         var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
                         if (playerInfo == null || (playerInfo.Mods?.Count ?? 0) == 0)
                         {
@@ -322,6 +330,8 @@ namespace FyteClub.Core
                         }
                         
                         // Get your mods
+                        await WaitForPenumbraReadyAsync().ConfigureAwait(false);
+
                         var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
                         if (playerInfo == null || (playerInfo.Mods?.Count ?? 0) == 0)
                         {
@@ -400,6 +410,8 @@ namespace FyteClub.Core
                         }
                         
                         // Get your mods
+                        await WaitForPenumbraReadyAsync().ConfigureAwait(false);
+
                         var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
                         if (playerInfo == null || (playerInfo.Mods?.Count ?? 0) == 0)
                         {
@@ -575,6 +587,8 @@ namespace FyteClub.Core
                         ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] Mod system available, getting player mods...");
                         
                         // Get your mods
+                        await WaitForPenumbraReadyAsync().ConfigureAwait(false);
+
                         var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
                         if (playerInfo == null)
                         {

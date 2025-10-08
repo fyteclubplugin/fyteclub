@@ -24,7 +24,8 @@ namespace FyteClub.ModSystem
         ComponentRequest,
         ComponentResponse,
         ModApplicationRequest,
-        ModApplicationResponse,
+    ModApplicationResponse,
+    AppearanceUpdate,
         SyncComplete,
         Error,
         ChunkedMessage,
@@ -102,6 +103,18 @@ namespace FyteClub.ModSystem
         public AdvancedPlayerInfo PlayerInfo { get; set; } = new();
         public Dictionary<string, TransferableFile> FileReplacements { get; set; } = new();
         public bool IsCompressed { get; set; } = false;
+    }
+
+    /// <summary>
+    /// Lightweight appearance update sent ahead of full mod transfers
+    /// </summary>
+    public class AppearanceUpdateMessage : P2PModMessage
+    {
+        public AppearanceUpdateMessage() { Type = P2PModMessageType.AppearanceUpdate; }
+
+        public string PlayerName { get; set; } = string.Empty;
+        public AdvancedPlayerInfo PlayerInfo { get; set; } = new();
+        public string AppearanceHash { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -299,20 +312,113 @@ namespace FyteClub.ModSystem
         private class ChunkBuffer
         {
             public byte[] Data;
-            public int ReceivedChunks;
             public int TotalChunks;
             public P2PModMessageType OriginalType;
             public string OriginalTypeName;
             public Dictionary<string, object> Metadata;
-            
+
+            private readonly HashSet<int> _receivedIndices = new();
+            private int[] _chunkLengths;
+
             public ChunkBuffer(int totalChunks, int totalSize, P2PModMessageType type, string typeName, Dictionary<string, object> metadata)
             {
-                Data = new byte[totalSize];
-                ReceivedChunks = 0;
-                TotalChunks = totalChunks;
+                TotalChunks = Math.Max(totalChunks, 1);
+                var initialSize = Math.Max(totalSize, TotalChunks);
+                Data = new byte[initialSize];
                 OriginalType = type;
-                OriginalTypeName = typeName;
-                Metadata = metadata;
+                OriginalTypeName = string.IsNullOrEmpty(typeName) ? type.ToString() : typeName;
+                Metadata = metadata ?? new Dictionary<string, object>();
+                _chunkLengths = new int[TotalChunks];
+            }
+
+            public int ReceivedChunks => _receivedIndices.Count;
+
+            public void EnsureTotalChunks(int newTotal)
+            {
+                if (newTotal <= TotalChunks)
+                {
+                    return;
+                }
+
+                Array.Resize(ref _chunkLengths, newTotal);
+                var requiredSize = newTotal * CHUNK_SIZE;
+                if (requiredSize > Data.Length)
+                {
+                    Array.Resize(ref Data, requiredSize);
+                }
+
+                TotalChunks = newTotal;
+            }
+
+            public void EnsureCapacityForChunk(int chunkIndex, int chunkLength)
+            {
+                if (chunkIndex >= TotalChunks)
+                {
+                    EnsureTotalChunks(chunkIndex + 1);
+                }
+
+                var requiredBytes = Math.Max(0, chunkIndex) * CHUNK_SIZE + Math.Max(0, chunkLength);
+                if (requiredBytes > Data.Length)
+                {
+                    Array.Resize(ref Data, requiredBytes);
+                }
+            }
+
+            public bool TryStoreChunk(int chunkIndex, byte[]? chunkData, int copyLength)
+            {
+                if (!_receivedIndices.Add(chunkIndex))
+                {
+                    return false; // Already processed
+                }
+
+                if (chunkIndex >= _chunkLengths.Length)
+                {
+                    EnsureTotalChunks(chunkIndex + 1);
+                }
+
+                var safeLength = Math.Max(copyLength, 0);
+                if (safeLength > 0 && chunkData != null)
+                {
+                    Buffer.BlockCopy(chunkData, 0, Data, chunkIndex * CHUNK_SIZE, safeLength);
+                }
+
+                _chunkLengths[chunkIndex] = safeLength;
+                return true;
+            }
+
+            public bool HasAllChunks => TotalChunks > 0 && ReceivedChunks >= TotalChunks;
+
+            public byte[] Assemble()
+            {
+                var totalBytes = 0;
+                for (int i = 0; i < TotalChunks; i++)
+                {
+                    if (i < _chunkLengths.Length)
+                    {
+                        totalBytes += _chunkLengths[i];
+                    }
+                }
+
+                var finalData = new byte[totalBytes];
+                var offset = 0;
+                for (int i = 0; i < TotalChunks; i++)
+                {
+                    if (i >= _chunkLengths.Length)
+                    {
+                        continue;
+                    }
+
+                    var length = _chunkLengths[i];
+                    if (length <= 0)
+                    {
+                        continue;
+                    }
+
+                    Buffer.BlockCopy(Data, i * CHUNK_SIZE, finalData, offset, length);
+                    offset += length;
+                }
+
+                return finalData;
             }
         }
         
@@ -323,6 +429,7 @@ namespace FyteClub.ModSystem
         public event Action<SyncCompleteMessage>? OnSyncComplete;
         public event Action<ErrorMessage>? OnError;
         public event Func<ModDataResponse, Task>? OnModDataReceived;
+    public event Func<AppearanceUpdateMessage, Task>? OnAppearanceUpdateReceived;
         public event Func<FileChunkMessage, Task>? OnFileChunkReceived;
         public event Func<MemberListRequestMessage, Task<MemberListResponseMessage>>? OnMemberListRequested;
         public event Action<MemberListResponseMessage>? OnMemberListResponseReceived;
@@ -703,6 +810,12 @@ else
                         return modResponse;
                     }
 
+                    if (messageType == P2PModMessageType.AppearanceUpdate)
+                    {
+                        var appearanceUpdate = JsonSerializer.Deserialize<AppearanceUpdateMessage>(json, options);
+                        return appearanceUpdate;
+                    }
+
                     if (messageType == P2PModMessageType.FileChunkMessage)
                     {
                         var fcm = JsonSerializer.Deserialize<FileChunkMessage>(json, options);
@@ -793,6 +906,18 @@ else
                         else
                         {
                             _pluginLog.Error($"[P2P] No handler registered for OnModDataReceived!");
+                        }
+                        break;
+
+                    case AppearanceUpdateMessage appearance:
+                        _pluginLog.Info($"[P2P] Processing AppearanceUpdate for {appearance.PlayerName} (hash={appearance.AppearanceHash})");
+                        if (OnAppearanceUpdateReceived != null)
+                        {
+                            await OnAppearanceUpdateReceived(appearance);
+                        }
+                        else
+                        {
+                            _pluginLog.Debug("[P2P] No handler registered for appearance updates");
                         }
                         break;
 
@@ -927,80 +1052,125 @@ else
         /// </summary>
         private P2PModMessage? HandleChunkedMessage(ChunkedMessage? chunk)
         {
-            if (chunk == null) return null;
+            if (chunk == null)
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(chunk.ChunkId))
+            {
+                _pluginLog.Warning("[P2P] Received chunk without a chunkId; discarding");
+                return null;
+            }
+
+            var sanitizedTotal = SanitizeTotalChunks(chunk.TotalChunks, chunk.ChunkIndex);
+            chunk.TotalChunks = sanitizedTotal;
+
+            var metadata = chunk.MessageMetadata ?? new Dictionary<string, object>();
 
             lock (_requestLock)
             {
-                if (string.IsNullOrEmpty(chunk.ChunkId) || !_chunkBuffers.TryGetValue(chunk.ChunkId, out var buffer))
+                if (!_chunkBuffers.TryGetValue(chunk.ChunkId, out var buffer))
                 {
-                    var totalSize = chunk.TotalChunks * CHUNK_SIZE; // Estimate, will be exact for last chunk
-                    buffer = new ChunkBuffer(chunk.TotalChunks, totalSize, chunk.OriginalMessageType, chunk.OriginalMessageTypeName, chunk.MessageMetadata);
+                    var initialSize = CalculateInitialChunkBufferSize(sanitizedTotal, chunk.ChunkIndex, chunk.ChunkData?.Length ?? 0);
+                    buffer = new ChunkBuffer(sanitizedTotal, initialSize, chunk.OriginalMessageType, chunk.OriginalMessageTypeName ?? string.Empty, metadata);
                     _chunkBuffers[chunk.ChunkId] = buffer;
-                }
-
-                // Direct copy to pre-allocated buffer with bounds checks
-                var offset = chunk.ChunkIndex * CHUNK_SIZE;
-                var copyLen = chunk.ChunkData?.Length ?? 0;
-                var remaining = buffer.Data.Length - offset;
-                if (chunk.ChunkIndex < 0 || chunk.ChunkIndex >= buffer.TotalChunks)
-                {
-                    _pluginLog.Warning($"[P2P] Ignoring out-of-range chunk {chunk.ChunkIndex}/{buffer.TotalChunks} for {chunk.ChunkId}");
-                }
-                else if (copyLen <= 0)
-                {
-                    _pluginLog.Warning($"[P2P] Received empty chunk {chunk.ChunkIndex} for {chunk.ChunkId}");
-                }
-                else if (remaining <= 0)
-                {
-                    _pluginLog.Error($"[P2P] No remaining space for chunk {chunk.ChunkIndex} at offset {offset} (buffer {buffer.Data.Length}) for {chunk.ChunkId}");
                 }
                 else
                 {
-                    var safeLen = Math.Min(copyLen, remaining);
-                    if (chunk.ChunkData != null) Buffer.BlockCopy(chunk.ChunkData, 0, buffer.Data, offset, safeLen);
-                    buffer.ReceivedChunks++;
-                }
-                
-                // Log progress every 25%
-                var progress = buffer.ReceivedChunks * 100.0 / Math.Max(1, buffer.TotalChunks);
-                if (buffer.TotalChunks >= 4)
-                {
-                    var quarter = buffer.TotalChunks / 4; // integer division, >=1
-                    if (progress >= 25 && buffer.ReceivedChunks % quarter == 0)
+                    if (sanitizedTotal > buffer.TotalChunks)
                     {
-                        _pluginLog.Info($"[P2P] 📥 Received {progress:F0}% ({buffer.ReceivedChunks}/{buffer.TotalChunks} chunks)");
+                        buffer.EnsureTotalChunks(sanitizedTotal);
+                    }
+
+                    if (metadata.Count > 0)
+                    {
+                        foreach (var kvp in metadata)
+                        {
+                            buffer.Metadata[kvp.Key] = kvp.Value;
+                        }
                     }
                 }
-                
-                if (buffer.ReceivedChunks == buffer.TotalChunks)
+
+                if (chunk.ChunkIndex < 0)
                 {
-                    // Calculate actual size (last chunk might be smaller)
-                    var actualSize = (buffer.TotalChunks - 1) * CHUNK_SIZE + (chunk.ChunkData?.Length ?? 0);
-                    var finalData = actualSize == buffer.Data.Length ? buffer.Data : buffer.Data[..actualSize];
-                    
-                    _chunkBuffers.Remove(chunk.ChunkId);
-                    _pluginLog.Info($"[P2P] ✅ Reassembled {actualSize} bytes from {buffer.TotalChunks} chunks ({actualSize / 1024.0 / 1024.0:F1} MB)");
-                    
-                    var reassembledMessage = ReconstructTypedMessage(finalData, buffer.OriginalType, buffer.OriginalTypeName, buffer.Metadata);
-                    if (reassembledMessage != null)
-                    {
-                        _ = Task.Run(async () => {
-                            try
-                            {
-                                await ProcessMessage(reassembledMessage);
-                            }
-                            catch (Exception ex)
-                            {
-                                _pluginLog.Error($"[P2P] Error processing reassembled message: {ex.Message}");
-                            }
-                        });
-                    }
-                    
-                    return reassembledMessage;
+                    _pluginLog.Warning($"[P2P] Ignoring negative chunk index {chunk.ChunkIndex} for {chunk.ChunkId}");
+                    return null;
                 }
+
+                buffer.EnsureCapacityForChunk(chunk.ChunkIndex, chunk.ChunkData?.Length ?? 0);
+
+                var stored = buffer.TryStoreChunk(chunk.ChunkIndex, chunk.ChunkData, chunk.ChunkData?.Length ?? 0);
+                if (!stored)
+                {
+                    _pluginLog.Debug($"[P2P] Duplicate chunk {chunk.ChunkIndex}/{buffer.TotalChunks} for {chunk.ChunkId}");
+                }
+
+                if (stored && buffer.TotalChunks >= 4)
+                {
+                    var received = buffer.ReceivedChunks;
+                    var quarter = Math.Max(1, buffer.TotalChunks / 4);
+                    if (received % quarter == 0)
+                    {
+                        var progress = received * 100.0 / Math.Max(1, buffer.TotalChunks);
+                        _pluginLog.Info($"[P2P] 📥 Received {progress:F0}% ({received}/{buffer.TotalChunks} chunks) for {chunk.ChunkId}");
+                    }
+                }
+
+                if (!buffer.HasAllChunks)
+                {
+                    return null;
+                }
+
+                var finalData = buffer.Assemble();
+                _chunkBuffers.Remove(chunk.ChunkId);
+                _pluginLog.Info($"[P2P] ✅ Reassembled {finalData.Length} bytes from {buffer.TotalChunks} chunks ({finalData.Length / 1024.0 / 1024.0:F1} MB)");
+
+                var reassembledMessage = ReconstructTypedMessage(finalData, buffer.OriginalType, buffer.OriginalTypeName, buffer.Metadata);
+                if (reassembledMessage != null)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await ProcessMessage(reassembledMessage);
+                        }
+                        catch (Exception ex)
+                        {
+                            _pluginLog.Error($"[P2P] Error processing reassembled message: {ex.Message}");
+                        }
+                    });
+                }
+
+                return reassembledMessage;
+            }
+        }
+
+        private static int SanitizeTotalChunks(int reportedTotal, int chunkIndex)
+        {
+            var minimumRequired = chunkIndex >= 0 ? chunkIndex + 1 : 1;
+
+            if (reportedTotal <= 0)
+            {
+                return minimumRequired;
             }
 
-            return null;
+            if (reportedTotal < minimumRequired)
+            {
+                return minimumRequired;
+            }
+
+            return reportedTotal;
+        }
+
+        private static int CalculateInitialChunkBufferSize(int totalChunks, int chunkIndex, int chunkLength)
+        {
+            var alignedSize = (long)Math.Max(totalChunks, 1) * CHUNK_SIZE;
+            var directSize = (long)Math.Max(0, chunkIndex) * CHUNK_SIZE + Math.Max(0, chunkLength);
+            var chosen = Math.Max(alignedSize, directSize);
+            var capped = Math.Min(chosen, int.MaxValue);
+            var ensured = Math.Max(1, capped);
+            return (int)ensured;
         }
 
         /// <summary>
@@ -1059,6 +1229,7 @@ else
                     {
                         P2PModMessageType.ModDataRequest => JsonSerializer.Deserialize<ModDataRequest>(json, options),
                         P2PModMessageType.ModDataResponse => JsonSerializer.Deserialize<ModDataResponse>(json, options),
+                        P2PModMessageType.AppearanceUpdate => JsonSerializer.Deserialize<AppearanceUpdateMessage>(json, options),
                         P2PModMessageType.ComponentRequest => JsonSerializer.Deserialize<ComponentRequest>(json, options),
                         P2PModMessageType.ComponentResponse => JsonSerializer.Deserialize<ComponentResponse>(json, options),
                         P2PModMessageType.ModApplicationRequest => JsonSerializer.Deserialize<ModApplicationRequest>(json, options),

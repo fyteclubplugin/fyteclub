@@ -94,7 +94,11 @@ namespace FyteClub
         private ICallGateSubscriber<int, object>? _honorificClearCharacterTitle;
         
         // Availability flags
-        public bool IsPenumbraAvailable { get; private set; }
+    public bool IsPenumbraAvailable { get; private set; }
+    public bool IsPenumbraReady => _penumbraReady;
+    public event Action? PenumbraReady;
+
+    private bool _penumbraReady;
         public bool IsGlamourerAvailable { get; private set; }
         public bool IsCustomizePlusAvailable { get; private set; }
         public bool IsHeelsAvailable { get; private set; }
@@ -340,6 +344,25 @@ namespace FyteClub
             InitializeModSystemIPC();
         }
 
+        private void UpdatePenumbraReadiness(bool ready)
+        {
+            var previous = _penumbraReady;
+            _penumbraReady = ready;
+
+            if (ready && !previous)
+            {
+                _pluginLog.Information("[PENUMBRA] Ready state confirmed - notifying subscribers");
+                try
+                {
+                    PenumbraReady?.Invoke();
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Warning($"[PENUMBRA] Ready notification handler failed: {ex.Message}");
+                }
+            }
+        }
+
         private void InitializeModSystemIPC()
         {
             try
@@ -364,6 +387,7 @@ namespace FyteClub
                 
                 // Check Penumbra availability using Horse's method
                 IsPenumbraAvailable = false;
+                UpdatePenumbraReadiness(false);
                 try
                 {
                     if (_penumbraGetEnabledState != null)
@@ -371,12 +395,14 @@ namespace FyteClub
                         var isEnabled = _penumbraGetEnabledState.Invoke();
                         IsPenumbraAvailable = true; // If we got here without exception, Penumbra exists
                         _pluginLog.Information($"Penumbra detected via GetEnabledState (enabled: {isEnabled})");
+                        UpdatePenumbraReadiness(isEnabled);
                     }
                 }
                 catch (Exception ex)
                 {
                     _pluginLog.Warning($"Penumbra detection failed: {ex.Message}");
                     IsPenumbraAvailable = false;
+                    UpdatePenumbraReadiness(false);
                 }
                 
                 // Initialize Glamourer IPC (using API helper classes)
@@ -1445,6 +1471,26 @@ namespace FyteClub
             _pluginLog.Debug("Scheduled retry of plugin detection...");
             
             var foundNew = false;
+
+            // Retry Penumbra detection if not yet ready
+            if (!IsPenumbraReady && _penumbraGetEnabledState != null)
+            {
+                try
+                {
+                    var isEnabled = _penumbraGetEnabledState.Invoke();
+                    IsPenumbraAvailable = true;
+                    UpdatePenumbraReadiness(isEnabled);
+                    if (isEnabled)
+                    {
+                        foundNew = true;
+                        _pluginLog.Information("✅ Penumbra detected on delayed retry and reported ready");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Debug($"Penumbra delayed retry failed: {ex.Message}");
+                }
+            }
             
             // Retry Simple Heels
             if (!IsHeelsAvailable)
@@ -1976,8 +2022,10 @@ namespace FyteClub
         }
         
         // Chaos button state
-        private bool _chaosActive = false;
-        private readonly HashSet<string> _chaosTargets = new();
+    private bool _chaosActive = false;
+    private readonly HashSet<string> _chaosTargets = new();
+    private readonly Dictionary<uint, Guid> _chaosCollections = new();
+    private CancellationTokenSource? _chaosCts;
         
         /// <summary>
         /// Start chaos mode - continuously applies YOUR mods to all nearby characters
@@ -1988,6 +2036,9 @@ namespace FyteClub
             if (_chaosActive) return;
             
             _chaosActive = true;
+            _chaosCts?.Cancel();
+            _chaosCts = new CancellationTokenSource();
+            var chaosToken = _chaosCts.Token;
             _chaosTargets.Clear();
             
             var localPlayerName = GetLocalPlayerName();
@@ -2004,11 +2055,13 @@ namespace FyteClub
                 return;
             }
             
+            var chaosPayload = await BuildChaosPayload(playerInfo);
+
             _pluginLog.Info($"😈 [CHAOS] Started! Continuously applying to new people...");
             
             _ = Task.Run(async () =>
             {
-                while (_chaosActive)
+                while (_chaosActive && !chaosToken.IsCancellationRequested)
                 {
                     try
                     {
@@ -2018,36 +2071,54 @@ namespace FyteClub
                         if (newTargets.Count > 0)
                         {
                             _pluginLog.Info($"😈 [CHAOS] Found {newTargets.Count} new targets");
-                            
+
+                            var applyTasks = new List<Task>(newTargets.Count);
                             foreach (var target in newTargets)
                             {
-                                if (!_chaosActive) break;
+                                if (!_chaosActive || chaosToken.IsCancellationRequested)
+                                {
+                                    break;
+                                }
+
                                 _chaosTargets.Add(target);
-                                _ = ApplyChaosModsInstant(playerInfo, target);
+                                applyTasks.Add(ApplyChaosModsInstant(chaosPayload, target, chaosToken));
+                            }
+
+                            if (applyTasks.Count > 0)
+                            {
+                                await Task.WhenAll(applyTasks);
                             }
                         }
                         
-                        await Task.Delay(1000); // Check every second
+                        await Task.Delay(750, chaosToken); // Check frequently but allow breathing room
                     }
-                    catch { }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Debug($"😈 [CHAOS] Background loop error: {ex.Message}");
+                    }
                 }
                 
                 _pluginLog.Info($"😈 [CHAOS] Stopped! Applied to {_chaosTargets.Count} total characters");
-            });
+            }, chaosToken);
         }
         
         /// <summary>
         /// INSTANT chaos application - bypasses redraw semaphore entirely
         /// </summary>
-        private async Task ApplyChaosModsInstant(AdvancedPlayerInfo playerInfo, string targetName)
+        private async Task ApplyChaosModsInstant(ChaosPayload payload, string targetName, CancellationToken token)
         {
             try
             {
+                if (token.IsCancellationRequested) return;
+
                 var character = await _framework.RunOnFrameworkThread(() => FindCharacterByName(targetName));
                 if (character != null && !IsLocalPlayer(character) && !IsLocalPlayer(targetName))
                 {
-                    // CHAOS: Apply mods directly without redraw coordination
-                    await ApplyChaosModsDirect(character, playerInfo);
+                    await ApplyChaosModsDirect(character, payload, token);
                 }
             }
             catch
@@ -2060,84 +2131,318 @@ namespace FyteClub
         /// Direct mod application bypassing all redraw semaphores and coordination
         /// PROPER ORDER: Glamourer (base) -> Penumbra (textures) -> Accessories -> Redraw
         /// </summary>
-        private Task ApplyChaosModsDirect(ICharacter character, AdvancedPlayerInfo playerInfo)
+        private async Task ApplyChaosModsDirect(ICharacter character, ChaosPayload payload, CancellationToken token)
         {
-            // STEP 1: Get YOUR current Glamourer appearance (base outfit/appearance)
-            string? glamourerData = playerInfo.GlamourerData;
-            if (string.IsNullOrEmpty(glamourerData) && IsGlamourerAvailable)
+            if (character == null)
             {
+                _pluginLog.Warning("😈 [CHAOS] Skipping mod application - target character reference is null");
+                return;
+            }
+
+            var targetName = character.Name?.TextValue ?? payload.PlayerInfo.PlayerName;
+
+            var penumbraApplied = await ApplyChaosPenumbraMods(character, payload, token);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (!IsGlamourerAvailable || _glamourerApplyAll == null)
+            {
+                _pluginLog.Debug("😈 [CHAOS] Glamourer unavailable - skipping");
+                return;
+            }
+
+            var glamourerData = payload.GlamourerData;
+            if (string.IsNullOrEmpty(glamourerData))
+            {
+                glamourerData = TryFetchLocalGlamourerState();
+            }
+
+            if (string.IsNullOrEmpty(glamourerData))
+            {
+                _pluginLog.Debug("😈 [CHAOS] No Glamourer state available - skipping target");
+                return;
+            }
+
+            await _framework.RunOnFrameworkThread(() =>
+            {
+                if (token.IsCancellationRequested) return;
                 try
                 {
-                    var localPlayer = _clientState.LocalPlayer;
-                    if (localPlayer != null)
+                    _glamourerApplyAll.Invoke(glamourerData, character.ObjectIndex, FYTECLUB_GLAMOURER_LOCK);
+                    _pluginLog.Debug($"😈 [CHAOS] Applied Glamourer state to {targetName}");
+
+                    if (!penumbraApplied && !token.IsCancellationRequested && IsPenumbraAvailable && _penumbraRedraw != null)
                     {
-                        var getState = new Glamourer.Api.IpcSubscribers.GetStateBase64(_pluginInterface);
-                        var result = getState.Invoke(localPlayer.ObjectIndex);
-                        if (result.Item1 == Glamourer.Api.Enums.GlamourerApiEc.Success && !string.IsNullOrEmpty(result.Item2))
+                        try
                         {
-                            glamourerData = result.Item2;
+                            _penumbraRedraw.Invoke(character.ObjectIndex, RedrawType.Redraw);
+                            _pluginLog.Debug($"😈 [CHAOS] Triggered redraw for {targetName}");
+                        }
+                        catch (Exception redrawEx)
+                        {
+                            _pluginLog.Debug($"😈 [CHAOS] Redraw failed for {targetName}: {redrawEx.Message}");
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    _pluginLog.Warning($"😈 [CHAOS] Failed to apply Glamourer to {targetName}: {ex.Message}");
+                }
+            });
+        }
+
+        private async Task<bool> ApplyChaosPenumbraMods(ICharacter character, ChaosPayload payload, CancellationToken token)
+        {
+            if (!IsPenumbraAvailable || _penumbraCreateTemporaryCollection == null || _penumbraAssignTemporaryCollection == null)
+            {
+                return false;
             }
-            
-            // STEP 2: Apply Glamourer FIRST (sets base appearance/outfit)
-            if (IsGlamourerAvailable && !string.IsNullOrEmpty(glamourerData))
+
+            if (!payload.HasPenumbraReplacements)
+            {
+                return false;
+            }
+
+            if (token.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            var files = payload.FileReplacements.Count > 0
+                ? new Dictionary<string, string>(payload.FileReplacements, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var meta = payload.MetaManipulations.Count > 0
+                ? new List<string>(payload.MetaManipulations)
+                : new List<string>();
+
+            if (files.Count == 0 && meta.Count == 0)
+            {
+                return false;
+            }
+
+            var result = false;
+
+            await _framework.RunOnFrameworkThread(() =>
+            {
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                var objectIndex = character.ObjectIndex;
+
+                if (_chaosCollections.TryGetValue(objectIndex, out var existingCollection))
+                {
+                    try
+                    {
+                        _penumbraRemoveTemporaryCollection?.Invoke(existingCollection);
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Debug($"😈 [CHAOS] Failed to remove previous collection for {objectIndex}: {ex.Message}");
+                    }
+
+                    _chaosCollections.Remove(objectIndex);
+                }
+
+                if (_penumbraCreateTemporaryCollection == null || _penumbraAddTemporaryMod == null)
+                {
+                    return;
+                }
+
+                var collectionName = $"FyteChaos_{objectIndex}_{Guid.NewGuid():N}";
+                var createResult = _penumbraCreateTemporaryCollection.Invoke("FyteClubChaos", collectionName, out var collectionId);
+                if (createResult != PenumbraApiEc.Success || collectionId == Guid.Empty)
+                {
+                    _pluginLog.Debug($"😈 [CHAOS] Failed to create temporary collection for {objectIndex}: {createResult}");
+                    return;
+                }
+
+                try
+                {
+                    if (files.Count > 0)
+                    {
+                        _penumbraAddTemporaryMod.Invoke("FyteClubChaos_Files", collectionId, files, string.Empty, 0);
+                    }
+
+                    if (meta.Count > 0)
+                    {
+                        var metaString = string.Join("\n", meta);
+                        _penumbraAddTemporaryMod.Invoke("FyteClubChaos_Meta", collectionId, new Dictionary<string, string>(), metaString, 0);
+                    }
+
+                    var assignResult = _penumbraAssignTemporaryCollection.Invoke(collectionId, objectIndex, true);
+                    if (assignResult == PenumbraApiEc.Success)
+                    {
+                        _chaosCollections[objectIndex] = collectionId;
+                        if (!token.IsCancellationRequested && _penumbraRedraw != null)
+                        {
+                            try
+                            {
+                                _penumbraRedraw.Invoke(objectIndex, RedrawType.Redraw);
+                            }
+                            catch (Exception redrawEx)
+                            {
+                                _pluginLog.Debug($"😈 [CHAOS] Penumbra redraw failed for {objectIndex}: {redrawEx.Message}");
+                            }
+                        }
+                        result = true;
+                    }
+                    else
+                    {
+                        _pluginLog.Debug($"😈 [CHAOS] Failed to assign temporary collection for {objectIndex}: {assignResult}");
+                        _penumbraRemoveTemporaryCollection?.Invoke(collectionId);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Debug($"😈 [CHAOS] Exception applying Penumbra mods for {objectIndex}: {ex.Message}");
+                    _penumbraRemoveTemporaryCollection?.Invoke(collectionId);
+                }
+            });
+
+            return result;
+        }
+
+        private string? TryFetchLocalGlamourerState()
+        {
+            try
+            {
+                var localPlayer = _clientState.LocalPlayer;
+                if (localPlayer == null) return null;
+
+                var getState = new Glamourer.Api.IpcSubscribers.GetStateBase64(_pluginInterface);
+                var result = getState.Invoke(localPlayer.ObjectIndex);
+                return result.Item1 == Glamourer.Api.Enums.GlamourerApiEc.Success ? result.Item2 : null;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Debug($"😈 [CHAOS] Failed to fetch local Glamourer state: {ex.Message}");
+                return null;
+            }
+        }
+
+        private static AdvancedPlayerInfo CreateChaosSnapshot(AdvancedPlayerInfo source, string targetName)
+        {
+            return new AdvancedPlayerInfo
+            {
+                PlayerId = source.PlayerId,
+                PlayerName = targetName,
+                State = source.State,
+                StateChanged = source.StateChanged,
+                LastSeen = source.LastSeen,
+                LastModRequest = source.LastModRequest,
+                Mods = source.Mods != null ? new List<string>(source.Mods) : new List<string>(),
+                ActiveCollection = source.ActiveCollection,
+                ManipulationData = source.ManipulationData,
+                GlamourerDesign = source.GlamourerDesign,
+                GlamourerData = source.GlamourerData,
+                CustomizePlusProfile = source.CustomizePlusProfile,
+                CustomizePlusData = source.CustomizePlusData,
+                SimpleHeelsOffset = source.SimpleHeelsOffset,
+                HeelsData = source.HeelsData,
+                HonorificTitle = source.HonorificTitle,
+                LockCode = source.LockCode,
+                IsVisible = source.IsVisible,
+                IsPaused = source.IsPaused,
+                FailureCount = source.FailureCount,
+                LastError = source.LastError,
+                LastApplyStart = source.LastApplyStart,
+                LastApplyDuration = source.LastApplyDuration,
+                TotalApplyTime = source.TotalApplyTime,
+                ApplyCount = source.ApplyCount,
+                GameObjectAddress = source.GameObjectAddress,
+                WorldId = source.WorldId,
+                Distance = source.Distance,
+                InRange = source.InRange
+            };
+        }
+
+        private sealed class ChaosPayload
+        {
+            public ChaosPayload(AdvancedPlayerInfo playerInfo, string? glamourerData, Dictionary<string, string> fileReplacements, List<string> metaManipulations)
+            {
+                PlayerInfo = playerInfo;
+                GlamourerData = glamourerData;
+                FileReplacements = fileReplacements;
+                MetaManipulations = metaManipulations;
+            }
+
+            public AdvancedPlayerInfo PlayerInfo { get; }
+            public string? GlamourerData { get; }
+            public Dictionary<string, string> FileReplacements { get; }
+            public List<string> MetaManipulations { get; }
+            public bool HasPenumbraReplacements => FileReplacements.Count > 0 || MetaManipulations.Count > 0;
+        }
+
+        private async Task<ChaosPayload> BuildChaosPayload(AdvancedPlayerInfo playerInfo)
+        {
+            Dictionary<string, string> fileReplacements = new(StringComparer.OrdinalIgnoreCase);
+            List<string> metaManipulations = new();
+
+            if (IsPenumbraAvailable && playerInfo.Mods?.Count > 0)
             {
                 try
                 {
-                    _glamourerApplyAll?.Invoke(glamourerData, character.ObjectIndex, FYTECLUB_GLAMOURER_LOCK);
+                    (fileReplacements, metaManipulations) = await ParseAndValidateMods(playerInfo.Mods);
                 }
-                catch { }
-            }
-            
-            // STEP 3: Skip Penumbra for chaos mode - too complex for instant application
-            // Glamourer appearance is the main visual change anyway
-            
-            // STEP 4: Apply Customize+ (body scaling)
-            if (IsCustomizePlusAvailable && !string.IsNullOrEmpty(playerInfo.CustomizePlusData))
-            {
-                try
+                catch (Exception ex)
                 {
-                    var decodedScale = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(playerInfo.CustomizePlusData));
-                    _customizePlusSetBodyScale?.InvokeFunc(character.ObjectIndex, decodedScale);
+                    _pluginLog.Warning($"😈 [CHAOS] Failed to prepare Penumbra payload: {ex.Message}");
+                    fileReplacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    metaManipulations = new List<string>();
                 }
-                catch { }
             }
-            
-            // STEP 5: Apply SimpleHeels (height adjustment)
-            if (IsHeelsAvailable && playerInfo.SimpleHeelsOffset.HasValue)
+
+            return new ChaosPayload(playerInfo, playerInfo.GlamourerData, fileReplacements, metaManipulations);
+        }
+
+        public async Task<bool> ApplyAppearanceSnapshot(AdvancedPlayerInfo playerInfo, string targetName)
+        {
+            if (playerInfo == null || string.IsNullOrWhiteSpace(targetName))
             {
-                try
-                {
-                    var heelsConfig = $"{{\"Offset\":{playerInfo.SimpleHeelsOffset.Value:F3}}}";
-                    _heelsRegisterPlayer?.InvokeAction(character.ObjectIndex, heelsConfig);
-                }
-                catch { }
+                _pluginLog.Warning("[APPEARANCE] Invalid snapshot request - missing player info or target name");
+                return false;
             }
-            
-            // STEP 6: Apply Honorific (nameplate title)
-            if (IsHonorificAvailable && !string.IsNullOrEmpty(playerInfo.HonorificTitle))
+
+            try
             {
-                try
+                var character = await _framework.RunOnFrameworkThread(() => FindCharacterByName(targetName));
+                if (character == null)
                 {
-                    _honorificSetCharacterTitle?.InvokeAction(character.ObjectIndex, playerInfo.HonorificTitle);
+                    _pluginLog.Debug($"[APPEARANCE] Target '{targetName}' not found - skipping snapshot");
+                    return false;
                 }
-                catch { }
+
+                var snapshot = CreateChaosSnapshot(playerInfo, targetName);
+                await ApplyAdvancedPlayerInfo(character, snapshot).ConfigureAwait(false);
+                return true;
             }
-            
-            // STEP 6: Final redraw to make all changes visible
-            if (IsPenumbraAvailable && _penumbraRedraw != null)
+            catch (Exception ex)
             {
-                try
-                {
-                    _penumbraRedraw.Invoke(character.ObjectIndex, RedrawType.Redraw);
-                }
-                catch { }
+                _pluginLog.Error($"[APPEARANCE] Failed to apply snapshot for {targetName}: {ex.Message}");
+                return false;
             }
-            
-            return Task.CompletedTask;
+        }
+
+        public string GenerateAppearanceHash(AdvancedPlayerInfo? playerInfo)
+        {
+            if (playerInfo == null)
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return CalculateModDataHash(playerInfo);
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"[APPEARANCE] Failed to generate appearance hash: {ex.Message}");
+                return string.Empty;
+            }
         }
         
         /// <summary>
@@ -2145,9 +2450,16 @@ namespace FyteClub
         /// </summary>
         public void StopChaosMode()
         {
+            if (!_chaosActive)
+            {
+                return;
+            }
+
             _chaosActive = false;
+            _chaosCts?.Cancel();
+            _chaosCts = null;
             _chaosTargets.Clear();
-            _pluginLog.Debug("😈 [CHAOS] Stopped");
+            _pluginLog.Debug("😈 [CHAOS] Stopped and cleared target cache");
         }
         
         /// <summary>

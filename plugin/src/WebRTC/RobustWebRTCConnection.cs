@@ -21,8 +21,9 @@ namespace FyteClub.WebRTC
         private List<FyteClub.TURN.TurnServerInfo> _turnServers = new();
         private Func<Task<string>>? _localPlayerNameResolver;
         private readonly ConcurrentDictionary<string, byte> _processedMessageIds = new(); // Use byte as dummy value for set behavior
-        private readonly object _messageLock = new();
-        private bool _handlersRegistered = false;
+    private readonly object _messageLock = new();
+    private bool _handlersRegistered = false;
+    private bool _isInitialized = false;
 
         // Multi-channel architecture for parallel transfers
         private readonly List<Microsoft.MixedReality.WebRTC.DataChannel> _channels = new(); // Kept as List but will use _channelLock for all access
@@ -33,15 +34,18 @@ namespace FyteClub.WebRTC
         private bool _channelCreationInProgress = false; // Prevent duplicate channel creation
         
         // Buffer monitoring for flow control
-        private readonly ConcurrentDictionary<Microsoft.MixedReality.WebRTC.DataChannel, ulong> _channelBufferStates = new(); // Track buffered amount per channel object
-        private readonly ConcurrentDictionary<Microsoft.MixedReality.WebRTC.DataChannel, DateTime> _lastBufferCheck = new(); // Track last check time
+    private readonly ConcurrentDictionary<Microsoft.MixedReality.WebRTC.DataChannel, ulong> _channelBufferStates = new(); // Track buffered amount per channel object
+    private readonly ConcurrentDictionary<Microsoft.MixedReality.WebRTC.DataChannel, ulong> _channelBufferLimits = new(); // Track effective buffer limits per channel
+    private readonly ConcurrentDictionary<Microsoft.MixedReality.WebRTC.DataChannel, DateTime> _lastBufferCheck = new(); // Track last check time
         private DateTime _lastChannelSwitchLog = DateTime.MinValue; // Rate limit channel switch logs
         private DateTime _lastSendTime = DateTime.MinValue; // Track last time data was sent for transfer detection
         private DateTime _lastReceiveTime = DateTime.MinValue; // Track last time data was received for bidirectional transfer detection
         private DateTime _connectionStartTime = DateTime.MinValue; // Track when connection establishment started
         private bool _transferInProgress = false; // Explicit flag for when transfer is starting/active (prevents premature disposal)
-        private const ulong MAX_BUFFER_THRESHOLD = 8 * 1024 * 1024; // 8MB - high water mark (must wait) - reduced from 16MB to prevent overflow
-        private const ulong OPTIMAL_BUFFER_THRESHOLD = 4 * 1024 * 1024; // 4MB - switch to less utilized channel - reduced from 12MB
+    private const ulong MAX_BUFFER_THRESHOLD = 8 * 1024 * 1024; // 8MB - high water mark (must wait) - reduced from 16MB to prevent overflow
+    private const ulong OPTIMAL_BUFFER_THRESHOLD = 4 * 1024 * 1024; // 4MB - switch to less utilized channel - reduced from 12MB
+    private const ulong MIN_EFFECTIVE_BUFFER_THRESHOLD = 1 * 1024 * 1024; // Minimum safety threshold per channel (1MB)
+    private const double BUFFER_LIMIT_MARGIN = 0.85; // Keep 15% headroom beneath reported channel limit
         private const int BUFFER_CHECK_INTERVAL_MS = 50; // Check buffer state every 50ms
         private const int CHANNEL_SWITCH_LOG_INTERVAL_MS = 1000; // Only log channel switches once per second
         private const int TRANSFER_TIMEOUT_SECONDS = 5; // Consider transfer inactive after 5 seconds of no sends
@@ -163,6 +167,11 @@ namespace FyteClub.WebRTC
 
         public Task<bool> InitializeAsync()
         {
+            if (_isInitialized && _webrtcManager != null)
+            {
+                _pluginLog?.Debug("[WebRTC] InitializeAsync skipped - already initialized");
+                return Task.FromResult(true);
+            }
             try
             {
                 // Use NostrSignaling for P2P connections with most reliable relays
@@ -282,11 +291,13 @@ namespace FyteClub.WebRTC
                     }
                 };
 
+                _isInitialized = true;
                 return Task.FromResult(true);
             }
             catch (Exception ex)
             {
                 _pluginLog?.Error($"Failed to initialize robust WebRTC: {ex.Message}");
+                _isInitialized = false;
                 return Task.FromResult(false);
             }
         }
@@ -612,25 +623,15 @@ namespace FyteClub.WebRTC
             return Task.CompletedTask;
         }
 
-        public Task SendDataAsync(byte[] data)
+        public async Task SendDataAsync(byte[] data)
         {
-            var channel = GetAvailableChannel();
-            if (channel == null)
+            var preferredChannel = GetBestChannelForSending();
+            if (preferredChannel < 0)
             {
                 throw new InvalidOperationException("No open channels available");
             }
-            
-            try
-            {
-                channel.SendMessage(data);
-                _lastSendTime = DateTime.UtcNow; // Track send time for transfer detection
-                return Task.CompletedTask;
-            }
-            catch (Exception ex)
-            {
-                _pluginLog?.Error($"[WebRTC] Failed to send data: {ex.Message}");
-                throw;
-            }
+
+            await SendDataOnChannelAsync(data, preferredChannel);
         }
         
         public async Task SendDataOnChannelAsync(byte[] data, int channelIndex)
@@ -667,6 +668,16 @@ namespace FyteClub.WebRTC
                 while (true)
                 {
                     var buffered = GetChannelBufferedAmount(actualChannel);
+                    var threshold = GetChannelEffectiveThreshold(actualChannel);
+                    var optimalThreshold = GetChannelOptimalThreshold(actualChannel);
+                    if (threshold <= 0)
+                    {
+                        threshold = MAX_BUFFER_THRESHOLD;
+                    }
+                    if (optimalThreshold <= 0)
+                    {
+                        optimalThreshold = Math.Max(1UL, threshold / 2);
+                    }
                     
                     // CRITICAL: Check if channel is closing/closed - abort drain immediately
                     lock (_channelLock)
@@ -683,7 +694,19 @@ namespace FyteClub.WebRTC
                     }
                     
                     // Only send if buffer is below MAX_BUFFER_THRESHOLD
-                    if (buffered < MAX_BUFFER_THRESHOLD)
+                    ulong predicted;
+                    var chunkSize = (ulong)data.Length;
+                    if (ulong.MaxValue - buffered < chunkSize)
+                    {
+                        predicted = ulong.MaxValue;
+                    }
+                    else
+                    {
+                        predicted = buffered + chunkSize;
+                    }
+
+                    var safeTarget = Math.Min(threshold, MAX_BUFFER_THRESHOLD);
+                    if (predicted <= safeTarget && buffered <= optimalThreshold)
                     {
                         break; // Safe to send
                     }
@@ -691,23 +714,25 @@ namespace FyteClub.WebRTC
                     // Check timeout
                     if ((DateTime.UtcNow - waitStart).TotalMilliseconds >= maxBufferWait)
                     {
-                        throw new TimeoutException($"Channel {actualChannel} buffer did not drain below {MAX_BUFFER_THRESHOLD / 1024 / 1024}MB within {maxBufferWait}ms");
+                        throw new TimeoutException($"Channel {actualChannel} buffer did not drain below {safeTarget / 1024 / 1024}MB within {maxBufferWait}ms");
                     }
                     
                     // Log warning and wait for buffer to drain
-                    _pluginLog?.Warning($"[WebRTC] Channel {actualChannel} buffer at {buffered / 1024 / 1024}MB (>= {MAX_BUFFER_THRESHOLD / 1024 / 1024}MB), waiting for drain...");
-                    await Task.Delay(100); // Wait 100ms before rechecking
+                    var waitDelay = CalculateAdaptiveBackoffDelay(predicted, safeTarget, chunkSize);
+                    _pluginLog?.Warning($"[WebRTC] Channel {actualChannel} buffer forecast {predicted / 1024.0 / 1024.0:F2}MB (limit {safeTarget / 1024.0 / 1024.0:F2}MB), waiting {waitDelay}ms for drain...");
+                    await Task.Delay(waitDelay);
                 }
                 
                 // Buffer is now safe - send the data
                 channel.SendMessage(data);
                 _lastSendTime = DateTime.UtcNow; // Track send time for transfer detection
+                UpdateBufferedEstimate(actualChannel, (ulong)data.Length);
                 
                 // Log buffer utilization for large sends
                 if (data.Length > 1024 * 1024) // > 1MB
                 {
                     var newBuffered = GetChannelBufferedAmount(actualChannel);
-                    _pluginLog?.Debug($"[WebRTC] Sent {data.Length / 1024 / 1024}MB on channel {actualChannel}, buffer: {newBuffered / 1024 / 1024}MB");
+                    _pluginLog?.Debug($"[WebRTC] Sent {data.Length / 1024.0 / 1024.0:F2}MB on channel {actualChannel}, buffer: {newBuffered / 1024.0 / 1024.0:F2}MB");
                 }
             }
             catch (Exception ex)
@@ -922,6 +947,8 @@ namespace FyteClub.WebRTC
                 {
                     _pluginLog?.Warning($"Error disposing WebRTC manager: {ex.Message}");
                 }
+
+                _isInitialized = false;
                 
                 // Dispose reconnection manager
                 try
@@ -962,6 +989,7 @@ namespace FyteClub.WebRTC
                         _pluginLog?.Info($"[WebRTC] Total open local sending channels: {openCount}/{_localSendingChannels.Count}");
                         
                         _channelBufferStates[channel] = 0;
+                        _channelBufferLimits[channel] = MAX_BUFFER_THRESHOLD;
                         _lastBufferCheck[channel] = DateTime.UtcNow;
                     }
                 }
@@ -992,6 +1020,7 @@ namespace FyteClub.WebRTC
                         }
                         // Remove from tracking instead of marking with MaxValue to avoid overflow display
                         _channelBufferStates.TryRemove(channel, out _);
+                        _channelBufferLimits.TryRemove(channel, out _);
                         _lastBufferCheck.TryRemove(channel, out _);
                     }
                 }
@@ -1003,18 +1032,24 @@ namespace FyteClub.WebRTC
                 lock (_channelLock)
                 {
                     _channelBufferStates[channel] = current;
+                    if (limit > 0)
+                    {
+                        var effectiveLimit = ComputeEffectiveBufferThreshold(limit);
+                        _channelBufferLimits[channel] = effectiveLimit;
+                    }
                     _lastBufferCheck[channel] = DateTime.UtcNow;
                 }
                 
                 // Log warnings for high buffer utilization
-                var utilization = (double)current / MAX_BUFFER_THRESHOLD;
+                var effectiveThreshold = GetChannelEffectiveThreshold(channel);
+                var utilization = effectiveThreshold > 0 ? (double)current / effectiveThreshold : 0;
                 if (utilization > 0.8)
                 {
-                    _pluginLog?.Warning($"[WebRTC] Channel {index} buffer high: {current / 1024 / 1024}MB ({utilization:P0})");
+                    _pluginLog?.Warning($"[WebRTC] Channel {index} buffer high: {current / 1024.0 / 1024.0:F2}MB ({utilization:P0}) (limit {effectiveThreshold / 1024.0 / 1024.0:F2}MB)");
                 }
                 else if (utilization > 0.5 && current > previous)
                 {
-                    _pluginLog?.Debug($"[WebRTC] Channel {index} buffer: {current / 1024 / 1024}MB ({utilization:P0})");
+                    _pluginLog?.Debug($"[WebRTC] Channel {index} buffer: {current / 1024.0 / 1024.0:F2}MB ({utilization:P0}) (limit {effectiveThreshold / 1024.0 / 1024.0:F2}MB)");
                 }
             };
             
@@ -1247,7 +1282,11 @@ namespace FyteClub.WebRTC
                     if (channel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
                     {
                         var buffered = GetChannelBufferedAmount(i);
-                        totalFillRatio += (double)buffered / MAX_BUFFER_THRESHOLD;
+                        var threshold = GetChannelEffectiveThreshold(i);
+                        if (threshold > 0)
+                        {
+                            totalFillRatio += (double)buffered / threshold;
+                        }
                         validChannels++;
                     }
                 }
@@ -1289,7 +1328,7 @@ namespace FyteClub.WebRTC
                     return -1;
                 
                 int bestChannel = -1;
-                ulong lowestBuffer = ulong.MaxValue;
+                double lowestRatio = double.MaxValue;
                 
                 for (int i = 0; i < _localSendingChannels.Count; i++)
                 {
@@ -1297,9 +1336,15 @@ namespace FyteClub.WebRTC
                     if (channel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
                     {
                         var buffered = GetChannelBufferedAmount(i);
-                        if (buffered < lowestBuffer)
+                        var threshold = GetChannelEffectiveThreshold(i);
+                        if (threshold == 0)
                         {
-                            lowestBuffer = buffered;
+                            continue;
+                        }
+                        var ratio = (double)buffered / threshold;
+                        if (ratio < lowestRatio)
+                        {
+                            lowestRatio = ratio;
                             bestChannel = i;
                         }
                     }
@@ -1324,7 +1369,8 @@ namespace FyteClub.WebRTC
                 if (preferredChannel >= 0)
                 {
                     var buffered = GetChannelBufferedAmount(preferredChannel);
-                    if (buffered < OPTIMAL_BUFFER_THRESHOLD)
+                    var optimalThreshold = GetChannelOptimalThreshold(preferredChannel);
+                    if (buffered < optimalThreshold)
                     {
                         return preferredChannel;
                     }
@@ -1335,7 +1381,8 @@ namespace FyteClub.WebRTC
                 if (bestChannel >= 0)
                 {
                     var bestBuffered = GetChannelBufferedAmount(bestChannel);
-                    if (bestBuffered < MAX_BUFFER_THRESHOLD)
+                    var bestThreshold = GetChannelEffectiveThreshold(bestChannel);
+                    if (bestThreshold > 0 && bestBuffered < bestThreshold)
                     {
                         if (bestChannel != preferredChannel)
                         {
@@ -1343,8 +1390,9 @@ namespace FyteClub.WebRTC
                             var now = DateTime.UtcNow;
                             if ((now - _lastChannelSwitchLog).TotalMilliseconds >= CHANNEL_SWITCH_LOG_INTERVAL_MS)
                             {
-                                var preferredBuffered = GetChannelBufferedAmount(preferredChannel);
-                                _pluginLog?.Info($"[WebRTC] Channel {preferredChannel} busy ({preferredBuffered / 1024 / 1024}MB buffered), switching to channel {bestChannel}");
+                                var preferredBuffered = preferredChannel >= 0 ? GetChannelBufferedAmount(preferredChannel) : 0;
+                                var preferredThreshold = preferredChannel >= 0 ? GetChannelEffectiveThreshold(preferredChannel) : MAX_BUFFER_THRESHOLD;
+                                _pluginLog?.Info($"[WebRTC] Channel {preferredChannel} busy ({preferredBuffered / 1024.0 / 1024.0:F2}MB / {preferredThreshold / 1024.0 / 1024.0:F2}MB), switching to channel {bestChannel}");
                                 _lastChannelSwitchLog = now;
                             }
                         }
@@ -1356,7 +1404,7 @@ namespace FyteClub.WebRTC
                         var now = DateTime.UtcNow;
                         if ((now - lastSaturationLog).TotalMilliseconds >= 5000)
                         {
-                            _pluginLog?.Warning($"[WebRTC] All {_localSendingChannels.Count} channels saturated (>{MAX_BUFFER_THRESHOLD / 1024 / 1024}MB each), waiting for buffers to drain...");
+                            _pluginLog?.Warning($"[WebRTC] All {_localSendingChannels.Count} channels saturated (>{bestThreshold / 1024.0 / 1024.0:F2}MB each), waiting for buffers to drain...");
                             lastSaturationLog = now;
                         }
                     }
@@ -1382,7 +1430,8 @@ namespace FyteClub.WebRTC
                 for (int i = 0; i < _localSendingChannels.Count; i++)
                 {
                     var buffered = GetChannelBufferedAmount(i);
-                    var utilization = (double)buffered / MAX_BUFFER_THRESHOLD;
+                    var threshold = GetChannelEffectiveThreshold(i);
+                    var utilization = threshold > 0 ? (double)buffered / threshold : 0;
                     stats[i] = utilization;
                 }
                 return stats;
@@ -1423,11 +1472,12 @@ namespace FyteClub.WebRTC
                     if (channel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
                     {
                         var buffered = GetChannelBufferedAmount(i);
-                        var utilization = (double)buffered / MAX_BUFFER_THRESHOLD;
+                        var threshold = GetChannelEffectiveThreshold(i);
+                        var utilization = threshold > 0 ? (double)buffered / threshold : 0;
                         totalBuffered += buffered;
                         openChannels++;
                         
-                        stats.AppendLine($"  Channel {i}: {buffered / 1024 / 1024}MB buffered ({utilization:P0} utilization)");
+                        stats.AppendLine($"  Channel {i}: {buffered / 1024.0 / 1024.0:F2}MB buffered ({utilization:P0} of {threshold / 1024.0 / 1024.0:F2}MB)");
                     }
                     else
                     {
@@ -1438,12 +1488,179 @@ namespace FyteClub.WebRTC
                 if (openChannels > 0)
                 {
                     var avgBuffered = totalBuffered / (ulong)openChannels;
-                    var avgUtilization = (double)avgBuffered / MAX_BUFFER_THRESHOLD;
-                    stats.AppendLine($"  Average: {avgBuffered / 1024 / 1024}MB buffered ({avgUtilization:P0} utilization)");
+                    var avgThreshold = GetAverageChannelThreshold();
+                    var avgUtilization = avgThreshold > 0 ? (double)avgBuffered / avgThreshold : 0;
+                    stats.AppendLine($"  Average: {avgBuffered / 1024.0 / 1024.0:F2}MB buffered ({avgUtilization:P0} of {avgThreshold / 1024.0 / 1024.0:F2}MB)");
                 }
                 
                 _pluginLog?.Info(stats.ToString());
             }
+        }
+
+        private ulong GetChannelEffectiveThreshold(int channelIndex)
+        {
+            lock (_channelLock)
+            {
+                if (channelIndex < 0 || channelIndex >= _localSendingChannels.Count)
+                {
+                    return MAX_BUFFER_THRESHOLD;
+                }
+
+                var channel = _localSendingChannels[channelIndex];
+                return GetChannelEffectiveThreshold(channel);
+            }
+        }
+
+        private ulong GetChannelEffectiveThreshold(Microsoft.MixedReality.WebRTC.DataChannel? channel)
+        {
+            if (channel == null)
+            {
+                return MAX_BUFFER_THRESHOLD;
+            }
+
+            if (_channelBufferLimits.TryGetValue(channel, out var limit) && limit > 0)
+            {
+                return limit;
+            }
+
+            return MAX_BUFFER_THRESHOLD;
+        }
+
+        private ulong GetChannelOptimalThreshold(int channelIndex)
+        {
+            var effective = GetChannelEffectiveThreshold(channelIndex);
+            if (effective == 0)
+            {
+                return MIN_EFFECTIVE_BUFFER_THRESHOLD;
+            }
+
+            var optimal = effective / 2;
+            if (optimal < MIN_EFFECTIVE_BUFFER_THRESHOLD / 2)
+            {
+                optimal = Math.Max(1UL, effective / 2);
+            }
+
+            if (optimal > OPTIMAL_BUFFER_THRESHOLD)
+            {
+                optimal = OPTIMAL_BUFFER_THRESHOLD;
+            }
+
+            return Math.Max(1UL, optimal);
+        }
+
+        private double GetAverageChannelThreshold()
+        {
+            lock (_channelLock)
+            {
+                if (_localSendingChannels.Count == 0)
+                {
+                    return MAX_BUFFER_THRESHOLD;
+                }
+
+                double total = 0;
+                var count = 0;
+
+                foreach (var channel in _localSendingChannels)
+                {
+                    if (channel?.State == Microsoft.MixedReality.WebRTC.DataChannel.ChannelState.Open)
+                    {
+                        var threshold = GetChannelEffectiveThreshold(channel);
+                        if (threshold > 0)
+                        {
+                            total += threshold;
+                            count++;
+                        }
+                    }
+                }
+
+                if (count == 0)
+                {
+                    return MAX_BUFFER_THRESHOLD;
+                }
+
+                return total / count;
+            }
+        }
+
+        private ulong ComputeEffectiveBufferThreshold(ulong reportedLimit)
+        {
+            if (reportedLimit == 0)
+            {
+                return MAX_BUFFER_THRESHOLD;
+            }
+
+            var capped = reportedLimit > MAX_BUFFER_THRESHOLD ? MAX_BUFFER_THRESHOLD : reportedLimit;
+            var margin = (ulong)Math.Floor(capped * BUFFER_LIMIT_MARGIN);
+            if (margin < MIN_EFFECTIVE_BUFFER_THRESHOLD)
+            {
+                margin = MIN_EFFECTIVE_BUFFER_THRESHOLD;
+            }
+
+            return margin;
+        }
+
+        private static int CalculateAdaptiveBackoffDelay(ulong predictedBuffer, ulong threshold, ulong chunkSize)
+        {
+            const int minimumDelay = 100;
+            const int maximumDelay = 1500;
+
+            if (threshold == 0 || predictedBuffer <= threshold)
+            {
+                return minimumDelay;
+            }
+
+            var overBytes = predictedBuffer - threshold;
+            var step = (int)(overBytes / (256 * 1024));
+            if (step < 1) step = 1;
+            if (step > 12) step = 12;
+
+            var delay = minimumDelay * step;
+
+            if (chunkSize > 512 * 1024)
+            {
+                delay += 100;
+            }
+
+            return Math.Min(delay, maximumDelay);
+        }
+
+        private void UpdateBufferedEstimate(int channelIndex, ulong sentBytes)
+        {
+            Microsoft.MixedReality.WebRTC.DataChannel? channel = null;
+            lock (_channelLock)
+            {
+                if (channelIndex < 0 || channelIndex >= _localSendingChannels.Count)
+                {
+                    return;
+                }
+
+                channel = _localSendingChannels[channelIndex];
+            }
+
+            if (channel == null)
+            {
+                return;
+            }
+
+            var current = _channelBufferStates.TryGetValue(channel, out var value) ? value : 0;
+            ulong updated;
+            if (ulong.MaxValue - current < sentBytes)
+            {
+                updated = ulong.MaxValue;
+            }
+            else
+            {
+                updated = current + sentBytes;
+            }
+
+            var threshold = GetChannelEffectiveThreshold(channel);
+            if (threshold > 0 && updated > threshold)
+            {
+                updated = threshold;
+            }
+
+            _channelBufferStates[channel] = updated;
+            _lastBufferCheck[channel] = DateTime.UtcNow;
         }
     }
 }

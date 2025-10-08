@@ -29,6 +29,12 @@ namespace FyteClub
         private readonly ConcurrentDictionary<string, Func<byte[], Task>> _peerSendFunctions = new();
         private readonly SmartTransferOrchestrator _smartTransfer;
         private readonly ConnectionRecoveryManager _recoveryManager;
+    private readonly ConcurrentDictionary<string, PlayerPayloadCacheEntry> _playerPayloadCache = new();
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _payloadCacheGuards = new();
+    private readonly TimeSpan _playerPayloadCacheDuration = TimeSpan.FromSeconds(45);
+    private readonly ConcurrentDictionary<string, NegotiationCacheEntry> _negotiationResponseCache = new();
+    private readonly TimeSpan _negotiationCacheDuration = TimeSpan.FromMinutes(5);
+    private readonly ConcurrentDictionary<string, DateTime> _processedNegotiationResponses = new();
         
         // Reconnection tracking
         private readonly ConcurrentDictionary<string, IWebRTCConnection> _pendingReconnections = new();
@@ -44,6 +50,23 @@ namespace FyteClub
         
         // Message logging throttle
         private int _messageCounter = 0;
+
+        private sealed class PlayerPayloadCacheEntry
+        {
+            public AdvancedPlayerInfo PlayerInfo { get; init; } = new();
+            public Dictionary<string, TransferableFile> FileReplacements { get; init; } = new();
+            public List<FileMetadata> FileMetadata { get; init; } = new();
+            public List<ModFile> ModFiles { get; init; } = new();
+            public string DataHash { get; init; } = string.Empty;
+            public DateTime CachedAtUtc { get; init; }
+            public string Scope { get; init; } = string.Empty;
+        }
+
+        private sealed class NegotiationCacheEntry
+        {
+            public ChannelNegotiationResponse Response { get; init; } = new();
+            public DateTime CachedAtUtc { get; init; }
+        }
 
         public EnhancedP2PModSyncOrchestrator(
             IPluginLog pluginLog,
@@ -83,6 +106,7 @@ namespace FyteClub
             _protocol.OnChannelNegotiationResponseReceived += HandleChannelNegotiationResponse;
             _protocol.OnSyncComplete += HandleSyncComplete;
             _protocol.OnError += HandleError;
+            _protocol.OnAppearanceUpdateReceived += HandleAppearanceUpdate;
             
             // Wire up handler for received mod data responses (broadcasts)
             _protocol.OnModDataReceived += HandleReceivedModData;
@@ -98,21 +122,34 @@ namespace FyteClub
                         if (completed != null)
                         {
                             _pluginLog.Info($"[EnhancedP2PSync] ✅ Completed progressive receive: {fcm.Chunk.FileName} ({completed.Length / 1024.0 / 1024.0:F1} MB)");
-                            
+
+                            var playerName = GetPlayerNameFromChunk(fcm.Chunk);
+                            _pluginLog.Info($"[EnhancedP2PSync] Extracted player name from chunk: '{playerName}'");
+
+                            if (!TryRegisterFileCompletion(playerName, fcm.Chunk.FileHash, fcm.Chunk.FileName))
+                            {
+                                return;
+                            }
+
                             // CRITICAL: Write the completed file to disk so Penumbra can access it
+                            var wroteToDisk = false;
                             try
                             {
                                 await WriteReceivedFileToDisk(fcm.Chunk.FileName, completed);
                                 _pluginLog.Info($"[EnhancedP2PSync] ✅ Wrote file to disk: {fcm.Chunk.FileName}");
+                                wroteToDisk = true;
                             }
                             catch (Exception ex)
                             {
                                 _pluginLog.Error($"[EnhancedP2PSync] ❌ Failed to write file to disk: {ex.Message}");
+                                RevokeFileCompletion(playerName, fcm.Chunk.FileHash);
                             }
-                            
-                            var playerName = GetPlayerNameFromChunk(fcm.Chunk);
-                            _pluginLog.Info($"[EnhancedP2PSync] Extracted player name from chunk: '{playerName}'");
-                            
+
+                            if (!wroteToDisk)
+                            {
+                                return;
+                            }
+
                             // Check if this completes all files for the player - use actual channel index from chunk
                             await CheckAndTriggerPlayerModCompletion(fcm.Chunk.FileName, playerName, fcm.Chunk.ChannelIndex);
                         }
@@ -269,6 +306,7 @@ namespace FyteClub
                 // 2. Configure TURN servers from recovery session
                 if (connection is RobustWebRTCConnection robustConnection)
                 {
+                    robustConnection.SetSyncshellInfo(peerId, encryptionKey);
                     robustConnection.ConfigureTurnServers(turnServers);
                     _pluginLog.Info($"[Recovery] Configured {turnServers.Count} TURN servers for reconnection");
                 }
@@ -292,6 +330,7 @@ namespace FyteClub
                 // 4. Wire up connection handlers
                 connection.OnConnected += () => {
                     _pluginLog.Info($"[Recovery] Reconnected to peer {peerId}");
+                    _recoveryManager.RemoveRecoverySession(peerId);
                     
                     // Notify that we're ready to resume transfer
                     _ = Task.Run(async () => {
@@ -823,94 +862,37 @@ namespace FyteClub
             {
                 _pluginLog.Info($"[EnhancedP2PSync] Handling mod data request for {request.PlayerName}");
 
-                // Get current player mod data
-                var playerInfo = await _modIntegration.GetCurrentPlayerMods(request.PlayerName);
-                if (playerInfo == null)
+                var payload = await GetOrCreatePlayerPayloadAsync(request.PlayerName);
+                if (payload == null)
                 {
                     _pluginLog.Warning($"[EnhancedP2PSync] No mod data available for {request.PlayerName}");
                     return new ModDataResponse
                     {
                         PlayerName = request.PlayerName,
-                        DataHash = "",
+                        DataHash = string.Empty,
                         ResponseTo = request.MessageId
                     };
                 }
 
-                // Prepare actual file content for transfer
-                var fileReplacements = new Dictionary<string, TransferableFile>();
-                var fileList = new List<FileMetadata>();
-                
-                if (playerInfo.Mods?.Count > 0)
-                {
-                    foreach (var modPath in playerInfo.Mods)
-                    {
-                        if (modPath.Contains('|'))
-                        {
-                            var parts = modPath.Split('|', 2);
-                            if (parts.Length == 2 && File.Exists(parts[0]))
-                            {
-                                var fileInfo = new FileInfo(parts[0]);
-                                var fileContent = await File.ReadAllBytesAsync(parts[0]);
-                                var fileHash = CalculateFileHash(parts[0]);
-                                
-                                fileReplacements[parts[1]] = new TransferableFile
-                                {
-                                    GamePath = parts[1],
-                                    Content = fileContent,
-                                    Hash = fileHash
-                                };
-                                
-                                fileList.Add(new FileMetadata
-                                {
-                                    GamePath = parts[1],
-                                    LocalPath = parts[0],
-                                    Size = fileInfo.Length,
-                                    Hash = fileHash
-                                });
-                            }
-                        }
-                    }
-                }
-                
-                var totalBytes = fileList.Sum(f => f.Size);
-                _pluginLog.Info($"📁 [FILE TRANSFER] Prepared {fileList.Count} files with content: {totalBytes} bytes ({totalBytes / 1024.0 / 1024.0:F1} MB)");
-
-                // Create serializable player info first (exclude GameObjectAddress)
-                var serializablePlayerInfo = new AdvancedPlayerInfo
-                {
-                    PlayerName = playerInfo.PlayerName,
-                    Mods = playerInfo.Mods ?? new List<string>(),
-                    GlamourerData = playerInfo.GlamourerData,
-                    CustomizePlusData = playerInfo.CustomizePlusData,
-                    SimpleHeelsOffset = playerInfo.SimpleHeelsOffset,
-                    HonorificTitle = playerInfo.HonorificTitle,
-                    ManipulationData = playerInfo.ManipulationData
-                };
-
-                // Calculate data hash using file metadata
-                var dataHash = CalculatePlayerDataHash(serializablePlayerInfo, fileList);
-
-                // Check if client already has this data
-                if (request.LastKnownHash == dataHash)
+                if (!string.IsNullOrEmpty(request.LastKnownHash) && request.LastKnownHash == payload.DataHash)
                 {
                     _pluginLog.Debug($"[EnhancedP2PSync] Client already has current data for {request.PlayerName}");
                     return new ModDataResponse
                     {
                         PlayerName = request.PlayerName,
-                        DataHash = dataHash,
+                        DataHash = payload.DataHash,
                         ResponseTo = request.MessageId
-                        // No files sent since client is up to date
                     };
                 }
 
-                _pluginLog.Info($"[EnhancedP2PSync] Sending metadata for {request.PlayerName}, hash: {dataHash[..12]}...");
+                _pluginLog.Info($"[EnhancedP2PSync] Sending metadata for {request.PlayerName}, hash: {payload.DataHash[..12]}...");
 
                 return new ModDataResponse
                 {
                     PlayerName = request.PlayerName,
-                    DataHash = dataHash,
-                    PlayerInfo = serializablePlayerInfo,
-                    FileReplacements = fileReplacements, // Include actual file content
+                    DataHash = payload.DataHash,
+                    PlayerInfo = ClonePlayerInfo(payload.PlayerInfo),
+                    FileReplacements = CloneFileReplacements(payload.FileReplacements),
                     ResponseTo = request.MessageId
                 };
             }
@@ -920,10 +902,313 @@ namespace FyteClub
                 return new ModDataResponse
                 {
                     PlayerName = request.PlayerName,
-                    DataHash = "",
+                    DataHash = string.Empty,
                     ResponseTo = request.MessageId
                 };
             }
+        }
+
+        private static AdvancedPlayerInfo ClonePlayerInfo(AdvancedPlayerInfo source)
+        {
+            return new AdvancedPlayerInfo
+            {
+                PlayerName = source.PlayerName,
+                Mods = source.Mods != null ? new List<string>(source.Mods) : new List<string>(),
+                GlamourerData = source.GlamourerData,
+                CustomizePlusData = source.CustomizePlusData,
+                SimpleHeelsOffset = source.SimpleHeelsOffset,
+                HonorificTitle = source.HonorificTitle,
+                ManipulationData = source.ManipulationData
+            };
+        }
+
+        private static Dictionary<string, TransferableFile> CloneFileReplacements(Dictionary<string, TransferableFile> source)
+        {
+            var clone = new Dictionary<string, TransferableFile>(source.Count, StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in source)
+            {
+                var original = kvp.Value;
+                clone[kvp.Key] = new TransferableFile
+                {
+                    GamePath = original.GamePath,
+                    Hash = original.Hash,
+                    Size = original.Size,
+                    Content = original.Content
+                };
+            }
+            return clone;
+        }
+
+        private static bool PlayerInfoMatches(AdvancedPlayerInfo cached, AdvancedPlayerInfo incoming)
+        {
+            if (!string.Equals(cached.PlayerName, incoming.PlayerName, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!string.Equals(cached.GlamourerData, incoming.GlamourerData, StringComparison.Ordinal))
+                return false;
+
+            if (!string.Equals(cached.CustomizePlusData, incoming.CustomizePlusData, StringComparison.Ordinal))
+                return false;
+
+            if (!Equals(cached.SimpleHeelsOffset, incoming.SimpleHeelsOffset))
+                return false;
+
+            if (!string.Equals(cached.HonorificTitle, incoming.HonorificTitle, StringComparison.Ordinal))
+                return false;
+
+            if (!string.Equals(cached.ManipulationData, incoming.ManipulationData, StringComparison.Ordinal))
+                return false;
+
+            var cachedMods = cached.Mods ?? new List<string>();
+            var incomingMods = incoming.Mods ?? new List<string>();
+            if (cachedMods.Count != incomingMods.Count)
+                return false;
+
+            for (int i = 0; i < cachedMods.Count; i++)
+            {
+                if (!string.Equals(cachedMods[i], incomingMods[i], StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static List<FileMetadata> CloneMetadata(List<FileMetadata> source)
+        {
+            return source.Select(m => new FileMetadata
+            {
+                GamePath = m.GamePath,
+                LocalPath = m.LocalPath,
+                Size = m.Size,
+                Hash = m.Hash
+            }).ToList();
+        }
+
+        private ChannelNegotiationResponse CloneNegotiationResponse(ChannelNegotiationResponse response)
+        {
+            return new ChannelNegotiationResponse
+            {
+                MyChannels = response.MyChannels,
+                YourChannels = response.YourChannels,
+                LimitingMemoryMB = response.LimitingMemoryMB,
+                PlayerName = response.PlayerName,
+                ResponseTo = response.ResponseTo,
+                MessageId = response.MessageId,
+                Timestamp = response.Timestamp
+            };
+        }
+
+        private void CleanupNegotiationCache()
+        {
+            var expiration = DateTime.UtcNow - _negotiationCacheDuration;
+            foreach (var kvp in _negotiationResponseCache)
+            {
+                if (kvp.Value.CachedAtUtc < expiration)
+                {
+                    _negotiationResponseCache.TryRemove(kvp.Key, out _);
+                }
+            }
+        }
+
+        private bool RegisterNegotiationResponse(string messageId)
+        {
+            CleanupProcessedNegotiations();
+            return _processedNegotiationResponses.TryAdd(messageId, DateTime.UtcNow);
+        }
+
+        private void CleanupProcessedNegotiations()
+        {
+            var expiration = DateTime.UtcNow - _negotiationCacheDuration;
+            foreach (var kvp in _processedNegotiationResponses)
+            {
+                if (kvp.Value < expiration)
+                {
+                    _processedNegotiationResponses.TryRemove(kvp.Key, out _);
+                }
+            }
+        }
+
+        private string BuildPayloadCacheKey(string playerName, string? scope)
+        {
+            var normalizedName = (playerName ?? string.Empty).Trim().ToLowerInvariant();
+            var normalizedScope = string.IsNullOrWhiteSpace(scope) ? "global" : scope.Trim().ToLowerInvariant();
+            return $"{normalizedName}::{normalizedScope}";
+        }
+
+        private void InvalidatePlayerPayload(string playerName, string? scope = null)
+        {
+            var key = BuildPayloadCacheKey(playerName, scope);
+            _playerPayloadCache.TryRemove(key, out _);
+        }
+
+        private async Task<PlayerPayloadCacheEntry?> GetOrCreatePlayerPayloadAsync(string playerName, string? scope = null, bool forceRefresh = false)
+        {
+            var key = BuildPayloadCacheKey(playerName, scope);
+
+            if (!forceRefresh && _playerPayloadCache.TryGetValue(key, out var existing))
+            {
+                if (DateTime.UtcNow - existing.CachedAtUtc < _playerPayloadCacheDuration)
+                {
+                    return existing;
+                }
+            }
+
+            var gate = _payloadCacheGuards.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync();
+            try
+            {
+                if (!forceRefresh && _playerPayloadCache.TryGetValue(key, out existing))
+                {
+                    if (DateTime.UtcNow - existing.CachedAtUtc < _playerPayloadCacheDuration)
+                    {
+                        return existing;
+                    }
+                }
+
+                var rebuilt = await BuildPlayerPayloadAsync(playerName, scope);
+                if (rebuilt != null)
+                {
+                    _playerPayloadCache[key] = rebuilt;
+                    return rebuilt;
+                }
+
+                _playerPayloadCache.TryRemove(key, out _);
+                return null;
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        private async Task<PlayerPayloadCacheEntry?> BuildPlayerPayloadAsync(string playerName, string? scope)
+        {
+            var playerInfo = await _modIntegration.GetCurrentPlayerMods(playerName);
+            if (playerInfo == null)
+            {
+                return null;
+            }
+
+            var serializablePlayerInfo = new AdvancedPlayerInfo
+            {
+                PlayerName = playerInfo.PlayerName,
+                Mods = playerInfo.Mods != null ? new List<string>(playerInfo.Mods) : new List<string>(),
+                GlamourerData = playerInfo.GlamourerData,
+                CustomizePlusData = playerInfo.CustomizePlusData,
+                SimpleHeelsOffset = playerInfo.SimpleHeelsOffset,
+                HonorificTitle = playerInfo.HonorificTitle,
+                ManipulationData = playerInfo.ManipulationData
+            };
+
+            var fileReplacements = new Dictionary<string, TransferableFile>(StringComparer.OrdinalIgnoreCase);
+            var metadata = new List<FileMetadata>();
+            var modFiles = new List<ModFile>();
+
+            if (serializablePlayerInfo.Mods != null)
+            {
+                foreach (var modEntry in serializablePlayerInfo.Mods)
+                {
+                    if (string.IsNullOrWhiteSpace(modEntry) || !modEntry.Contains('|'))
+                    {
+                        continue;
+                    }
+
+                    var parts = modEntry.Split('|', 2);
+                    if (parts.Length != 2)
+                    {
+                        continue;
+                    }
+
+                    var gamePath = parts[0];
+                    var sourceRef = parts[1];
+
+                    try
+                    {
+                        byte[]? content = null;
+                        string? contentHash = null;
+                        string localPathForMeta = sourceRef;
+
+                        if (sourceRef.StartsWith("CACHED:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            contentHash = sourceRef.Substring("CACHED:".Length);
+                            if (!string.IsNullOrWhiteSpace(contentHash))
+                            {
+                                content = _modIntegration._fileTransferSystem.GetCachedFile(contentHash);
+                                var extension = Path.GetExtension(gamePath);
+                                var extWithoutDot = string.IsNullOrWhiteSpace(extension) ? "dat" : extension.TrimStart('.');
+                                var cachePath = _modIntegration._fileTransferSystem.GetCacheFilePath(contentHash, extWithoutDot);
+                                localPathForMeta = cachePath;
+
+                                if (content == null && File.Exists(cachePath))
+                                {
+                                    content = await File.ReadAllBytesAsync(cachePath);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            var candidatePath = File.Exists(sourceRef) ? sourceRef : (File.Exists(gamePath) ? gamePath : string.Empty);
+                            if (!string.IsNullOrEmpty(candidatePath))
+                            {
+                                content = await File.ReadAllBytesAsync(candidatePath);
+                                contentHash = CalculateFileHash(candidatePath);
+                                localPathForMeta = candidatePath;
+                            }
+                        }
+
+                        if (content == null || string.IsNullOrWhiteSpace(contentHash))
+                        {
+                            _pluginLog.Warning($"[PAYLOAD CACHE] Skipping mod entry '{modEntry}' due to missing content");
+                            continue;
+                        }
+
+                        if (!fileReplacements.ContainsKey(gamePath))
+                        {
+                            fileReplacements[gamePath] = new TransferableFile
+                            {
+                                GamePath = gamePath,
+                                Hash = contentHash,
+                                Content = content,
+                                Size = content.LongLength
+                            };
+                        }
+
+                        metadata.Add(new FileMetadata
+                        {
+                            GamePath = gamePath,
+                            LocalPath = localPathForMeta,
+                            Size = content.LongLength,
+                            Hash = contentHash
+                        });
+
+                        modFiles.Add(new ModFile
+                        {
+                            GamePath = gamePath,
+                            SizeBytes = content.LongLength,
+                            Hash = contentHash
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Warning($"[PAYLOAD CACHE] Failed to prepare mod entry '{modEntry}': {ex.Message}");
+                    }
+                }
+            }
+
+            var dataHash = CalculatePlayerDataHash(serializablePlayerInfo, metadata);
+
+            return new PlayerPayloadCacheEntry
+            {
+                PlayerInfo = serializablePlayerInfo,
+                FileReplacements = fileReplacements,
+                FileMetadata = metadata,
+                ModFiles = modFiles,
+                DataHash = dataHash,
+                CachedAtUtc = DateTime.UtcNow,
+                Scope = scope ?? string.Empty
+            };
         }
 
         /// <summary>
@@ -1218,7 +1503,9 @@ namespace FyteClub
                     if (_currentTransferPlayerName != normalizedPlayerName)
                     {
                         _pluginLog.Info($"[EnhancedP2PSync] Setting up new transfer context: '{_currentTransferPlayerName}' -> '{normalizedPlayerName}'");
+                        ResetPlayerCompletionHashes(_currentTransferPlayerName ?? string.Empty);
                         _currentTransferPlayerName = normalizedPlayerName;
+                        ResetPlayerCompletionHashes(normalizedPlayerName);
                         _expectedFiles.Clear();
                         _completedFiles.Clear();
                         _channelExpectedFiles.Clear();
@@ -1266,6 +1553,7 @@ namespace FyteClub
                             _pluginLog.Warning($"[EnhancedP2PSync] ❌ FAIL FAST: No files expected for {normalizedPlayerName} - likely configuration issue");
                             _currentTransferPlayerName = null;
                             _isApplyingMods = false;
+                            ResetPlayerCompletionHashes(normalizedPlayerName);
                             return;
                         }
                     }
@@ -1295,6 +1583,7 @@ namespace FyteClub
                             _expectedFiles.Clear();
                             _completedFiles.Clear();
                             _isApplyingMods = false;
+                            ResetPlayerCompletionHashes(normalizedPlayerName);
                         }
                         else
                         {
@@ -1319,6 +1608,41 @@ namespace FyteClub
             {
                 _pluginLog.Error($"[EnhancedP2PSync] ❌ Error handling received mod data: {ex.Message}");
                 _pluginLog.Error($"[EnhancedP2PSync] Stack trace: {ex.StackTrace}");
+            }
+        }
+
+        private async Task HandleAppearanceUpdate(AppearanceUpdateMessage message)
+        {
+            try
+            {
+                var playerInfo = message.PlayerInfo ?? new AdvancedPlayerInfo();
+                if (string.IsNullOrWhiteSpace(playerInfo.PlayerName))
+                {
+                    playerInfo.PlayerName = message.PlayerName;
+                }
+
+                var targetName = playerInfo.PlayerName;
+                if (string.IsNullOrWhiteSpace(targetName))
+                {
+                    _pluginLog.Warning("[EnhancedP2PSync] Appearance update missing player name");
+                    return;
+                }
+
+                _pluginLog.Info($"[EnhancedP2PSync] Received appearance update for {targetName} (hash={message.AppearanceHash})");
+                var success = await _modIntegration.ApplyAppearanceSnapshot(playerInfo, targetName);
+
+                if (success)
+                {
+                    _pluginLog.Info($"[EnhancedP2PSync] Applied appearance snapshot for {targetName}");
+                }
+                else
+                {
+                    _pluginLog.Warning($"[EnhancedP2PSync] Skipped appearance snapshot for {targetName}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"[EnhancedP2PSync] Error handling appearance update: {ex.Message}");
             }
         }
         
@@ -1500,6 +1824,14 @@ namespace FyteClub
             try
             {
                 _pluginLog.Info($"[CHANNEL] Received negotiation from {request.PlayerName}: {request.RequestedChannels} channels, {request.TotalDataMB}MB");
+
+                CleanupNegotiationCache();
+                if (_negotiationResponseCache.TryGetValue(request.MessageId, out var cached) &&
+                    DateTime.UtcNow - cached.CachedAtUtc < _negotiationCacheDuration)
+                {
+                    _pluginLog.Info($"[CHANNEL] Reusing cached negotiation response for message {request.MessageId}");
+                    return CloneNegotiationResponse(cached.Response);
+                }
                 
                 // Get our own capabilities
                 var ourMods = await GetCurrentPlayerModFiles(request.PlayerName);
@@ -1553,7 +1885,7 @@ namespace FyteClub
                     }
                 }
                 
-                return new ChannelNegotiationResponse
+                var response = new ChannelNegotiationResponse
                 {
                     MyChannels = ourChannels,
                     YourChannels = theirChannels,
@@ -1561,6 +1893,14 @@ namespace FyteClub
                     PlayerName = ourCapabilities.PlayerName,
                     ResponseTo = request.MessageId
                 };
+
+                _negotiationResponseCache[request.MessageId] = new NegotiationCacheEntry
+                {
+                    Response = CloneNegotiationResponse(response),
+                    CachedAtUtc = DateTime.UtcNow
+                };
+
+                return response;
             }
             catch (Exception ex)
             {
@@ -1583,6 +1923,12 @@ namespace FyteClub
         {
             try
             {
+                if (!RegisterNegotiationResponse(response.MessageId))
+                {
+                    _pluginLog.Debug($"[CHANNEL] Duplicate negotiation response {response.MessageId} ignored");
+                    return;
+                }
+
                 _pluginLog.Info($"[CHANNEL] Negotiation complete: Us={response.YourChannels}, Them={response.MyChannels}");
                 
                 // Update expected channel count for completion tracking
@@ -1680,36 +2026,79 @@ namespace FyteClub
         {
             try
             {
-                var playerInfo = await _modIntegration.GetCurrentPlayerMods(playerName);
-                var modFiles = new List<ModFile>();
-                
-                if (playerInfo?.Mods != null)
+                var payload = await GetOrCreatePlayerPayloadAsync(playerName);
+                if (payload == null)
                 {
-                    foreach (var modPath in playerInfo.Mods)
-                    {
-                        if (modPath.Contains('|'))
-                        {
-                            var parts = modPath.Split('|', 2);
-                            if (parts.Length == 2 && File.Exists(parts[0]))
-                            {
-                                var fileInfo = new FileInfo(parts[0]);
-                                modFiles.Add(new ModFile
-                                {
-                                    GamePath = parts[1],
-                                    SizeBytes = fileInfo.Length,
-                                    Hash = CalculateFileHash(parts[0])
-                                });
-                            }
-                        }
-                    }
+                    return new List<ModFile>();
                 }
-                
-                return modFiles;
+
+                return payload.ModFiles
+                    .Select(m => new ModFile
+                    {
+                        GamePath = m.GamePath,
+                        SizeBytes = m.SizeBytes,
+                        Hash = m.Hash
+                    })
+                    .ToList();
             }
             catch (Exception ex)
             {
                 _pluginLog.Error($"[CHANNEL] Error getting mod files: {ex.Message}");
                 return new List<ModFile>();
+            }
+        }
+
+        private async Task BroadcastAppearanceSnapshotAsync(AdvancedPlayerInfo appearanceInfo, string appearanceHash, HashSet<string> activeSyncshells)
+        {
+            if (string.IsNullOrWhiteSpace(appearanceInfo.PlayerName) || activeSyncshells.Count == 0)
+            {
+                return;
+            }
+
+            var sanitized = new AdvancedPlayerInfo
+            {
+                PlayerName = appearanceInfo.PlayerName,
+                GlamourerData = appearanceInfo.GlamourerData,
+                CustomizePlusData = appearanceInfo.CustomizePlusData,
+                SimpleHeelsOffset = appearanceInfo.SimpleHeelsOffset,
+                HonorificTitle = appearanceInfo.HonorificTitle
+            };
+
+            var message = new AppearanceUpdateMessage
+            {
+                PlayerName = sanitized.PlayerName,
+                PlayerInfo = sanitized,
+                AppearanceHash = appearanceHash
+            };
+
+            var payload = _protocol.SerializeMessage(message);
+            var tasks = new List<Task>();
+
+            foreach (var kvp in _peerSendFunctions)
+            {
+                var peerId = kvp.Key;
+                if (!activeSyncshells.Contains(peerId))
+                {
+                    continue;
+                }
+
+                tasks.Add(Task.Run(async () =>
+                {
+                    try
+                    {
+                        await kvp.Value(payload);
+                        _pluginLog.Info($"[EnhancedP2PSync] Sent appearance snapshot to {peerId}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Warning($"[EnhancedP2PSync] Failed to send appearance snapshot to {peerId}: {ex.Message}");
+                    }
+                }));
+            }
+
+            if (tasks.Count > 0)
+            {
+                await Task.WhenAll(tasks);
             }
         }
 
@@ -1723,57 +2112,55 @@ namespace FyteClub
             _pluginLog.Info($"Broadcasting mods for {playerInfo.PlayerName}: {playerInfo.Mods?.Count ?? 0} mods");
             _pluginLog.Info($"[GLAMOURER DEBUG] Broadcasting with GlamourerData: {playerInfo.GlamourerData?.Length ?? 0} chars");
 
-            // Prepare actual file content for broadcast
-            var fileReplacements = new Dictionary<string, TransferableFile>();
-            var fileList = new List<FileMetadata>();
-            
-            if (playerInfo.Mods?.Count > 0)
+            var payload = await GetOrCreatePlayerPayloadAsync(playerInfo.PlayerName);
+            if (payload == null)
             {
-                foreach (var modPath in playerInfo.Mods)
+                _pluginLog.Warning($"[EnhancedP2PSync] No cached payload available for {playerInfo.PlayerName}; skipping broadcast");
+                return;
+            }
+
+            if (!PlayerInfoMatches(payload.PlayerInfo, playerInfo))
+            {
+                _pluginLog.Info($"[EnhancedP2PSync] Cached payload mismatch detected for {playerInfo.PlayerName}, refreshing payload");
+                payload = await GetOrCreatePlayerPayloadAsync(playerInfo.PlayerName, forceRefresh: true);
+                if (payload == null)
                 {
-                    if (modPath.Contains('|'))
-                    {
-                        var parts = modPath.Split('|', 2);
-                        if (parts.Length == 2 && File.Exists(parts[0]))
-                        {
-                            try
-                            {
-                                var fileInfo = new FileInfo(parts[0]);
-                                var fileContent = await File.ReadAllBytesAsync(parts[0]);
-                                var fileHash = CalculateFileHash(parts[0]);
-                                
-                                fileReplacements[parts[1]] = new TransferableFile
-                                {
-                                    GamePath = parts[1],
-                                    Content = fileContent,
-                                    Hash = fileHash
-                                };
-                                
-                                fileList.Add(new FileMetadata
-                                {
-                                    GamePath = parts[1],
-                                    LocalPath = parts[0],
-                                    Size = fileInfo.Length,
-                                    Hash = fileHash
-                                });
-                            }
-                            catch (Exception ex)
-                            {
-                                _pluginLog.Warning($"📁 [FILE TRANSFER] Failed to read file {parts[0]}: {ex.Message}");
-                            }
-                        }
-                    }
+                    _pluginLog.Warning($"[EnhancedP2PSync] Failed to refresh payload for {playerInfo.PlayerName}; skipping broadcast");
+                    return;
                 }
             }
-            
+
+            playerInfo = ClonePlayerInfo(payload.PlayerInfo);
+            var fileReplacements = CloneFileReplacements(payload.FileReplacements);
+            var fileList = CloneMetadata(payload.FileMetadata);
+
+            var activeSyncshells = _syncshellManager?.GetSyncshells()
+                .Where(s => s.IsActive)
+                .Select(s => s.Id)
+                .ToHashSet() ?? new HashSet<string>();
+
+            if (activeSyncshells.Count == 0)
+            {
+                _pluginLog.Info($"[MULTI-CHANNEL] No active syncshells - skipping broadcast");
+                return;
+            }
+
+            var appearanceHash = _modIntegration.GenerateAppearanceHash(payload.PlayerInfo);
+            await BroadcastAppearanceSnapshotAsync(payload.PlayerInfo, appearanceHash, activeSyncshells);
+
+            if (payload.FileReplacements.Count == 0)
+            {
+                _pluginLog.Info($"[EnhancedP2PSync] No file replacements to broadcast for {playerInfo.PlayerName} - appearance snapshot sent");
+                return;
+            }
+
             var totalBytes = fileList.Sum(f => f.Size);
             if (fileList.Count > 0)
             {
                 _pluginLog.Info($"Broadcasting {fileList.Count} files ({totalBytes / 1024.0 / 1024.0:F1} MB)");
             }
 
-            // Calculate data hash
-            var dataHash = CalculatePlayerDataHash(playerInfo, fileList);
+            var dataHash = payload.DataHash;
 
             // Convert fileList to ModFile list for channel negotiation
             var modFilesForNegotiation = fileList.Select(f => new ModFile
@@ -1784,19 +2171,7 @@ namespace FyteClub
             }).ToList();
 
             var tasks = new List<Task>();
-            
-            // Get active syncshells to filter out peers from inactive syncshells
-            var activeSyncshells = _syncshellManager?.GetSyncshells()
-                .Where(s => s.IsActive)
-                .Select(s => s.Id)
-                .ToHashSet() ?? new HashSet<string>();
-            
-            if (activeSyncshells.Count == 0)
-            {
-                _pluginLog.Info($"[MULTI-CHANNEL] No active syncshells - skipping broadcast");
-                return;
-            }
-            
+
             _pluginLog.Info($"[MULTI-CHANNEL] Broadcasting to peers in {activeSyncshells.Count} active syncshell(s)");
             
             foreach (var kvp in _peerSendFunctions)
@@ -2133,12 +2508,81 @@ namespace FyteClub
                 throw;
             }
         }
+
+        private bool TryRegisterFileCompletion(string playerName, string fileHash, string fileName)
+        {
+            var normalizedPlayerName = playerName.Split('@')[0].Trim();
+            if (string.IsNullOrEmpty(normalizedPlayerName))
+            {
+                normalizedPlayerName = playerName;
+            }
+
+            if (string.IsNullOrWhiteSpace(fileHash))
+            {
+                _pluginLog.Debug($"[EnhancedP2PSync] File completion for {fileName} from {normalizedPlayerName} missing hash - allowing processing");
+                return true;
+            }
+
+            var playerHashes = _playerCompletedFileHashes.GetOrAdd(normalizedPlayerName, _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
+            if (!playerHashes.TryAdd(fileHash, 0))
+            {
+                _pluginLog.Warning($"[EnhancedP2PSync] Duplicate file hash detected for {fileName} ({fileHash}) from {normalizedPlayerName}");
+                return false;
+            }
+
+            _pluginLog.Debug($"[EnhancedP2PSync] Registered file completion hash {fileHash} for player {normalizedPlayerName}");
+            return true;
+        }
+
+        private void RevokeFileCompletion(string playerName, string fileHash)
+        {
+            if (string.IsNullOrWhiteSpace(fileHash))
+            {
+                return;
+            }
+
+            var normalizedPlayerName = playerName.Split('@')[0].Trim();
+            if (string.IsNullOrEmpty(normalizedPlayerName))
+            {
+                normalizedPlayerName = playerName;
+            }
+
+            if (_playerCompletedFileHashes.TryGetValue(normalizedPlayerName, out var playerHashes))
+            {
+                if (playerHashes.TryRemove(fileHash, out _))
+                {
+                    _pluginLog.Info($"[EnhancedP2PSync] Revoked file completion hash {fileHash} for player {normalizedPlayerName} due to error");
+                }
+
+                if (playerHashes.IsEmpty)
+                {
+                    _playerCompletedFileHashes.TryRemove(normalizedPlayerName, out _);
+                }
+            }
+        }
+
+        private void ResetPlayerCompletionHashes(string playerName)
+        {
+            if (string.IsNullOrWhiteSpace(playerName))
+            {
+                return;
+            }
+
+            var normalizedPlayerName = playerName.Split('@')[0].Trim();
+            if (string.IsNullOrEmpty(normalizedPlayerName))
+            {
+                normalizedPlayerName = playerName;
+            }
+
+            _playerCompletedFileHashes.TryRemove(normalizedPlayerName, out _);
+        }
         
-        private string? _currentTransferPlayerName;
-        private readonly HashSet<string> _expectedFiles = new();
-        private readonly HashSet<string> _completedFiles = new();
-        private readonly Dictionary<int, HashSet<string>> _channelExpectedFiles = new();
-        private readonly Dictionary<int, HashSet<string>> _channelCompletedFiles = new();
+    private string? _currentTransferPlayerName;
+    private readonly HashSet<string> _expectedFiles = new();
+    private readonly HashSet<string> _completedFiles = new();
+    private readonly Dictionary<int, HashSet<string>> _channelExpectedFiles = new();
+    private readonly Dictionary<int, HashSet<string>> _channelCompletedFiles = new();
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _playerCompletedFileHashes = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, int> _fileToChannelMap = new(); // This one gets concurrent access
         private int _expectedChannelCount = 1;
         private DateTime _lastFileCompletionTime = DateTime.MinValue;
@@ -2353,6 +2797,7 @@ namespace FyteClub
                         _fileToChannelMap.Clear();
                         _currentTransferPlayerName = null;
                         _isApplyingMods = false; // Reset flag for next transfer
+                        ResetPlayerCompletionHashes(normalizedPlayerName);
                     }
                     else
                     {

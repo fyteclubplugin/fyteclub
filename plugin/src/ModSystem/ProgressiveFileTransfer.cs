@@ -63,6 +63,34 @@ namespace FyteClub.Plugin.ModSystem
             var totalChunks = (fileData.Length + CHUNK_SIZE - 1) / CHUNK_SIZE;
             
             _pluginLog.Info($"[ProgressiveTransfer] Starting transfer: {fileName} ({fileData.Length / 1024.0 / 1024.0:F1} MB, {totalChunks} chunks)");
+
+            if (totalChunks == 0)
+            {
+                _pluginLog.Debug($"[ProgressiveTransfer] {fileName} has zero length; sending empty placeholder chunk");
+
+                var emptyChunk = new FileChunk
+                {
+                    SessionId = sessionId,
+                    FileName = fileName,
+                    ChunkIndex = 0,
+                    TotalChunks = 1,
+                    Data = Array.Empty<byte>(),
+                    FileHash = fileHash
+                };
+
+                try
+                {
+                    await sendChunk(emptyChunk);
+                    _pluginLog.Info($"[ProgressiveTransfer] Completed sending empty file: {fileName}");
+                }
+                catch (Exception ex)
+                {
+                    _pluginLog.Error($"[ProgressiveTransfer] Failed to send empty file chunk for {fileName}: {ex.Message}");
+                    throw;
+                }
+
+                return sessionId;
+            }
             
             var session = new TransferSession
             {
@@ -163,32 +191,63 @@ namespace FyteClub.Plugin.ModSystem
         /// </summary>
         public Task<byte[]?> ReceiveChunk(FileChunk chunk)
         {
+            if (chunk == null)
+            {
+                return Task.FromResult<byte[]?>(null);
+            }
+
             var sessionId = chunk.SessionId;
-            
+
+            if (string.IsNullOrEmpty(sessionId))
+            {
+                _pluginLog.Warning("[ProgressiveTransfer] Received chunk with empty session id");
+                return Task.FromResult<byte[]?>(null);
+            }
+
+            var effectiveTotalChunks = EnsureValidTotalChunks(chunk);
+
             if (!_activeSessions.TryGetValue(sessionId, out var session))
             {
-                // Start new receive session
+                // Start new receive session using sanitized metadata
                 session = new TransferSession
                 {
                     SessionId = sessionId,
                     FileName = chunk.FileName,
-                    TotalChunks = chunk.TotalChunks,
-                    FileData = new byte[chunk.TotalChunks * CHUNK_SIZE] // Overallocate, will trim later
+                    TotalChunks = effectiveTotalChunks,
+                    FileData = AllocateBuffer(effectiveTotalChunks, chunk)
                 };
                 _activeSessions[sessionId] = session;
-                
-                _pluginLog.Info($"[ProgressiveTransfer] Starting receive: {chunk.FileName} ({chunk.TotalChunks} chunks)");
+
+                _pluginLog.Info($"[ProgressiveTransfer] Starting receive: {chunk.FileName} ({effectiveTotalChunks} chunks)");
             }
-            
+            else
+            {
+                // If the incoming chunk indicates a larger total, expand the session
+                if (effectiveTotalChunks > session.TotalChunks)
+                {
+                    ExpandSessionBuffer(session, effectiveTotalChunks);
+                }
+
+                effectiveTotalChunks = session.TotalChunks;
+            }
+
             // Store chunk data with validation and last-chunk tracking
             if (!session.ReceivedChunks.Contains(chunk.ChunkIndex))
             {
                 // Validate chunk index range
-                if (chunk.ChunkIndex < 0 || chunk.ChunkIndex >= session.TotalChunks)
+                if (chunk.ChunkIndex < 0)
                 {
-                    _pluginLog.Warning($"[ProgressiveTransfer] Ignoring out-of-range chunk index {chunk.ChunkIndex} for {chunk.FileName} (total {session.TotalChunks})");
+                    _pluginLog.Warning($"[ProgressiveTransfer] Ignoring negative chunk index {chunk.ChunkIndex} for {chunk.FileName}");
                 }
-                else
+                else if (chunk.ChunkIndex >= session.TotalChunks)
+                {
+                    // Expand buffer to accommodate unexpected higher chunk indices
+                    var adjustedTotal = chunk.ChunkIndex + 1;
+                    _pluginLog.Warning($"[ProgressiveTransfer] Chunk index {chunk.ChunkIndex} exceeds total {session.TotalChunks} for {chunk.FileName}; adjusting total to {adjustedTotal}");
+                    ExpandSessionBuffer(session, adjustedTotal);
+                }
+
+                if (chunk.ChunkIndex >= 0 && chunk.ChunkIndex < session.TotalChunks)
                 {
                     var offset = chunk.ChunkIndex * CHUNK_SIZE;
                     var copyLen = chunk.Data?.Length ?? 0;
@@ -196,7 +255,14 @@ namespace FyteClub.Plugin.ModSystem
 
                     if (copyLen <= 0)
                     {
-                        _pluginLog.Warning($"[ProgressiveTransfer] Received empty chunk {chunk.ChunkIndex} for {chunk.FileName}");
+                        _pluginLog.Debug($"[ProgressiveTransfer] Received empty chunk {chunk.ChunkIndex} for {chunk.FileName}");
+                        session.ReceivedChunks.Add(chunk.ChunkIndex);
+                        session.LastActivity = DateTime.UtcNow;
+
+                        if (chunk.ChunkIndex == session.TotalChunks - 1)
+                        {
+                            session.LastChunkSize = 0;
+                        }
                     }
                     else if (remaining <= 0)
                     {
@@ -210,7 +276,7 @@ namespace FyteClub.Plugin.ModSystem
                         {
                             safeLen = Math.Min(safeLen, chunk.Data.Length); // Also clamp to actual data length
                         }
-                        
+
                         try
                         {
                             if (chunk.Data != null && safeLen > 0)
@@ -233,22 +299,81 @@ namespace FyteClub.Plugin.ModSystem
                     }
                 }
             }
-            
+
             // Check if transfer is complete
             if (session.IsComplete)
             {
                 _pluginLog.Info($"[ProgressiveTransfer] Completed receiving: {chunk.FileName}");
-                
+
                 // Calculate actual file size and trim array
                 var actualSize = CalculateActualFileSize(session);
                 var completeFile = new byte[actualSize];
                 Buffer.BlockCopy(session.FileData, 0, completeFile, 0, actualSize);
-                
+
                 _activeSessions.TryRemove(sessionId, out _);
                 return Task.FromResult<byte[]?>(completeFile);
             }
-            
+
             return Task.FromResult<byte[]?>(null); // Transfer not complete yet
+
+            int EnsureValidTotalChunks(FileChunk incomingChunk)
+            {
+                var reportedTotal = incomingChunk.TotalChunks;
+                var minimumFromIndex = incomingChunk.ChunkIndex >= 0 ? incomingChunk.ChunkIndex + 1 : 1;
+
+                if (reportedTotal <= 0)
+                {
+                    var adjusted = Math.Max(minimumFromIndex, 1);
+                    _pluginLog.Warning($"[ProgressiveTransfer] Received invalid totalChunks={reportedTotal} for {incomingChunk.FileName}; inferring {adjusted}");
+                    incomingChunk.TotalChunks = adjusted;
+                    return adjusted;
+                }
+
+                if (reportedTotal < minimumFromIndex)
+                {
+                    var adjusted = minimumFromIndex;
+                    _pluginLog.Warning($"[ProgressiveTransfer] Reported totalChunks={reportedTotal} smaller than chunkIndex {incomingChunk.ChunkIndex} for {incomingChunk.FileName}; adjusting to {adjusted}");
+                    incomingChunk.TotalChunks = adjusted;
+                    return adjusted;
+                }
+
+                return reportedTotal;
+            }
+
+            byte[] AllocateBuffer(int totalChunks, FileChunk incomingChunk)
+            {
+                var chunks = Math.Max(totalChunks, 1);
+                var bufferSize = chunks * CHUNK_SIZE;
+                var requiredByChunk = Math.Max(0, incomingChunk.ChunkIndex) * CHUNK_SIZE + (incomingChunk.Data?.Length ?? 0);
+                if (requiredByChunk > bufferSize)
+                {
+                    bufferSize = requiredByChunk;
+                }
+
+                return new byte[bufferSize];
+            }
+
+            void ExpandSessionBuffer(TransferSession existingSession, int newTotalChunks)
+            {
+                var adjustedTotal = Math.Max(newTotalChunks, existingSession.TotalChunks);
+                if (adjustedTotal <= existingSession.TotalChunks)
+                {
+                    return;
+                }
+
+                var newSize = adjustedTotal * CHUNK_SIZE;
+                if (newSize <= existingSession.FileData.Length)
+                {
+                    existingSession.TotalChunks = adjustedTotal;
+                    return;
+                }
+
+                var resized = new byte[newSize];
+                Buffer.BlockCopy(existingSession.FileData, 0, resized, 0, existingSession.FileData.Length);
+                existingSession.FileData = resized;
+                existingSession.TotalChunks = adjustedTotal;
+                _pluginLog.Debug($"[ProgressiveTransfer] Expanded buffer for {existingSession.FileName} to {adjustedTotal} chunks");
+            }
         }
         
         /// <summary>

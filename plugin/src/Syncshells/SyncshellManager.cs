@@ -183,6 +183,7 @@ namespace FyteClub
 
             var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
             await connection.InitializeAsync();
+            ApplyReconnectionMetadata(syncshellId, connection, Convert.ToBase64String(identity.EncryptionKey));
 
             connection.OnDataReceived += (data, channelIndex) => {
                 // Notify P2P orchestrator first for new protocol messages
@@ -367,6 +368,7 @@ namespace FyteClub
                                     await hostConnection.SendDataAsync(data);
                                 });
                             };
+                            ApplyReconnectionMetadata(syncshellId, hostConnection, syncshell?.EncryptionKey);
                             
                             ReplaceWebRTCConnection(syncshellId, hostConnection);
                         }
@@ -451,6 +453,7 @@ namespace FyteClub
                 SecureLogger.LogInfo("🔧 Creating new connection to peer {0} in {1}", peerAddress, syncshellId);
                 var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                 await connection.InitializeAsync();
+                ApplyReconnectionMetadata(syncshellId, connection);
                 
                 connection.OnDataReceived += (data, channelIndex) => {
                     // Notify P2P orchestrator first for new protocol messages
@@ -513,6 +516,7 @@ namespace FyteClub
                 
                 var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                 await connection.InitializeAsync();
+                ApplyReconnectionMetadata(syncshellId, connection);
                 
                 connection.OnDataReceived += (data, channelIndex) => {
                     // Notify P2P orchestrator first for new protocol messages
@@ -1022,6 +1026,7 @@ namespace FyteClub
                             // Create connection and process offer
                             var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                             await connection.InitializeAsync();
+                            ApplyReconnectionMetadata(syncshellId, connection);
                             
                             connection.OnDataReceived += (data, channelIndex) => {
                                 // Notify P2P orchestrator first for new protocol messages
@@ -1158,6 +1163,7 @@ namespace FyteClub
                         SecureLogger.LogInfo("🔧 Creating new WebRTC connection for syncshell {0}", syncshellId);
                         var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                         await connection.InitializeAsync();
+                        ApplyReconnectionMetadata(syncshellId, connection, key);
                         
                         // CRITICAL: Wire up data handler BEFORE storing connection
                         connection.OnDataReceived += (data, channelIndex) => {
@@ -1283,6 +1289,7 @@ namespace FyteClub
                         SecureLogger.LogInfo("🔧 Creating new mesh connection for {0}", meshKey);
                         var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                         await connection.InitializeAsync();
+                        ApplyReconnectionMetadata(syncshellId, connection);
                         
                         connection.OnDataReceived += (data, channelIndex) => {
                             SecureLogger.LogInfo("📨📨📨 MESH CONNECTION received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
@@ -1704,6 +1711,7 @@ namespace FyteClub
                     SecureLogger.LogInfo("🔧 Creating new host connection for syncshell {0}", syncshellId);
                     var hostConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
                     await hostConnection.InitializeAsync();
+                    ApplyReconnectionMetadata(syncshellId, hostConnection, syncshell.EncryptionKey);
                     
                     hostConnection.OnDataReceived += (data, channelIndex) => {
                         SecureLogger.LogInfo("📨📨📨 INIT HOST received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
@@ -1890,46 +1898,47 @@ namespace FyteClub
                     
                     SecureLogger.LogInfo("🔧 Creating new connection to process WebRTC offer for {0}", syncshellId);
                     var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
-                await connection.InitializeAsync();
+                    await connection.InitializeAsync();
+                    ApplyReconnectionMetadata(syncshellId, connection);
                 
-                connection.OnDataReceived += (data, channelIndex) => {
-                    SecureLogger.LogInfo("📨📨📨 PROCESS WEBRTC received mod data from syncshell {0}: {1} bytes on channel {2}", syncshellId, data.Length, channelIndex);
+                    connection.OnDataReceived += (data, channelIndex) => {
+                        SecureLogger.LogInfo("📨📨📨 PROCESS WEBRTC received mod data from syncshell {0}: {1} bytes on channel {2}", syncshellId, data.Length, channelIndex);
                     
-                    // Notify P2P orchestrator first for new protocol messages
-                    OnP2PMessageReceived?.Invoke(syncshellId, data);
+                        // Notify P2P orchestrator first for new protocol messages
+                        OnP2PMessageReceived?.Invoke(syncshellId, data);
                     
-                    // Then handle with legacy system
-                    HandleModData(syncshellId, data);
-                };
-                connection.OnConnected += () => {
-                    SecureLogger.LogInfo("WebRTC connected to host for syncshell {0}", syncshellId);
+                        // Then handle with legacy system
+                        HandleModData(syncshellId, data);
+                    };
+                    connection.OnConnected += () => {
+                        SecureLogger.LogInfo("WebRTC connected to host for syncshell {0}", syncshellId);
                     
-                    // Notify P2P orchestrator of new peer connection
-                    OnPeerConnected?.Invoke(syncshellId, async (data) => {
-                        await connection.SendDataAsync(data);
-                    });
-                };
-                connection.OnDisconnected += () => {
-                    SecureLogger.LogInfo("WebRTC disconnected from host for syncshell {0}", syncshellId);
+                        // Notify P2P orchestrator of new peer connection
+                        OnPeerConnected?.Invoke(syncshellId, async (data) => {
+                            await connection.SendDataAsync(data);
+                        });
+                    };
+                    connection.OnDisconnected += () => {
+                        SecureLogger.LogInfo("WebRTC disconnected from host for syncshell {0}", syncshellId);
                     
-                    // Notify P2P orchestrator of peer disconnection
-                    OnPeerDisconnected?.Invoke(syncshellId);
-                };
-                
-                // Extract the offer SDP from the invite code
-                var offerSdp = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(inviteCode));
-                
-                // Process invite with ICE candidates if it's a RobustWebRTCConnection
-                if (connection is WebRTC.RobustWebRTCConnection robustConnection)
-                {
-                    robustConnection.ProcessInviteWithIce(inviteCode);
-                }
-                
-                var answer = await connection.CreateAnswerAsync(offerSdp);
-                Console.WriteLine($"Answer ready for host");
-                
-                // Generate answer code for manual exchange
-                string answerCode;
+                        // Notify P2P orchestrator of peer disconnection
+                        OnPeerDisconnected?.Invoke(syncshellId);
+                    };
+                    
+                    // Extract the offer SDP from the invite code
+                    var offerSdp = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(inviteCode));
+                    
+                    // Process invite with ICE candidates if it's a RobustWebRTCConnection
+                    if (connection is WebRTC.RobustWebRTCConnection robustConnection)
+                    {
+                        robustConnection.ProcessInviteWithIce(inviteCode);
+                    }
+                    
+                    var answer = await connection.CreateAnswerAsync(offerSdp);
+                    Console.WriteLine($"Answer ready for host");
+                    
+                    // Generate answer code for manual exchange
+                    string answerCode;
                 if (connection is WebRTC.RobustWebRTCConnection robust)
                 {
                     answerCode = robust.GenerateAnswerWithIce(answer);
@@ -2240,6 +2249,35 @@ namespace FyteClub
             {
                 // Ignore all disposal errors to prevent hanging
             }
+        }
+
+        private void ApplyReconnectionMetadata(string syncshellId, IWebRTCConnection connection, string? encryptionKeyOverride = null)
+        {
+            if (connection is WebRTC.RobustWebRTCConnection robustConnection)
+            {
+                var resolvedKey = encryptionKeyOverride;
+                if (string.IsNullOrWhiteSpace(resolvedKey))
+                {
+                    resolvedKey = ResolveEncryptionKey(syncshellId);
+                }
+                robustConnection.SetSyncshellInfo(syncshellId, resolvedKey ?? string.Empty);
+            }
+        }
+
+        private string ResolveEncryptionKey(string syncshellId)
+        {
+            var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+            if (!string.IsNullOrEmpty(syncshell?.EncryptionKey))
+            {
+                return syncshell.EncryptionKey;
+            }
+
+            if (_sessions.TryGetValue(syncshellId, out var session) && session.Identity?.EncryptionKey is { Length: > 0 } keyBytes)
+            {
+                return Convert.ToBase64String(keyBytes);
+            }
+
+            return string.Empty;
         }
 
         /// <summary>
