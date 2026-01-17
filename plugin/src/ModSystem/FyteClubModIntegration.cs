@@ -20,6 +20,7 @@ using Glamourer.Api.IpcSubscribers;
 using FyteClub.ModSystem.Advanced;
 using FyteClub.ModSystem;
 using System.IO;
+using System.IO.Compression;
 using System.Text.RegularExpressions;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
@@ -39,6 +40,10 @@ namespace FyteClub
         // Local player tracking for protection
         private uint? _localPlayerObjectIndex;
         private string? _localPlayerName;
+
+    private bool _cacheDirectoryLogged;
+    private readonly HashSet<string> _missingFileDebugSet = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _stagedCacheDebugSet = new(StringComparer.OrdinalIgnoreCase);
         
         // Mod state tracking for intelligent application
         private readonly Dictionary<string, string> _appliedModHashes = new();
@@ -52,6 +57,10 @@ namespace FyteClub
         private readonly FileCacheManager _fileCacheManager;
         private readonly PerformanceMonitor _performanceMonitor;
         private readonly RedrawManager _redrawManager;
+
+    private readonly ConcurrentDictionary<string, Lazy<TtmpArchive?>> _ttmpArchiveCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte[]> _ttmpFileCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte[]> _looseFileCache = new(StringComparer.OrdinalIgnoreCase);
         
         // FyteClub's unique lock code for Glamourer (0x46797465 = "Fyte" in ASCII)
         private const uint FYTECLUB_GLAMOURER_LOCK = 0x46797465;
@@ -262,6 +271,11 @@ namespace FyteClub
             _framework = framework;
             _clientState = clientState;
             _fileTransferSystem = new FileTransferSystem(pluginDirectory, pluginLog);
+            if (!_cacheDirectoryLogged)
+            {
+                _pluginLog.Debug($"[CACHE] FileTransfer cache directory: {_fileTransferSystem._cacheDirectory}");
+                _cacheDirectoryLogged = true;
+            }
             
             // Initialize advanced mod system components
             _changeDetector = new CharacterChangeDetector();
@@ -952,33 +966,12 @@ namespace FyteClub
                         if (localPath.StartsWith("CACHED:"))
                         {
                             var hash = localPath.Substring(7);
-                            
+
                             // Get cached content
                             var cachedContent = _fileTransferSystem.GetCachedFile(hash);
                             if (cachedContent != null)
                             {
-                                try
-                                {
-                                    // Write to persistent cache directory (not temp)
-                                    var fileExtension = Path.GetExtension(gamePath).TrimStart('.');
-                                    var cachePath = _fileTransferSystem.GetCacheFilePath(hash, fileExtension);
-                                    
-                                    // Only write if not already cached
-                                    if (!File.Exists(cachePath))
-                                    {
-                                        await FileWriteHelper.WriteFileWithRetryAsync(cachePath, cachedContent, _pluginLog);
-                                        _pluginLog.Debug($"Cached file to persistent storage: {cachePath} ({cachedContent.Length} bytes)");
-                                    }
-                                    
-                                    fileReplacements[gamePath] = cachePath;
-                                    _pluginLog.Debug($"Added cached file: {gamePath} -> {cachePath}");
-                                }
-                                catch (Exception ex)
-                                {
-                                    _pluginLog.Error($"Failed to cache file for {gamePath}: {ex.Message}");
-                                    _pluginLog.Error($"Exception type: {ex.GetType().FullName}");
-                                    _pluginLog.Error($"Stack trace: {ex.StackTrace}");
-                                }
+                                await CacheFileForChaosAsync(gamePath, cachedContent, hash, fileReplacements);
                             }
                             else
                             {
@@ -987,9 +980,19 @@ namespace FyteClub
                         }
                         else
                         {
-                            // For received mods, don't validate file existence - let Penumbra handle it
-                            fileReplacements[gamePath] = localPath;
-                            _pluginLog.Debug($"Added file replacement: {gamePath} -> {localPath}");
+                            var resolvedLocal = localPath;
+                            if (!Path.IsPathRooted(resolvedLocal))
+                            {
+                                resolvedLocal = ResolvePenumbraModPath(resolvedLocal);
+                            }
+
+                            resolvedLocal = NormalizeLocalPath(resolvedLocal);
+
+                            if (!await TryPreparePenumbraFileAsync(gamePath, resolvedLocal, fileReplacements))
+                            {
+                                _pluginLog.Warning($"Source file missing for Penumbra replacement: {gamePath}");
+                                fileReplacements[gamePath] = resolvedLocal;
+                            }
                         }
                         
                         // Handle meta files
@@ -1009,6 +1012,439 @@ namespace FyteClub
             
             _pluginLog.Debug($"Validation complete: {fileReplacements.Count} files, {metaManipulations.Count} meta");
             return (fileReplacements, metaManipulations);
+        }
+
+        private async Task CacheFileForChaosAsync(string gamePath, byte[] content, string hash, Dictionary<string, string> destination)
+        {
+            try
+            {
+                var extension = Path.GetExtension(gamePath).TrimStart('.');
+                if (string.IsNullOrEmpty(extension))
+                {
+                    extension = "dat";
+                }
+
+                var cachePath = _fileTransferSystem.GetCacheFilePath(hash, extension);
+                if (!File.Exists(cachePath))
+                {
+                    await FileWriteHelper.WriteFileWithRetryAsync(cachePath, content, _pluginLog);
+                    _pluginLog.Debug($"Cached file to persistent storage: {cachePath} ({content.Length} bytes)");
+                }
+
+                destination[gamePath] = cachePath;
+                _pluginLog.Debug($"Added cached file: {gamePath} -> {cachePath}");
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Failed to prepare cache file for {gamePath}: {ex.Message}");
+            }
+        }
+
+        private async Task<bool> TryPreparePenumbraFileAsync(string gamePath, string resolvedLocal, Dictionary<string, string> destination)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(resolvedLocal) && File.Exists(resolvedLocal))
+                {
+                    var fileBytes = await File.ReadAllBytesAsync(resolvedLocal);
+                    if (fileBytes.Length > 0)
+                    {
+                        var hash = ComputeFileHash(fileBytes);
+                        _fileTransferSystem._fileCache[hash] = fileBytes;
+                        await CacheFileForChaosAsync(gamePath, fileBytes, hash, destination);
+                        return true;
+                    }
+                }
+
+                if (TryRecoverFromLooseFiles(resolvedLocal, gamePath, out var recoveredBytes, out var recoveredSource))
+                {
+                    var hash = ComputeFileHash(recoveredBytes);
+                    _fileTransferSystem._fileCache[hash] = recoveredBytes;
+                    await CacheFileForChaosAsync(gamePath, recoveredBytes, hash, destination);
+                    if (!string.IsNullOrEmpty(recoveredSource))
+                    {
+                        _pluginLog.Debug($"Recovered Penumbra asset '{gamePath}' from mod directory '{recoveredSource}'");
+                    }
+
+                    return true;
+                }
+
+                if (TryExtractFromTtmp(resolvedLocal, gamePath, out var extractedBytes, out var sourceArchive))
+                {
+                    var hash = ComputeFileHash(extractedBytes);
+                    _fileTransferSystem._fileCache[hash] = extractedBytes;
+                    await CacheFileForChaosAsync(gamePath, extractedBytes, hash, destination);
+                    if (!string.IsNullOrEmpty(sourceArchive))
+                    {
+                        _pluginLog.Debug($"Recovered Penumbra asset '{gamePath}' from TTMP '{Path.GetFileName(sourceArchive)}'");
+                    }
+
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Error($"Failed to prepare Penumbra file '{resolvedLocal}': {ex.Message}");
+            }
+
+            return false;
+        }
+
+        private static string NormalizeLocalPath(string path)
+        {
+            return string.IsNullOrWhiteSpace(path)
+                ? string.Empty
+                : path.Replace('/', Path.DirectorySeparatorChar).Trim();
+        }
+
+        private bool TryExtractFromTtmp(string resolvedLocal, string gamePath, out byte[] fileBytes, out string? sourceArchive)
+        {
+            fileBytes = Array.Empty<byte>();
+            sourceArchive = null;
+
+            try
+            {
+                var normalizedGamePath = NormalizeGamePath(gamePath);
+                if (string.IsNullOrEmpty(normalizedGamePath))
+                {
+                    return false;
+                }
+
+                if (_ttmpFileCache.TryGetValue(normalizedGamePath, out var cached))
+                {
+                    fileBytes = cached;
+                    return true;
+                }
+
+                var archivePath = FindNearestTtmpArchive(resolvedLocal);
+                if (string.IsNullOrEmpty(archivePath))
+                {
+                    return false;
+                }
+
+                var archive = LoadTtmpArchive(archivePath);
+                if (archive is null || !archive.TryGetEntry(normalizedGamePath, out var entry))
+                {
+                    return false;
+                }
+
+                if (!entry.CanReadFrom(archive.DataBuffer.Length))
+                {
+                    _pluginLog.Debug($"TTMP entry for '{gamePath}' is out of bounds in '{archive.ArchivePath}'");
+                    return false;
+                }
+
+                var buffer = new byte[entry.Size];
+                var offset = (int)entry.Offset;
+                Array.Copy(archive.DataBuffer, offset, buffer, 0, entry.Size);
+                _ttmpFileCache[normalizedGamePath] = buffer;
+                fileBytes = buffer;
+                sourceArchive = archive.ArchivePath;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Debug($"Failed to extract TTMP content for '{gamePath}': {ex.Message}");
+                return false;
+            }
+        }
+
+        private bool TryRecoverFromLooseFiles(string? resolvedLocal, string gamePath, out byte[] fileBytes, out string? sourceDirectory)
+        {
+            fileBytes = Array.Empty<byte>();
+            sourceDirectory = null;
+
+            try
+            {
+                var normalizedGamePath = NormalizeGamePath(gamePath);
+                if (string.IsNullOrEmpty(normalizedGamePath))
+                {
+                    return false;
+                }
+
+                var cacheKey = $"{normalizedGamePath}|{resolvedLocal}";
+                if (_looseFileCache.TryGetValue(cacheKey, out var cachedBytes))
+                {
+                    fileBytes = cachedBytes;
+                    return true;
+                }
+
+                if (string.IsNullOrWhiteSpace(resolvedLocal))
+                {
+                    return false;
+                }
+
+                var directoryPath = Path.GetDirectoryName(resolvedLocal);
+                if (string.IsNullOrEmpty(directoryPath) || !Directory.Exists(directoryPath))
+                {
+                    return false;
+                }
+
+                var relativePath = normalizedGamePath.Replace('/', Path.DirectorySeparatorChar);
+                var searchDirectories = new List<DirectoryInfo>();
+                var directory = new DirectoryInfo(directoryPath);
+                for (var depth = 0; depth < 10 && directory != null; depth++)
+                {
+                    searchDirectories.Add(directory);
+                    directory = directory.Parent;
+                }
+
+                foreach (var dir in searchDirectories)
+                {
+                    var filesDir = Path.Combine(dir.FullName, "files");
+                    if (Directory.Exists(filesDir))
+                    {
+                        var candidate = Path.Combine(filesDir, relativePath);
+                        if (File.Exists(candidate))
+                        {
+                            var bytes = File.ReadAllBytes(candidate);
+                            if (bytes.Length > 0)
+                            {
+                                _looseFileCache[cacheKey] = bytes;
+                                fileBytes = bytes;
+                                sourceDirectory = filesDir;
+                                return true;
+                            }
+                        }
+                    }
+
+                    var directCandidate = Path.Combine(dir.FullName, relativePath);
+                    if (File.Exists(directCandidate))
+                    {
+                        var bytes = File.ReadAllBytes(directCandidate);
+                        if (bytes.Length > 0)
+                        {
+                            _looseFileCache[cacheKey] = bytes;
+                            fileBytes = bytes;
+                            sourceDirectory = dir.FullName;
+                            return true;
+                        }
+                    }
+                }
+
+                var fileName = Path.GetFileName(relativePath);
+                if (string.IsNullOrEmpty(fileName))
+                {
+                    return false;
+                }
+
+                foreach (var dir in searchDirectories)
+                {
+                    try
+                    {
+                        var match = dir.GetFiles(fileName, SearchOption.AllDirectories).FirstOrDefault();
+                        if (match != null && match.Exists)
+                        {
+                            var bytes = File.ReadAllBytes(match.FullName);
+                            if (bytes.Length > 0)
+                            {
+                                _looseFileCache[cacheKey] = bytes;
+                                fileBytes = bytes;
+                                sourceDirectory = match.Directory?.FullName ?? dir.FullName;
+                                return true;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _pluginLog.Debug($"Loose file search failed in '{dir.FullName}': {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Debug($"Loose file recovery failed for '{gamePath}': {ex.Message}");
+            }
+
+            return false;
+        }
+
+        private string? FindNearestTtmpArchive(string resolvedLocal)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(resolvedLocal))
+                {
+                    return null;
+                }
+
+                var directoryPath = Path.GetDirectoryName(resolvedLocal);
+                if (string.IsNullOrEmpty(directoryPath))
+                {
+                    return null;
+                }
+
+                var directory = new DirectoryInfo(directoryPath);
+                for (var depth = 0; depth < 8 && directory != null; depth++)
+                {
+                    var ttmp = directory.GetFiles("*.ttmp2", SearchOption.TopDirectoryOnly).FirstOrDefault();
+                    if (ttmp != null)
+                    {
+                        return ttmp.FullName;
+                    }
+
+                    directory = directory.Parent;
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Debug($"Failed searching for TTMP near '{resolvedLocal}': {ex.Message}");
+            }
+
+            return null;
+        }
+
+        private TtmpArchive? LoadTtmpArchive(string archivePath)
+        {
+            var lazy = _ttmpArchiveCache.GetOrAdd(archivePath, path => new Lazy<TtmpArchive?>(() => LoadTtmpArchiveInternal(path), LazyThreadSafetyMode.ExecutionAndPublication));
+            return lazy.Value;
+        }
+
+        private TtmpArchive? LoadTtmpArchiveInternal(string archivePath)
+        {
+            try
+            {
+                using var archive = ZipFile.OpenRead(archivePath);
+                var manifestEntry = archive.Entries.FirstOrDefault(e => e.Name.Equals("TTMPL.mpl", StringComparison.OrdinalIgnoreCase)) ??
+                                    archive.Entries.FirstOrDefault(e => e.Name.EndsWith(".mpl", StringComparison.OrdinalIgnoreCase));
+
+                if (manifestEntry == null)
+                {
+                    _pluginLog.Debug($"TTMP '{archivePath}' is missing manifest");
+                    return null;
+                }
+
+                var dataEntries = archive.Entries
+                    .Where(e => e.Name.StartsWith("TTMPD", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(e => e.FullName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (dataEntries.Count == 0)
+                {
+                    _pluginLog.Debug($"TTMP '{archivePath}' is missing data segments");
+                    return null;
+                }
+
+                string manifestJson;
+                using (var manifestStream = manifestEntry.Open())
+                using (var reader = new StreamReader(manifestStream))
+                {
+                    manifestJson = reader.ReadToEnd();
+                }
+
+                var entries = ParseTtmpManifest(manifestJson, archivePath);
+                if (entries.Count == 0)
+                {
+                    return null;
+                }
+
+                using var dataStream = new MemoryStream();
+                foreach (var entry in dataEntries)
+                {
+                    using var entryStream = entry.Open();
+                    entryStream.CopyTo(dataStream);
+                }
+
+                return new TtmpArchive(archivePath, entries, dataStream.ToArray());
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Debug($"Failed to load TTMP '{archivePath}': {ex.Message}");
+                return null;
+            }
+        }
+
+        private Dictionary<string, TtmpEntry> ParseTtmpManifest(string manifestJson, string archivePath)
+        {
+            var result = new Dictionary<string, TtmpEntry>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                var root = JToken.Parse(manifestJson);
+                foreach (var entryToken in EnumerateManifestTokens(root))
+                {
+                    var fullPath = entryToken["FullPath"]?.Value<string>();
+                    var modOffsetToken = entryToken["ModOffset"];
+                    var modSizeToken = entryToken["ModSize"];
+
+                    if (string.IsNullOrEmpty(fullPath) || modOffsetToken == null || modSizeToken == null)
+                    {
+                        continue;
+                    }
+
+                    if (!long.TryParse(modOffsetToken.ToString(), out var offset))
+                    {
+                        continue;
+                    }
+
+                    if (!int.TryParse(modSizeToken.ToString(), out var size) || size <= 0)
+                    {
+                        continue;
+                    }
+
+                    var normalizedPath = NormalizeGamePath(fullPath);
+                    if (string.IsNullOrEmpty(normalizedPath))
+                    {
+                        continue;
+                    }
+
+                    var datFile = entryToken["DatFile"]?.Value<int?>() ?? 0;
+                    if (!result.ContainsKey(normalizedPath))
+                    {
+                        result[normalizedPath] = new TtmpEntry(fullPath, normalizedPath, offset, size, datFile);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Debug($"Failed to parse TTMP manifest for '{archivePath}': {ex.Message}");
+            }
+
+            return result;
+        }
+
+        private static IEnumerable<JObject> EnumerateManifestTokens(JToken? token)
+        {
+            if (token == null)
+            {
+                yield break;
+            }
+
+            if (token.Type == JTokenType.Object)
+            {
+                var obj = (JObject)token;
+                if (obj.TryGetValue("FullPath", StringComparison.OrdinalIgnoreCase, out _) &&
+                    obj.TryGetValue("ModOffset", StringComparison.OrdinalIgnoreCase, out _) &&
+                    obj.TryGetValue("ModSize", StringComparison.OrdinalIgnoreCase, out _))
+                {
+                    yield return obj;
+                }
+
+                foreach (var property in obj.Properties())
+                {
+                    foreach (var child in EnumerateManifestTokens(property.Value))
+                    {
+                        yield return child;
+                    }
+                }
+            }
+            else if (token.Type == JTokenType.Array)
+            {
+                foreach (var child in token)
+                {
+                    foreach (var entry in EnumerateManifestTokens(child))
+                    {
+                        yield return entry;
+                    }
+                }
+            }
+        }
+
+        private static string NormalizeGamePath(string gamePath)
+        {
+            return string.IsNullOrWhiteSpace(gamePath)
+                ? string.Empty
+                : gamePath.Replace('\\', '/').Trim();
         }
         
         private void ApplyModsSequentially(Guid collectionId, Dictionary<string, string> fileReplacements, List<string> metaManipulations)
@@ -1614,7 +2050,7 @@ namespace FyteClub
                         var characterData = await GetCharacterData(targetCharacter);
                         if (characterData != null && characterData.Count > 0)
                         {
-                            playerInfo.Mods = ProcessFileReplacements(characterData);
+                            playerInfo.Mods = await ProcessFileReplacementsAsync(characterData);
                             _pluginLog.Info($"Collected {playerInfo.Mods.Count} mod files for {playerName}");
                         }
                         else
@@ -1735,64 +2171,152 @@ namespace FyteClub
             }
         }
 
-        private List<string> ProcessFileReplacements(Dictionary<string, HashSet<string>> resourcePaths)
+        private async Task<List<string>> ProcessFileReplacementsAsync(Dictionary<string, HashSet<string>> resourcePaths)
         {
             var mods = new List<string>();
             _pluginLog.Info($"Processing {resourcePaths.Count} resource paths from Penumbra (standard approach)");
-            
+
             var validFiles = 0;
             var gamePathsWithReplacements = 0;
+            var candidates = new List<(string GamePath, string ReplacementPath, string ResolvedPath)>();
 
             foreach (var kvp in resourcePaths)
             {
                 var gamePath = kvp.Key;
                 var modPaths = kvp.Value;
 
-                // Check for file replacements (non-vanilla files)
                 var hasReplacement = modPaths?.Count >= 1 && modPaths.Any(p => !string.Equals(p, gamePath, StringComparison.Ordinal));
-                
                 if (!hasReplacement)
                 {
-                    continue; // Skip vanilla files (no mod applied)
+                    continue;
                 }
-                
+
                 gamePathsWithReplacements++;
 
-                // Process the first non-vanilla path as the replacement
                 var replacementPath = modPaths?.FirstOrDefault(p => !string.Equals(p, gamePath, StringComparison.Ordinal));
-                if (replacementPath == null) continue;
-                var resolved = ResolvePenumbraModPath(replacementPath);
-                
-                try
+                if (string.IsNullOrEmpty(replacementPath))
                 {
-                    if (File.Exists(resolved))
+                    continue;
+                }
+
+                var resolved = ResolvePenumbraModPath(replacementPath);
+                candidates.Add((gamePath, replacementPath, resolved));
+            }
+
+            Dictionary<string, FileCacheEntry> stagedEntries = new(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                var pathsToStage = candidates.Select(c => c.ResolvedPath)
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
+                if (pathsToStage.Length > 0)
+                {
+                    _pluginLog.Debug($"[CACHE] Preparing to stage {pathsToStage.Length} potential replacements");
+                    var cacheEntries = await _fileCacheManager.GetFileCachesByPaths(pathsToStage);
+                    if (cacheEntries.Count > 0)
                     {
-                        var fileContent = File.ReadAllBytes(resolved);
-                        var hash = ComputeFileHash(fileContent);
-                        _fileTransferSystem._fileCache[hash] = fileContent;
-                        
-                        var modEntry = $"{gamePath}|CACHED:{hash}";
-                        mods.Add(modEntry);
-                        validFiles++;
+                        stagedEntries = new Dictionary<string, FileCacheEntry>(cacheEntries, StringComparer.OrdinalIgnoreCase);
+                        _pluginLog.Debug($"[CACHE] Staged {stagedEntries.Count} replacements via FileCacheManager");
                     }
                     else
                     {
-                        // File doesn't exist - use direct path for mod file
-                        var modEntry = $"{gamePath}|{replacementPath}";
-                        mods.Add(modEntry);
-                        validFiles++;
+                        _pluginLog.Debug("[CACHE] FileCacheManager returned no staged entries");
                     }
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Debug($"[CACHE] Failed to stage replacements via FileCacheManager: {ex.Message}");
+            }
+
+            foreach (var candidate in candidates)
+            {
+                try
+                {
+                    if (!string.IsNullOrEmpty(candidate.ResolvedPath))
+                    {
+                        if (stagedEntries.TryGetValue(candidate.ResolvedPath, out var cacheEntry) &&
+                            !string.IsNullOrEmpty(cacheEntry.CachedPath) &&
+                            File.Exists(cacheEntry.CachedPath))
+                        {
+                            if (_stagedCacheDebugSet.Add(candidate.ResolvedPath))
+                            {
+                                _pluginLog.Debug($"[CACHE] Using staged cache for {candidate.ResolvedPath} (hash {cacheEntry.Hash})");
+                            }
+                            var cachedBytes = await File.ReadAllBytesAsync(cacheEntry.CachedPath);
+                            _fileTransferSystem._fileCache[cacheEntry.Hash] = cachedBytes;
+                            mods.Add($"{candidate.GamePath}|CACHED:{cacheEntry.Hash}");
+                            validFiles++;
+                            continue;
+                        }
+
+                        if (File.Exists(candidate.ResolvedPath))
+                        {
+                            if (_stagedCacheDebugSet.Add(candidate.ResolvedPath + "|direct"))
+                            {
+                                _pluginLog.Debug($"[CACHE] Reading replacement directly from disk: {candidate.ResolvedPath}");
+                            }
+                            var fileContent = await File.ReadAllBytesAsync(candidate.ResolvedPath);
+                            var hash = ComputeFileHash(fileContent);
+                            _fileTransferSystem._fileCache[hash] = fileContent;
+                            mods.Add($"{candidate.GamePath}|CACHED:{hash}");
+                            validFiles++;
+                            continue;
+                        }
+                    }
+
+                    var ttmpProbePath = !string.IsNullOrEmpty(candidate.ResolvedPath)
+                        ? candidate.ResolvedPath
+                        : candidate.ReplacementPath;
+
+                    if (!string.IsNullOrEmpty(ttmpProbePath) &&
+                        TryExtractFromTtmp(ttmpProbePath, candidate.GamePath, out var extractedBytes, out var sourceArchive) &&
+                        extractedBytes.Length > 0)
+                    {
+                        var hash = ComputeFileHash(extractedBytes);
+                        _fileTransferSystem._fileCache[hash] = extractedBytes;
+
+                        var extension = Path.GetExtension(candidate.GamePath);
+                        if (string.IsNullOrEmpty(extension))
+                        {
+                            extension = ".dat";
+                        }
+
+                        var cachePath = _fileTransferSystem.GetCacheFilePath(hash, extension.TrimStart('.'));
+                        if (!File.Exists(cachePath))
+                        {
+                            await FileWriteHelper.WriteFileWithRetryAsync(cachePath, extractedBytes, _pluginLog);
+                        }
+
+                        if (_stagedCacheDebugSet.Add(ttmpProbePath + "|ttmp"))
+                        {
+                            var archiveName = !string.IsNullOrEmpty(sourceArchive) ? Path.GetFileName(sourceArchive) : "<unknown>";
+                            _pluginLog.Debug($"[CACHE] Extracted {candidate.GamePath} from TTMP '{archiveName}' (hash {hash})");
+                        }
+
+                        mods.Add($"{candidate.GamePath}|CACHED:{hash}");
+                        validFiles++;
+                        continue;
+                    }
+
+                    var missingKey = candidate.ResolvedPath ?? candidate.ReplacementPath;
+                    if (!string.IsNullOrEmpty(missingKey) && _missingFileDebugSet.Add(missingKey))
+                    {
+                        _pluginLog.Debug($"[CACHE] Unable to resolve replacement on disk: {missingKey}");
+                    }
+                    mods.Add($"{candidate.GamePath}|{candidate.ReplacementPath}");
+                    validFiles++;
                 }
                 catch (Exception ex)
                 {
-                    _pluginLog.Debug($"Error processing {gamePath}: {ex.Message}");
-                    // Still add the entry for consistency
-                    var modEntry = $"{gamePath}|{replacementPath}";
-                    mods.Add(modEntry);
+                    _pluginLog.Debug($"Error processing {candidate.GamePath}: {ex.Message}");
+                    mods.Add($"{candidate.GamePath}|{candidate.ReplacementPath}");
                     validFiles++;
                 }
             }
-            
+
             _pluginLog.Info($"Processed {gamePathsWithReplacements} paths with replacements, {validFiles} total entries");
             return mods;
         }
@@ -2024,7 +2548,7 @@ namespace FyteClub
         // Chaos button state
     private bool _chaosActive = false;
     private readonly HashSet<string> _chaosTargets = new();
-    private readonly Dictionary<uint, Guid> _chaosCollections = new();
+    private readonly Dictionary<uint, ChaosCollectionState> _chaosCollections = new();
     private CancellationTokenSource? _chaosCts;
         
         /// <summary>
@@ -2140,57 +2664,71 @@ namespace FyteClub
             }
 
             var targetName = character.Name?.TextValue ?? payload.PlayerInfo.PlayerName;
+            var glamourerApplied = false;
 
-            var penumbraApplied = await ApplyChaosPenumbraMods(character, payload, token);
+            if (IsGlamourerAvailable && _glamourerApplyAll != null)
+            {
+                var glamourerData = payload.GlamourerData;
+                if (string.IsNullOrEmpty(glamourerData))
+                {
+                    glamourerData = TryFetchLocalGlamourerState();
+                }
+
+                if (!string.IsNullOrEmpty(glamourerData))
+                {
+                    await _framework.RunOnFrameworkThread(() =>
+                    {
+                        if (token.IsCancellationRequested)
+                        {
+                            return;
+                        }
+
+                        try
+                        {
+                            _glamourerApplyAll.Invoke(glamourerData, character.ObjectIndex, FYTECLUB_GLAMOURER_LOCK);
+                            glamourerApplied = true;
+                            _pluginLog.Debug($"😈 [CHAOS] Applied Glamourer state to {targetName}");
+                        }
+                        catch (Exception ex)
+                        {
+                            _pluginLog.Warning($"😈 [CHAOS] Failed to apply Glamourer to {targetName}: {ex.Message}");
+                        }
+                    });
+                }
+                else
+                {
+                    _pluginLog.Debug("😈 [CHAOS] No Glamourer state available - skipping Glamourer application");
+                }
+            }
+            else
+            {
+                _pluginLog.Debug("😈 [CHAOS] Glamourer unavailable - skipping");
+            }
+
             if (token.IsCancellationRequested)
             {
                 return;
             }
 
-            if (!IsGlamourerAvailable || _glamourerApplyAll == null)
+            var penumbraApplied = await ApplyChaosPenumbraMods(character, payload, token);
+            if (!penumbraApplied && glamourerApplied && !token.IsCancellationRequested && IsPenumbraAvailable && _penumbraRedraw != null)
             {
-                _pluginLog.Debug("😈 [CHAOS] Glamourer unavailable - skipping");
-                return;
-            }
-
-            var glamourerData = payload.GlamourerData;
-            if (string.IsNullOrEmpty(glamourerData))
-            {
-                glamourerData = TryFetchLocalGlamourerState();
-            }
-
-            if (string.IsNullOrEmpty(glamourerData))
-            {
-                _pluginLog.Debug("😈 [CHAOS] No Glamourer state available - skipping target");
-                return;
-            }
-
-            await _framework.RunOnFrameworkThread(() =>
-            {
-                if (token.IsCancellationRequested) return;
                 try
                 {
-                    _glamourerApplyAll.Invoke(glamourerData, character.ObjectIndex, FYTECLUB_GLAMOURER_LOCK);
-                    _pluginLog.Debug($"😈 [CHAOS] Applied Glamourer state to {targetName}");
-
-                    if (!penumbraApplied && !token.IsCancellationRequested && IsPenumbraAvailable && _penumbraRedraw != null)
+                    await _framework.RunOnFrameworkThread(() =>
                     {
-                        try
+                        if (!token.IsCancellationRequested)
                         {
                             _penumbraRedraw.Invoke(character.ObjectIndex, RedrawType.Redraw);
-                            _pluginLog.Debug($"😈 [CHAOS] Triggered redraw for {targetName}");
                         }
-                        catch (Exception redrawEx)
-                        {
-                            _pluginLog.Debug($"😈 [CHAOS] Redraw failed for {targetName}: {redrawEx.Message}");
-                        }
-                    }
+                    });
+                    _pluginLog.Debug($"😈 [CHAOS] Triggered redraw for {targetName}");
                 }
-                catch (Exception ex)
+                catch (Exception redrawEx)
                 {
-                    _pluginLog.Warning($"😈 [CHAOS] Failed to apply Glamourer to {targetName}: {ex.Message}");
+                    _pluginLog.Debug($"😈 [CHAOS] Redraw failed for {targetName}: {redrawEx.Message}");
                 }
-            });
+            }
         }
 
         private async Task<bool> ApplyChaosPenumbraMods(ICharacter character, ChaosPayload payload, CancellationToken token)
@@ -2216,8 +2754,9 @@ namespace FyteClub
             var meta = payload.MetaManipulations.Count > 0
                 ? new List<string>(payload.MetaManipulations)
                 : new List<string>();
+            var manipData = payload.ManipulationData;
 
-            if (files.Count == 0 && meta.Count == 0)
+            if (files.Count == 0 && meta.Count == 0 && string.IsNullOrWhiteSpace(manipData))
             {
                 return false;
             }
@@ -2233,17 +2772,9 @@ namespace FyteClub
 
                 var objectIndex = character.ObjectIndex;
 
-                if (_chaosCollections.TryGetValue(objectIndex, out var existingCollection))
+                if (_chaosCollections.TryGetValue(objectIndex, out var existingState))
                 {
-                    try
-                    {
-                        _penumbraRemoveTemporaryCollection?.Invoke(existingCollection);
-                    }
-                    catch (Exception ex)
-                    {
-                        _pluginLog.Debug($"😈 [CHAOS] Failed to remove previous collection for {objectIndex}: {ex.Message}");
-                    }
-
+                    CleanupChaosCollection(objectIndex, existingState);
                     _chaosCollections.Remove(objectIndex);
                 }
 
@@ -2252,7 +2783,12 @@ namespace FyteClub
                     return;
                 }
 
-                var collectionName = $"FyteChaos_{objectIndex}_{Guid.NewGuid():N}";
+                var uniqueSuffix = $"{objectIndex}_{Guid.NewGuid():N}";
+                var collectionName = $"FyteChaos_{uniqueSuffix}";
+                var filesLabel = $"FyteClubChaos_Files_{uniqueSuffix}";
+                var metaLabel = meta.Count > 0 ? $"FyteClubChaos_Meta_{uniqueSuffix}" : string.Empty;
+                var manipulationLabel = !string.IsNullOrWhiteSpace(manipData) ? $"FyteClubChaos_Manip_{uniqueSuffix}" : string.Empty;
+
                 var createResult = _penumbraCreateTemporaryCollection.Invoke("FyteClubChaos", collectionName, out var collectionId);
                 if (createResult != PenumbraApiEc.Success || collectionId == Guid.Empty)
                 {
@@ -2262,21 +2798,85 @@ namespace FyteClub
 
                 try
                 {
+                    Dictionary<string, string> normalizedFiles;
+                    List<string> missingFiles = new();
+
                     if (files.Count > 0)
                     {
-                        _penumbraAddTemporaryMod.Invoke("FyteClubChaos_Files", collectionId, files, string.Empty, 0);
+                        normalizedFiles = new Dictionary<string, string>(files.Count, StringComparer.OrdinalIgnoreCase);
+
+                        foreach (var kvp in files)
+                        {
+                            try
+                            {
+                                var fullPath = Path.GetFullPath(kvp.Value);
+                                if (File.Exists(fullPath))
+                                {
+                                    normalizedFiles[kvp.Key] = fullPath;
+                                }
+                                else
+                                {
+                                    var fallbackPath = ResolvePenumbraModPath(kvp.Value);
+                                    if (!string.IsNullOrEmpty(fallbackPath) && File.Exists(fallbackPath))
+                                    {
+                                        normalizedFiles[kvp.Key] = fallbackPath;
+                                        _pluginLog.Debug($"😈 [CHAOS] Fallback resolved missing file for {kvp.Key} -> {fallbackPath}");
+                                    }
+                                    else
+                                    {
+                                        missingFiles.Add($"{kvp.Key} -> {kvp.Value}");
+                                    }
+                                }
+                            }
+                            catch (Exception fileEx)
+                            {
+                                missingFiles.Add($"{kvp.Key} -> {kvp.Value} ({fileEx.Message})");
+                            }
+                        }
+
+                        if (missingFiles.Count > 0)
+                        {
+                            _pluginLog.Warning($"😈 [CHAOS] Missing {missingFiles.Count} Penumbra files for {objectIndex}: {string.Join(", ", missingFiles.Take(3))}{(missingFiles.Count > 3 ? "..." : string.Empty)}");
+                        }
+                    }
+                    else
+                    {
+                        normalizedFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    }
+
+                    if (normalizedFiles.Count > 0)
+                    {
+                        var addFilesResult = _penumbraAddTemporaryMod.Invoke(filesLabel, collectionId, normalizedFiles, string.Empty, 0);
+                        if (addFilesResult != PenumbraApiEc.Success)
+                        {
+                            _pluginLog.Warning($"😈 [CHAOS] Failed to add Penumbra file overrides for {objectIndex}: {addFilesResult}");
+                        }
                     }
 
                     if (meta.Count > 0)
                     {
                         var metaString = string.Join("\n", meta);
-                        _penumbraAddTemporaryMod.Invoke("FyteClubChaos_Meta", collectionId, new Dictionary<string, string>(), metaString, 0);
+                        var addMetaResult = _penumbraAddTemporaryMod.Invoke(metaLabel, collectionId, new Dictionary<string, string>(), metaString, 0);
+                        if (addMetaResult != PenumbraApiEc.Success)
+                        {
+                            _pluginLog.Warning($"😈 [CHAOS] Failed to add Penumbra meta overrides for {objectIndex}: {addMetaResult}");
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(manipData))
+                    {
+                        var manipDictionary = new Dictionary<string, string>();
+                        var addManipResult = _penumbraAddTemporaryMod.Invoke(manipulationLabel, collectionId, manipDictionary, manipData!, 0);
+                        if (addManipResult != PenumbraApiEc.Success)
+                        {
+                            _pluginLog.Warning($"😈 [CHAOS] Failed to add Penumbra manipulation data for {objectIndex}: {addManipResult}");
+                        }
                     }
 
                     var assignResult = _penumbraAssignTemporaryCollection.Invoke(collectionId, objectIndex, true);
                     if (assignResult == PenumbraApiEc.Success)
                     {
-                        _chaosCollections[objectIndex] = collectionId;
+                        _chaosCollections[objectIndex] = new ChaosCollectionState(collectionId, filesLabel, metaLabel, manipulationLabel);
                         if (!token.IsCancellationRequested && _penumbraRedraw != null)
                         {
                             try
@@ -2293,13 +2893,13 @@ namespace FyteClub
                     else
                     {
                         _pluginLog.Debug($"😈 [CHAOS] Failed to assign temporary collection for {objectIndex}: {assignResult}");
-                        _penumbraRemoveTemporaryCollection?.Invoke(collectionId);
+                        CleanupChaosCollection(objectIndex, new ChaosCollectionState(collectionId, filesLabel, metaLabel, manipulationLabel));
                     }
                 }
                 catch (Exception ex)
                 {
                     _pluginLog.Debug($"😈 [CHAOS] Exception applying Penumbra mods for {objectIndex}: {ex.Message}");
-                    _penumbraRemoveTemporaryCollection?.Invoke(collectionId);
+                    CleanupChaosCollection(objectIndex, new ChaosCollectionState(collectionId, filesLabel, metaLabel, manipulationLabel));
                 }
             });
 
@@ -2362,19 +2962,137 @@ namespace FyteClub
 
         private sealed class ChaosPayload
         {
-            public ChaosPayload(AdvancedPlayerInfo playerInfo, string? glamourerData, Dictionary<string, string> fileReplacements, List<string> metaManipulations)
+            public ChaosPayload(AdvancedPlayerInfo playerInfo, string? glamourerData, Dictionary<string, string> fileReplacements, List<string> metaManipulations, string? manipulationData)
             {
                 PlayerInfo = playerInfo;
                 GlamourerData = glamourerData;
                 FileReplacements = fileReplacements;
                 MetaManipulations = metaManipulations;
+                ManipulationData = manipulationData;
             }
 
             public AdvancedPlayerInfo PlayerInfo { get; }
             public string? GlamourerData { get; }
             public Dictionary<string, string> FileReplacements { get; }
             public List<string> MetaManipulations { get; }
-            public bool HasPenumbraReplacements => FileReplacements.Count > 0 || MetaManipulations.Count > 0;
+            public string? ManipulationData { get; }
+            public bool HasPenumbraReplacements => FileReplacements.Count > 0 || MetaManipulations.Count > 0 || !string.IsNullOrWhiteSpace(ManipulationData);
+        }
+
+        private sealed class ChaosCollectionState
+        {
+            public ChaosCollectionState(Guid collectionId, string filesLabel, string metaLabel, string manipulationLabel)
+            {
+                CollectionId = collectionId;
+                FilesLabel = filesLabel;
+                MetaLabel = metaLabel;
+                ManipulationLabel = manipulationLabel;
+            }
+
+            public Guid CollectionId { get; }
+            public string FilesLabel { get; }
+            public string MetaLabel { get; }
+            public string ManipulationLabel { get; }
+        }
+
+        private sealed class TtmpArchive
+        {
+            public TtmpArchive(string archivePath, Dictionary<string, TtmpEntry> entries, byte[] dataBuffer)
+            {
+                ArchivePath = archivePath;
+                Entries = entries;
+                DataBuffer = dataBuffer;
+            }
+
+            public string ArchivePath { get; }
+            public Dictionary<string, TtmpEntry> Entries { get; }
+            public byte[] DataBuffer { get; }
+
+            public bool TryGetEntry(string normalizedPath, out TtmpEntry entry)
+            {
+                if (Entries.TryGetValue(normalizedPath, out var value))
+                {
+                    entry = value;
+                    return true;
+                }
+
+                entry = default!;
+                return false;
+            }
+        }
+
+        private sealed class TtmpEntry
+        {
+            public TtmpEntry(string fullPath, string normalizedPath, long offset, int size, int datFile)
+            {
+                FullPath = fullPath;
+                NormalizedPath = normalizedPath;
+                Offset = offset;
+                Size = size;
+                DatFile = datFile;
+            }
+
+            public string FullPath { get; }
+            public string NormalizedPath { get; }
+            public long Offset { get; }
+            public int Size { get; }
+            public int DatFile { get; }
+
+            public bool CanReadFrom(int bufferLength)
+            {
+                if (Offset < 0 || Size <= 0)
+                {
+                    return false;
+                }
+
+                if (Offset > int.MaxValue || Size > int.MaxValue)
+                {
+                    return false;
+                }
+
+                var end = Offset + Size;
+                if (end > int.MaxValue)
+                {
+                    return false;
+                }
+
+                return end <= bufferLength;
+            }
+        }
+
+        private void CleanupChaosCollection(uint objectIndex, ChaosCollectionState state)
+        {
+            try
+            {
+                if (state.CollectionId == Guid.Empty)
+                {
+                    return;
+                }
+
+                if (_penumbraRemoveTemporaryMod != null)
+                {
+                    if (!string.IsNullOrEmpty(state.FilesLabel))
+                    {
+                        _penumbraRemoveTemporaryMod.Invoke(state.FilesLabel, state.CollectionId, 0);
+                    }
+
+                    if (!string.IsNullOrEmpty(state.MetaLabel))
+                    {
+                        _penumbraRemoveTemporaryMod.Invoke(state.MetaLabel, state.CollectionId, 0);
+                    }
+
+                    if (!string.IsNullOrEmpty(state.ManipulationLabel))
+                    {
+                        _penumbraRemoveTemporaryMod.Invoke(state.ManipulationLabel, state.CollectionId, 0);
+                    }
+                }
+
+                _penumbraRemoveTemporaryCollection?.Invoke(state.CollectionId);
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Debug($"😈 [CHAOS] Failed to clean temporary collection for {objectIndex}: {ex.Message}");
+            }
         }
 
         private async Task<ChaosPayload> BuildChaosPayload(AdvancedPlayerInfo playerInfo)
@@ -2396,7 +3114,7 @@ namespace FyteClub
                 }
             }
 
-            return new ChaosPayload(playerInfo, playerInfo.GlamourerData, fileReplacements, metaManipulations);
+            return new ChaosPayload(playerInfo, playerInfo.GlamourerData, fileReplacements, metaManipulations, playerInfo.ManipulationData);
         }
 
         public async Task<bool> ApplyAppearanceSnapshot(AdvancedPlayerInfo playerInfo, string targetName)
@@ -2459,6 +3177,15 @@ namespace FyteClub
             _chaosCts?.Cancel();
             _chaosCts = null;
             _chaosTargets.Clear();
+            if (_chaosCollections.Count > 0)
+            {
+                foreach (var entry in _chaosCollections.ToList())
+                {
+                    CleanupChaosCollection(entry.Key, entry.Value);
+                }
+
+                _chaosCollections.Clear();
+            }
             _pluginLog.Debug("😈 [CHAOS] Stopped and cleared target cache");
         }
         

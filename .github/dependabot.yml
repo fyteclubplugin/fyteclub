@@ -1,0 +1,48 @@
+# Dependabot configuration — checks NuGet packages in plugin-relevant folders.
+# - Weekly cadence for routine updates
+# - Keeps PR volume limited and labels updates for easy triage
+# - Major/risky updates (e.g. vendored/native libs) can be ignored or handled separately
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    directory: "/plugin"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 6
+    target-branch: "main"
+    labels:
+      - "dependencies"
+      - "automerge:minor"
+    commit-message:
+      prefix: "chore(deps)"
+    allow:
+      - dependency-type: "all"
+    ignore:
+      # MR-WebRTC is vendored / native — handle manually to avoid noisy PRs
+      - dependency-name: "Microsoft.MixedReality.WebRTC"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "nuget"
+    directory: "/plugin-tests"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 4
+    target-branch: "main"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+    allow:
+      - dependency-type: "all"
+
+# Optional: top-level check for other NuGet packages in the repo root (keeps an eye on transitive/infra deps)
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    target-branch: "main"
+    labels:
+      - "dependencies"
+    allow:
+      - dependency-type: "direct"

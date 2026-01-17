@@ -1,0 +1,10 @@
+webrtc-checkout/
+plugin/bin/
+plugin/obj/
+plugin-tests/bin/
+plugin-tests/obj/
+release/
+Microsoft.MixedReality.WebRTC/bin/
+*.dll
+*.exe
+*.log
