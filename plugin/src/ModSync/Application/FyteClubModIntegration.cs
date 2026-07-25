@@ -1313,24 +1313,59 @@ namespace FyteClub.ModSync.Application
             foreach (var kvp in resourcePaths)
             {
                 var gamePath = kvp.Key;
-                var modPaths = kvp.Value;
+                var replacementCandidates = kvp.Value?
+                    .Where(p => !string.Equals(p, gamePath, StringComparison.Ordinal))
+                    .ToList();
 
-                var hasReplacement = modPaths?.Count >= 1 && modPaths.Any(p => !string.Equals(p, gamePath, StringComparison.Ordinal));
-                if (!hasReplacement)
+                if (replacementCandidates == null || replacementCandidates.Count == 0)
                 {
                     continue;
                 }
 
                 gamePathsWithReplacements++;
 
-                var replacementPath = modPaths?.FirstOrDefault(p => !string.Equals(p, gamePath, StringComparison.Ordinal));
+                string? replacementPath;
+                string? resolved;
+
+                if (replacementCandidates.Count == 1)
+                {
+                    replacementPath = replacementCandidates[0];
+                    resolved = ResolvePenumbraModPath(replacementPath);
+                }
+                else
+                {
+                    // Penumbra reported more than one actual-file candidate for this single game path
+                    // (seen with multi-race body mods that keep several race options active at once).
+                    // Prefer whichever candidate actually exists on disk instead of an arbitrary pick -
+                    // picking blindly can hand out a different race's texture for the same game path.
+                    replacementPath = null;
+                    resolved = null;
+                    foreach (var candidatePath in replacementCandidates)
+                    {
+                        var candidateResolved = ResolvePenumbraModPath(candidatePath);
+                        if (File.Exists(candidateResolved))
+                        {
+                            replacementPath = candidatePath;
+                            resolved = candidateResolved;
+                            break;
+                        }
+                    }
+
+                    if (replacementPath == null)
+                    {
+                        replacementPath = replacementCandidates[0];
+                        resolved = ResolvePenumbraModPath(replacementPath);
+                    }
+
+                    _pluginLog.Debug($"[MODSYNC] Ambiguous replacement for {gamePath}: {replacementCandidates.Count} candidates, chose {replacementPath}");
+                }
+
                 if (string.IsNullOrEmpty(replacementPath))
                 {
                     continue;
                 }
 
-                var resolved = ResolvePenumbraModPath(replacementPath);
-                candidates.Add((gamePath, replacementPath, resolved));
+                candidates.Add((gamePath, replacementPath, resolved ?? string.Empty));
             }
 
             Dictionary<string, FileCacheEntry> stagedEntries = new(StringComparer.OrdinalIgnoreCase);
@@ -1434,16 +1469,12 @@ namespace FyteClub.ModSync.Application
                     var missingKey = candidate.ResolvedPath ?? candidate.ReplacementPath;
                     if (!string.IsNullOrEmpty(missingKey) && _missingFileDebugSet.Add(missingKey))
                     {
-                        _pluginLog.Debug($"[CACHE] Unable to resolve replacement on disk: {missingKey}");
+                        _pluginLog.Warning($"[MODSYNC] Dropping {candidate.GamePath} - replacement file not found on disk: {missingKey}");
                     }
-                    mods.Add($"{candidate.GamePath}|{candidate.ReplacementPath}");
-                    validFiles++;
                 }
                 catch (Exception ex)
                 {
-                    _pluginLog.Debug($"Error processing {candidate.GamePath}: {ex.Message}");
-                    mods.Add($"{candidate.GamePath}|{candidate.ReplacementPath}");
-                    validFiles++;
+                    _pluginLog.Warning($"[MODSYNC] Dropping {candidate.GamePath} - error resolving replacement: {ex.Message}");
                 }
             }
 
