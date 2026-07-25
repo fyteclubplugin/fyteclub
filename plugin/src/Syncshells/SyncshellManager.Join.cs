@@ -394,7 +394,7 @@ namespace FyteClub.Syncshells
         /// Parses the "turnServers" array (docs/PLAN.md AD-1) an invite/bootstrap code may carry.
         /// Missing/empty/malformed entries are skipped rather than failing the whole join.
         /// </summary>
-        private static List<FyteClub.Networking.TurnServerInfo> ParseTurnServersFromInvite(System.Text.Json.JsonElement invite)
+        public static List<FyteClub.Networking.TurnServerInfo> ParseTurnServersFromInvite(System.Text.Json.JsonElement invite)
         {
             var servers = new List<FyteClub.Networking.TurnServerInfo>();
 

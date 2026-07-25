@@ -138,7 +138,8 @@ namespace FyteClub.Syncshells
             return new List<FyteClub.Networking.TurnServerInfo>(_customIceServers);
         }
 
-        private static List<FyteClub.Networking.TurnServerInfo> MergeIceServers(
+        /// <summary>Pure dedup-by-URL merge, exposed publicly since it's a stateless utility worth testing directly.</summary>
+        public static List<FyteClub.Networking.TurnServerInfo> MergeIceServers(
             IEnumerable<FyteClub.Networking.TurnServerInfo>? a,
             IEnumerable<FyteClub.Networking.TurnServerInfo>? b)
         {

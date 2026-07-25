@@ -112,43 +112,47 @@ namespace FyteClub.Networking
                 _ => ConnectionDiagnosticState.Unknown
             };
 
-            string message;
-            if (state == ConnectionDiagnosticState.Connected)
-            {
-                var via = types.Contains("relay") ? "a TURN relay" : types.Contains("srflx") ? "a STUN-reflexive" : "a direct";
-                message = $"Connected via {via} candidate.";
-            }
-            else if (state == ConnectionDiagnosticState.Failed || state == ConnectionDiagnosticState.Disconnected)
-            {
-                if (types.Count == 0)
-                {
-                    message = "No ICE candidates were gathered at all. Check that your firewall/router allows outbound UDP and that you have an internet connection.";
-                }
-                else if (!types.Contains("relay") && !turnConfigured)
-                {
-                    message = $"Only gathered {string.Join("/", types)} candidate(s) - no TURN relay available. If you're behind a strict/symmetric NAT (common on CGNAT or mobile connections), add a TURN server in the Network tab.";
-                }
-                else if (!types.Contains("relay") && turnConfigured)
-                {
-                    message = "A TURN server is configured but no relay candidate was gathered - double check the TURN server URL and credentials in the Network tab.";
-                }
-                else
-                {
-                    message = $"Gathered {string.Join("/", types)} candidate(s) but the connection still failed. The other peer may be offline, or something is actively blocking the connection.";
-                }
-            }
-            else
-            {
-                message = types.Count > 0 ? $"Gathering ICE candidates... ({string.Join("/", types)} so far)" : "Gathering ICE candidates...";
-            }
-
             return new IceDiagnostics
             {
                 State = state,
                 LocalCandidateTypes = types,
                 TurnConfigured = turnConfigured,
-                Message = message
+                Message = BuildDiagnosticMessage(state, types, turnConfigured)
             };
+        }
+
+        /// <summary>
+        /// Pure message-building logic for GetDiagnostics, pulled out so it's testable without
+        /// standing up a real PeerConnection. Inputs are already-mapped plain types (no
+        /// Microsoft.MixedReality.WebRTC dependency), matching the Transport-layer boundary
+        /// docs/PLAN.md Phase 3 item 6 established.
+        /// </summary>
+        public static string BuildDiagnosticMessage(ConnectionDiagnosticState state, List<string> types, bool turnConfigured)
+        {
+            if (state == ConnectionDiagnosticState.Connected)
+            {
+                var via = types.Contains("relay") ? "a TURN relay" : types.Contains("srflx") ? "a STUN-reflexive" : "a direct";
+                return $"Connected via {via} candidate.";
+            }
+
+            if (state == ConnectionDiagnosticState.Failed || state == ConnectionDiagnosticState.Disconnected)
+            {
+                if (types.Count == 0)
+                {
+                    return "No ICE candidates were gathered at all. Check that your firewall/router allows outbound UDP and that you have an internet connection.";
+                }
+                if (!types.Contains("relay") && !turnConfigured)
+                {
+                    return $"Only gathered {string.Join("/", types)} candidate(s) - no TURN relay available. If you're behind a strict/symmetric NAT (common on CGNAT or mobile connections), add a TURN server in the Network tab.";
+                }
+                if (!types.Contains("relay") && turnConfigured)
+                {
+                    return "A TURN server is configured but no relay candidate was gathered - double check the TURN server URL and credentials in the Network tab.";
+                }
+                return $"Gathered {string.Join("/", types)} candidate(s) but the connection still failed. The other peer may be offline, or something is actively blocking the connection.";
+            }
+
+            return types.Count > 0 ? $"Gathering ICE candidates... ({string.Join("/", types)} so far)" : "Gathering ICE candidates...";
         }
 
         public void SetSignalingChannel(ISignalingChannel signalingChannel)

@@ -1301,6 +1301,26 @@ namespace FyteClub.ModSync.Application
             }
         }
 
+        /// <summary>
+        /// Given multiple actual-file candidates that all claim to replace the same game path,
+        /// prefer whichever one actually exists on disk (in order) - falls back to the first
+        /// candidate if none resolve. Pulled out of ProcessFileReplacementsAsync so this pure
+        /// selection logic is directly testable without standing up a full Penumbra/Dalamud mock.
+        /// </summary>
+        public static (string ReplacementPath, string ResolvedPath) SelectBestReplacementCandidate(
+            List<(string ReplacementPath, string ResolvedPath)> resolvedCandidates)
+        {
+            foreach (var candidate in resolvedCandidates)
+            {
+                if (File.Exists(candidate.ResolvedPath))
+                {
+                    return candidate;
+                }
+            }
+
+            return resolvedCandidates[0];
+        }
+
         private async Task<List<string>> ProcessFileReplacementsAsync(Dictionary<string, HashSet<string>> resourcePaths)
         {
             var mods = new List<string>();
@@ -1338,24 +1358,12 @@ namespace FyteClub.ModSync.Application
                     // (seen with multi-race body mods that keep several race options active at once).
                     // Prefer whichever candidate actually exists on disk instead of an arbitrary pick -
                     // picking blindly can hand out a different race's texture for the same game path.
-                    replacementPath = null;
-                    resolved = null;
-                    foreach (var candidatePath in replacementCandidates)
-                    {
-                        var candidateResolved = ResolvePenumbraModPath(candidatePath);
-                        if (File.Exists(candidateResolved))
-                        {
-                            replacementPath = candidatePath;
-                            resolved = candidateResolved;
-                            break;
-                        }
-                    }
-
-                    if (replacementPath == null)
-                    {
-                        replacementPath = replacementCandidates[0];
-                        resolved = ResolvePenumbraModPath(replacementPath);
-                    }
+                    var resolvedCandidates = replacementCandidates
+                        .Select(p => (ReplacementPath: p, ResolvedPath: ResolvePenumbraModPath(p)))
+                        .ToList();
+                    var best = SelectBestReplacementCandidate(resolvedCandidates);
+                    replacementPath = best.ReplacementPath;
+                    resolved = best.ResolvedPath;
 
                     _pluginLog.Debug($"[MODSYNC] Ambiguous replacement for {gamePath}: {replacementCandidates.Count} candidates, chose {replacementPath}");
                 }
