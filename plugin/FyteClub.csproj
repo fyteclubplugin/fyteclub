@@ -30,7 +30,7 @@
 
   <ItemGroup>
     <PackageReference Include="NNostr.Client" Version="0.0.54" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="7.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
     <PackageReference Include="NSec.Cryptography" Version="26.4.0" />
   </ItemGroup>
 
