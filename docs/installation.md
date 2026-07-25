@@ -3,7 +3,9 @@
 ## Requirements
 - Final Fantasy XIV Online
 - XIVLauncher and Dalamud
-- Windows 10/11, macOS, or Linux
+- Windows 10/11. The WebRTC transport ships native x64 Windows DLLs - there's no macOS or Linux
+  build, and it won't load under a non-Windows Dalamud. Wine/Proton/Mac XIVLauncher: untested,
+  probably broken.
 
 ## Installation Steps
 1. Install XIVLauncher and Dalamud

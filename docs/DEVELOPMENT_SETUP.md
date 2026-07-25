@@ -2,151 +2,64 @@
 
 ## Prerequisites
 
-### 1. Development Environment
-- **Visual Studio 2022** (Community Edition is fine)
-- **.NET 7 SDK** (latest version)
-- **Git** for version control
-- **XIVLauncher** for testing
+- **Windows 10/11** - the WebRTC transport ships native x64 Windows DLLs, there's no macOS/Linux
+  build (see the root [README](../README.md#platform-support-honestly)).
+- **.NET SDK 10.0.100** (pinned via [`global.json`](../global.json); `rollForward: latestFeature`
+  accepts newer 10.0.x patch releases)
+- **Visual Studio 2022** or any editor with C# support - not required, `dotnet build` works standalone
+- **XIVLauncher + Dalamud**, with FFXIV already set up and launching through it
+- **Git**
 
-### 2. FFXIV Setup
-- **Final Fantasy XIV** (Steam or standalone)
-- **XIVLauncher** installed and configured
-- **Dalamud** enabled in XIVLauncher settings
+## Clone and build
 
-## Quick Start
+This repo *is* the plugin - there's no template-bootstrap step. `FyteClub.csproj` uses
+`Dalamud.NET.Sdk/15.0.0`, which resolves the target framework and a real Dalamud install
+automatically (see [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) for how CI downloads
+one; locally, the SDK finds your existing XIVLauncher-managed Dalamud install).
 
-### 1. Clone Dalamud Plugin Template
 ```bash
-git clone https://github.com/goatcorp/DalamudPluginProjectTemplate.git FyteClubPlugin
-cd FyteClubPlugin
+git clone https://github.com/fyteclubplugin/fyteclub.git
+cd fyteclub
+dotnet build Microsoft.MixedReality.WebRTC/Microsoft.MixedReality.WebRTC.csproj -c Release
+dotnet build plugin/FyteClub.csproj -c Release
 ```
 
-### 2. Update Project Configuration
-Edit `FyteClubPlugin.csproj`:
-```xml
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net7.0-windows</TargetFramework>
-    <AssemblyName>FyteClub</AssemblyName>
-    <AssemblyTitle>FyteClub</AssemblyTitle>
-    <Product>FyteClub</Product>
-  </PropertyGroup>
-</Project>
-```
+Run the unit tests (excludes the slow/network-dependent RealP2P suite):
 
-### 3. Update Plugin Manifest
-Edit `FyteClub.json`:
-```json
-{
-  "Author": "FyteClub Team",
-  "Name": "FyteClub",
-  "Punchline": "Automatic mod sharing for FFXIV",
-  "Description": "Share character mods automatically with nearby players",
-  "InternalName": "FyteClub",
-  "AssemblyVersion": "1.0.0.0",
-  "RepoUrl": "https://github.com/chrisdemartin/fyteclub",
-  "ApplicableVersion": "any",
-  "DalamudApiLevel": 9
-}
-```
-
-## Development Workflow
-
-### 1. Build and Test
 ```bash
-# Build plugin
-dotnet build
-
-# Copy to Dalamud dev plugins folder
-copy bin\Debug\net7.0-windows\FyteClub.dll "%APPDATA%\XIVLauncher\devPlugins\FyteClub\"
-copy FyteClub.json "%APPDATA%\XIVLauncher\devPlugins\FyteClub\"
+dotnet test plugin-tests/plugin-tests.csproj --filter "Category!=RealP2P"
 ```
 
-### 2. Enable Development Mode
-1. Open XIVLauncher
-2. Go to Settings → Dalamud Settings
-3. Enable "Plugin Development Mode"
-4. Restart FFXIV through XIVLauncher
+## Loading your build in-game
 
-### 3. Load Plugin In-Game
-1. Open Dalamud console (`/xldev`)
-2. Type `/xlplugins` to open plugin installer
-3. Go to "Dev Tools" tab
-4. Click "Load Plugin" and select your DLL
+1. In XIVLauncher: **Settings → Dalamud Settings → Enable Plugin Development Mode**, then restart
+   FFXIV through XIVLauncher.
+2. Copy the *entire* Release build output - not just `FyteClub.dll` + `FyteClub.json` - into
+   `%APPDATA%\XIVLauncher\devPlugins\FyteClub\`. The plugin links against ~14 dependency DLLs
+   (`Microsoft.MixedReality.WebRTC.dll`, `mrwebrtc.dll`, `NNostr.Client.dll`,
+   `NSec.Cryptography.dll`, `Penumbra.Api.dll`, `Glamourer.Api.dll`, etc. - see
+   `plugin\bin\Release\win-x64\*.dll`). Missing any of them throws a silent
+   `ReflectionTypeLoadException` at load time with no in-game error - this exact bug shipped in an
+   early v5 release before the CI packaging step was fixed to copy all of them.
+3. In-game: `/xlplugins` → **Dev Tools** tab → **Load Plugin**, select `FyteClub.dll` from the
+   folder above.
+4. `/fyteclub` opens the config window; create or join a syncshell to test.
 
-## Key Development References
+## Where things live
 
-### Essential Dalamud Services
-```csharp
-// Inject these services in your plugin constructor
-[PluginService] public static DalamudPluginInterface PluginInterface { get; private set; } = null!;
-[PluginService] public static CommandManager CommandManager { get; private set; } = null!;
-[PluginService] public static ObjectTable ObjectTable { get; private set; } = null!;
-[PluginService] public static ClientState ClientState { get; private set; } = null!;
-[PluginService] public static ChatGui ChatGui { get; private set; } = null!;
-```
+See [REPOSITORY_STRUCTURE.md](REPOSITORY_STRUCTURE.md) for the folder/namespace layout, and
+[PLAN.md](PLAN.md) for the current roadmap and what's actually been verified vs. aspirational.
 
-### Player Detection Pattern
-```csharp
-private void ScanForPlayers()
-{
-    var localPlayer = ClientState.LocalPlayer;
-    if (localPlayer == null) return;
+## Testing & troubleshooting
 
-    foreach (var obj in ObjectTable)
-    {
-        if (obj is not PlayerCharacter player) continue;
-        if (player.ObjectId == localPlayer.ObjectId) continue; // Skip self
-        
-        var distance = Vector3.Distance(localPlayer.Position, player.Position);
-        if (distance > 50f) continue; // Only nearby players
-        
-        // Process player for mod sync
-        ProcessPlayer(player);
-    }
-}
-```
-
-### Penumbra Integration
-```csharp
-// IPC with Penumbra for mod management
-private void SetupPenumbraIPC()
-{
-    try
-    {
-        var penumbraEnabled = PluginInterface.GetIpcSubscriber<bool>("Penumbra.GetEnabledState");
-        var setCollection = PluginInterface.GetIpcSubscriber<string, string, bool>("Penumbra.SetCollection");
-        
-        if (penumbraEnabled.InvokeFunc())
-        {
-            // Penumbra is available
-            ChatGui.Print("FyteClub: Penumbra integration active");
-        }
-    }
-    catch (Exception ex)
-    {
-        ChatGui.PrintError($"FyteClub: Penumbra not available - {ex.Message}");
-    }
-}
-```
-
-
-## Testing & Troubleshooting
-
-- Use `/fyteclub` in-game to verify plugin loads and mod sync works
-- Test with friends to confirm P2P connections and mod sharing
-- If you encounter issues, check dependencies and plugin configuration
-
-## Distribution
-
-- Submit to official Dalamud plugin repository for automatic updates
-- Manual distribution: provide DLL and JSON files for devPlugins folder
-
-## Development Focus
-1. Complete plugin structure
-2. Implement player detection
-3. Integrate Penumbra mod management
-4. Add configuration UI
-5. Test real mod synchronization
-
-The Dalamud framework handles game compatibility and memory management—focus on FyteClub logic!
+- `dalamud.log` (same folder as `devPlugins`) has the plugin's real runtime log - load failures,
+  ICE/WebRTC state, everything tagged `[FyteClub]`.
+- The in-game config window's **Network** tab has a "Diagnose" button per syncshell showing the
+  last ICE connection attempt's candidate types and a plain-English guess at what failed.
+- Testing real P2P behavior needs a second client - either a friend, or a second FFXIV account
+  logged in from another machine. The `RealP2P`-tagged tests (`LocalTwoPeerConnectionTests`,
+  `SyncshellIntegrationTests` in `plugin-tests/`) exercise real two-peer WebRTC over live Nostr
+  relays without needing a second human - run them individually (they hang if run together; shared
+  static state in `WebRTCConnectionFactory`/`mrwebrtc.dll` isn't reentrant) via
+  `dotnet test plugin-tests/plugin-tests.csproj --filter "FullyQualifiedName~LocalTwoPeerConnectionTests"`,
+  or trigger CI's `realp2p-manual` job (`ci.yml`, gated behind `workflow_dispatch`).
