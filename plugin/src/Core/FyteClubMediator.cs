@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Numerics;
 
-namespace FyteClub
+namespace FyteClub.Core
 {
     public class FyteClubMediator
     {

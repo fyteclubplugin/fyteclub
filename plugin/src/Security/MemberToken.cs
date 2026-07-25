@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace FyteClub
+namespace FyteClub.Security
 {
     public class MemberToken
     {

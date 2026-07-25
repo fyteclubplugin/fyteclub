@@ -6,8 +6,10 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
+using FyteClub.ModSync.Protocol;
+using FyteClub.ModSync.Cache;
 
-namespace FyteClub
+namespace FyteClub.Phonebook
 {
     /// <summary>
     /// Phonebook-integrated mod state manager that eliminates constant scanning
@@ -46,7 +48,7 @@ namespace FyteClub
         /// Update our local mod state and broadcast to phonebook if changed.
         /// This replaces constant file system scanning.
         /// </summary>
-        public async Task<bool> UpdateLocalModState(AdvancedPlayerInfo currentPlayerInfo, string peerId)
+        public async Task<bool> UpdateLocalModState(PlayerInfo currentPlayerInfo, string peerId)
         {
             try
             {
@@ -197,7 +199,7 @@ namespace FyteClub
         /// <summary>
         /// Create a peer mod state from player info.
         /// </summary>
-        private async Task<PeerModState?> CreatePeerModState(AdvancedPlayerInfo playerInfo, string peerId, string stateHash)
+        private async Task<PeerModState?> CreatePeerModState(PlayerInfo playerInfo, string peerId, string stateHash)
         {
             try
             {
@@ -297,7 +299,7 @@ namespace FyteClub
         /// <summary>
         /// Generate a hash representing the current mod state.
         /// </summary>
-        private string GenerateStateHash(AdvancedPlayerInfo playerInfo)
+        private string GenerateStateHash(PlayerInfo playerInfo)
         {
             var stateData = new
             {

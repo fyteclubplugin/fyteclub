@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace FyteClub
+namespace FyteClub.Phonebook
 {
     public class PhonebookState
     {

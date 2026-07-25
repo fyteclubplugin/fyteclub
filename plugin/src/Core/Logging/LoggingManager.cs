@@ -103,23 +103,4 @@ namespace FyteClub.Core.Logging
         public static bool IsDebugEnabled() => _config.EnableDebugLogs;
         public static Dictionary<LogModule, bool> GetAllModules() => new(_config.EnabledModules);
     }
-
-    public static class ModularLogger
-    {
-        public static void Log(LogLevel level, LogModule module, string message, params object[] args)
-        {
-            if (!LoggingManager.ShouldLog(level, module)) return;
-            
-            var formattedMessage = args.Length > 0 ? string.Format(message, args) : message;
-            var prefix = level == LogLevel.Always ? "[FYTECLUB]" : $"[{module}]";
-            
-            SecureLogger.LogInfo("{0} {1}", prefix, formattedMessage);
-        }
-
-        public static void LogAlways(LogModule module, string message, params object[] args)
-            => Log(LogLevel.Always, module, message, args);
-
-        public static void LogDebug(LogModule module, string message, params object[] args)
-            => Log(LogLevel.Debug, module, message, args);
-    }
 }

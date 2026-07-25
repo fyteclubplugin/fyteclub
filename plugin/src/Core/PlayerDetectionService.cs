@@ -6,7 +6,7 @@ using System.Linq;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 
-namespace FyteClub
+namespace FyteClub.Core
 {
     public class PlayerDetectionService
     {
@@ -38,7 +38,7 @@ namespace FyteClub
                 for (int i = 0; i < Math.Min(_objectTable.Length, 200); i += 2)
                 {
                     var obj = _objectTable[i];
-                    if (obj?.ObjectKind != ObjectKind.Player || obj is not IPlayerCharacter player)
+                    if (obj?.ObjectKind != ObjectKind.Pc || obj is not IPlayerCharacter player)
                         continue;
 
                     var playerName = obj.Name.ToString();

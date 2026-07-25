@@ -34,7 +34,7 @@ namespace FyteClub.Core
 
         private void InitializeSyncQueue()
         {
-            _syncQueueProcessor = new Timer(_ => _ = Task.Run(ProcessSyncQueue), null, 
+            _syncQueueProcessor = new Timer(_ => _ = SafeTask.Run(ProcessSyncQueue, LogModule.Syncshells), null,
                 TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
         }
 
@@ -54,7 +54,7 @@ namespace FyteClub.Core
                     var cachedRecipe = await _componentCache.GetCachedAppearanceRecipe(normalizedName);
                     if (cachedRecipe != null)
                     {
-                        ModularLogger.LogDebug(LogModule.Cache, "⚡ INSTANT: Cached recipe applied for {0}", playerName);
+                        FyteLog.Debug(LogModule.Cache, " INSTANT: Cached recipe applied for {0}", playerName);
                         if (_modSystemIntegration != null)
                         {
                             await _modSystemIntegration.ApplyPlayerMods(cachedRecipe, normalizedName);
@@ -69,7 +69,7 @@ namespace FyteClub.Core
                     var cachedMods = await _clientCache.GetCachedPlayerMods(normalizedName);
                     if (cachedMods?.RecipeData != null)
                     {
-                        ModularLogger.LogDebug(LogModule.Cache, "⚡ INSTANT: Cached mods applied for {0}", playerName);
+                        FyteLog.Debug(LogModule.Cache, " INSTANT: Cached mods applied for {0}", playerName);
                         await ApplyPlayerModsFromCache(normalizedName, cachedMods);
                         _loadingStates[playerName] = LoadingState.Complete;
                         cacheHit = true;
@@ -78,12 +78,12 @@ namespace FyteClub.Core
                 
                 if (!cacheHit)
                 {
-                    ModularLogger.LogDebug(LogModule.ModSync, "No cache for {0} - will queue for P2P sync", playerName);
+                    FyteLog.Debug(LogModule.ModSync, "No cache for {0} - will queue for P2P sync", playerName);
                 }
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.Cache, "Failed to apply cached mods for {0}: {1}", playerName, ex.Message);
+                FyteLog.Error(LogModule.Cache, "Failed to apply cached mods for {0}: {1}", playerName, ex.Message);
             }
         }
 
@@ -95,7 +95,7 @@ namespace FyteClub.Core
             
             _framework.RunOnFrameworkThread(() =>
             {
-                var localPlayer = _clientState.LocalPlayer;
+                var localPlayer = _objectTable.LocalPlayer;
                 if (localPlayer == null) return;
                 
                 var distance = System.Numerics.Vector3.Distance(localPlayer.Position, message.Position);
@@ -112,7 +112,7 @@ namespace FyteClub.Core
                     _syncQueue.Enqueue(entry, distance);
                 }
                 
-                ModularLogger.LogDebug(LogModule.ModSync, "Queued {0} for P2P sync at {1:F1}m", message.PlayerName, distance);
+                FyteLog.Debug(LogModule.ModSync, "Queued {0} for P2P sync at {1:F1}m", message.PlayerName, distance);
             });
         }
 
@@ -135,7 +135,7 @@ namespace FyteClub.Core
                 
                 if (batch.Count == 0) return;
                 
-                ModularLogger.LogDebug(LogModule.ModSync, "Processing sync batch: {0} players", batch.Count);
+                FyteLog.Debug(LogModule.ModSync, "Processing sync batch: {0} players", batch.Count);
                 
                 var tasks = batch.Select(async entry =>
                 {
@@ -145,7 +145,7 @@ namespace FyteClub.Core
                     }
                     catch (Exception ex)
                     {
-                        ModularLogger.LogAlways(LogModule.ModSync, "Failed to sync {0}: {1}", entry.PlayerName, ex.Message);
+                        FyteLog.Error(LogModule.ModSync, "Failed to sync {0}: {1}", entry.PlayerName, ex.Message);
                     }
                 });
                 
@@ -166,7 +166,7 @@ namespace FyteClub.Core
                 return;
             
             _loadingStates[entry.PlayerName] = LoadingState.Requesting;
-            ModularLogger.LogDebug(LogModule.ModSync, "🔄 P2P Sync: {0} (queued {1:F1}s ago)", 
+            FyteLog.Debug(LogModule.ModSync, " P2P Sync: {0} (queued {1:F1}s ago)", 
                 entry.PlayerName, (DateTime.UtcNow - entry.DetectedAt).TotalSeconds);
             
             await TryEstablishP2PConnection(entry.PlayerName);
@@ -203,7 +203,7 @@ namespace FyteClub.Core
                     if (!string.IsNullOrEmpty(currentHash) && currentHash != oldHash)
                     {
                         playersToRequeue.Add(playerName);
-                        ModularLogger.LogDebug(LogModule.ModSync, "Hash changed for {0}: {1} -> {2}", 
+                        FyteLog.Debug(LogModule.ModSync, "Hash changed for {0}: {1} -> {2}", 
                             playerName, oldHash[..8], currentHash[..8]);
                     }
                 }
@@ -225,7 +225,7 @@ namespace FyteClub.Core
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.ModSync, "Hash change check failed: {0}", ex.Message);
+                FyteLog.Error(LogModule.ModSync, "Hash change check failed: {0}", ex.Message);
             }
         }
 

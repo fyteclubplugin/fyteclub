@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Dalamud.Plugin.Services;
 
-namespace FyteClub
+namespace FyteClub.Security
 {
     public class FyteClubSecurity
     {

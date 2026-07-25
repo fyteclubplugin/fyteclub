@@ -4,8 +4,10 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Dalamud.Plugin.Services;
+using FyteClub.Core;
+using FyteClub.Core.Logging;
 
-namespace FyteClub
+namespace FyteClub.Phonebook
 {
     public class PhonebookPersistence
     {
@@ -38,11 +40,11 @@ namespace FyteClub
                 var json = JsonSerializer.Serialize(phonebook, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(filePath, json);
                 
-                SecureLogger.LogInfo("Phonebook saved for syncshell with {0} members", phonebook.Members.Count);
+                FyteLog.Info(LogModule.Syncshells, "Phonebook saved for syncshell with {0} members", phonebook.Members.Count);
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to save phonebook: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to save phonebook: {0}", ex.Message);
             }
         }
 
@@ -74,7 +76,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to load phonebook: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to load phonebook: {0}", ex.Message);
                 return null;
             }
         }
@@ -98,12 +100,12 @@ namespace FyteClub
                 if (File.Exists(filePath))
                 {
                     File.Delete(filePath);
-                    SecureLogger.LogInfo("Phonebook deleted for syncshell");
+                    FyteLog.Info(LogModule.Syncshells, "Phonebook deleted for syncshell");
                 }
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to delete phonebook: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to delete phonebook: {0}", ex.Message);
             }
         }
 
@@ -120,13 +122,13 @@ namespace FyteClub
                     if (fileInfo.LastWriteTime < cutoff)
                     {
                         File.Delete(file);
-                        SecureLogger.LogInfo("Deleted expired phonebook: {0}", Path.GetFileName(file));
+                        FyteLog.Info(LogModule.Syncshells, "Deleted expired phonebook: {0}", Path.GetFileName(file));
                     }
                 }
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to cleanup expired phonebooks: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to cleanup expired phonebooks: {0}", ex.Message);
             }
         }
     }

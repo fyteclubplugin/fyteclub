@@ -7,12 +7,15 @@ using System.Threading.Tasks;
 using Xunit;
 using Moq;
 using Dalamud.Plugin.Services;
-using FyteClub.ModSystem;
-using FyteClub.Plugin.ModSystem;
-using FyteClub.WebRTC;
+using FyteClub.Networking;
 using FyteClub;
 using System.Threading;
 
+using FyteClub.ModSync.Protocol;
+using FyteClub.ModSync.Transfer;
+using FyteClub.ModSync.Cache;
+using FyteClub.ModSync.Application;
+using FyteClub.ModSync.Orchestration;
 namespace FyteClubPlugin.Tests
 {
     /// <summary>
@@ -138,10 +141,10 @@ namespace FyteClubPlugin.Tests
         }
         */
 
-        private SmartTransferOrchestrator CreateTestOrchestrator()
+        private TransferOrchestrator CreateTestOrchestrator()
         {
             var mockProtocol = new Mock<P2PModProtocol>(_mockLogger.Object);
-            return new SmartTransferOrchestrator(_mockLogger.Object, mockProtocol.Object);
+            return new TransferOrchestrator(_mockLogger.Object, mockProtocol.Object);
         }
 
         private Func<byte[], int, Task> CreateMockMultiChannelSender(TransferStatistics stats, ChannelUsageTracker tracker)

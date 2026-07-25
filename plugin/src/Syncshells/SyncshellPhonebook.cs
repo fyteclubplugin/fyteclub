@@ -5,7 +5,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace FyteClub
+namespace FyteClub.Syncshells
 {
     public class SyncshellMember
     {

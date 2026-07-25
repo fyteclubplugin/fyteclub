@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace FyteClub
+namespace FyteClub.Syncshells
 {
     // Temporary compatibility class for existing code
     public class SyncshellInfo
@@ -19,8 +19,14 @@ namespace FyteClub
         public List<string> Members { get; set; } = new();
         public string Status { get; set; } = "";
         public DateTime LastConnected { get; set; } = DateTime.UtcNow;
-        public bool EnableTurnHosting { get; set; } = true; // Default to enabled for new syncshells
-        
+
+        // Key-epoch rotation (member removal) - separate from EncryptionKey above, which stores
+        // the raw master password and must stay untouched for identity reconstruction on restart.
+        public int KeyEpoch { get; set; } = 0;
+        public string EpochKeyBase64 { get; set; } = string.Empty;
+        public string HostPeerId { get; set; } = string.Empty;
+        public List<string> RemovedPeerIds { get; set; } = new();
+
         // Helper property for invite permissions
         public bool CanShare => IsOwner || CanInvite || Members.Count < 10;
         public bool IsStale => DateTime.UtcNow - LastConnected > TimeSpan.FromDays(30);

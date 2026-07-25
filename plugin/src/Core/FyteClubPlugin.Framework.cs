@@ -6,6 +6,7 @@ using Dalamud.Plugin.Services;
 using Dalamud.Plugin.Ipc;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using FyteClub.Core.Logging;
+using FyteClub.Networking;
 
 namespace FyteClub.Core
 {
@@ -38,7 +39,7 @@ namespace FyteClub.Core
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.Core, "Failed to subscribe to mod system changes: {0}", ex.Message);
+                FyteLog.Error(LogModule.Core, "Failed to subscribe to mod system changes: {0}", ex.Message);
             }
         }
 
@@ -51,7 +52,7 @@ namespace FyteClub.Core
         {
             try
             {
-                var localPlayer = _clientState.LocalPlayer;
+                var localPlayer = _objectTable.LocalPlayer;
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 var isLocalPlayerValid = localPlayer != null && !string.IsNullOrEmpty(localPlayerName);
                 
@@ -59,7 +60,7 @@ namespace FyteClub.Core
                 {
                     _syncshellManager.SetLocalPlayerName(localPlayerName);
                     _lastLocalPlayerName = localPlayerName;
-                    ModularLogger.LogDebug(LogModule.Core, "Updated local player name: {0}", localPlayerName);
+                    FyteLog.Debug(LogModule.Core, "Updated local player name: {0}", localPlayerName);
                 }
                 
                 _mediator.ProcessQueue();
@@ -67,9 +68,9 @@ namespace FyteClub.Core
                 
                 if (ShouldBulkApplyCachedMods())
                 {
-                    _ = Task.Run(BulkApplyCachedMods);
+                    _ = SafeTask.Run(BulkApplyCachedMods, LogModule.Core);
                 }
-                
+
                 if (ShouldPollPhonebook())
                 {
                     PollPhonebookUpdates();
@@ -77,13 +78,13 @@ namespace FyteClub.Core
                 
                 if (ShouldRetryPeerConnections())
                 {
-                    _ = Task.Run(AttemptPeerReconnections);
+                    _ = SafeTask.Run(AttemptPeerReconnections, LogModule.WebRTC);
                     _lastReconnectionAttempt = DateTime.UtcNow;
                 }
-                
+
                 if (ShouldPerformDiscovery())
                 {
-                    _ = Task.Run(PerformPeerDiscovery);
+                    _ = SafeTask.Run(PerformPeerDiscovery, LogModule.WebRTC);
                     _lastDiscoveryAttempt = DateTime.UtcNow;
                 }
                 
@@ -94,7 +95,7 @@ namespace FyteClub.Core
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.Core, "Framework error: {0}", ex.Message);
+                FyteLog.Error(LogModule.Core, "Framework error: {0}", ex.Message);
             }
         }
 
@@ -133,7 +134,7 @@ namespace FyteClub.Core
                 {
                     foreach (var obj in _objectTable)
                     {
-                        if (obj?.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player && 
+                        if (obj?.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc && 
                             obj is Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player)
                         {
                             var playerName = obj.Name?.ToString();
@@ -168,12 +169,12 @@ namespace FyteClub.Core
                 
                 if (cacheHits > 0)
                 {
-                    ModularLogger.LogDebug(LogModule.Cache, "BULK: Applied cached mods to {0}/{1} visible players", cacheHits, allVisiblePlayers.Count);
+                    FyteLog.Debug(LogModule.Cache, "BULK: Applied cached mods to {0}/{1} visible players", cacheHits, allVisiblePlayers.Count);
                 }
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.Cache, "Bulk cache apply failed: {0}", ex.Message);
+                FyteLog.Error(LogModule.Cache, "Bulk cache apply failed: {0}", ex.Message);
             }
         }
 
@@ -225,8 +226,8 @@ namespace FyteClub.Core
                     var nearbyPlayers = new List<PlayerSnapshot>();
                     foreach (var obj in _objectTable)
                     {
-                        if (obj?.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player && 
-                            obj.Name?.TextValue != _clientState.LocalPlayer?.Name?.TextValue &&
+                        if (obj?.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc && 
+                            obj.Name?.TextValue != _objectTable.LocalPlayer?.Name?.TextValue &&
                             !string.IsNullOrEmpty(obj.Name?.TextValue))
                         {
                             nearbyPlayers.Add(new PlayerSnapshot
@@ -240,7 +241,7 @@ namespace FyteClub.Core
                 }
                 catch (Exception ex)
                 {
-                    ModularLogger.LogAlways(LogModule.Core, "Phonebook polling failed: {0}", ex.Message);
+                    FyteLog.Error(LogModule.Core, "Phonebook polling failed: {0}", ex.Message);
                 }
             });
         }
@@ -252,7 +253,7 @@ namespace FyteClub.Core
             var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive).ToList();
             if (activeSyncshells.Count == 0) return;
             
-            ModularLogger.LogDebug(LogModule.WebRTC, "Attempting peer reconnections for {0} active syncshells", activeSyncshells.Count);
+            FyteLog.Debug(LogModule.WebRTC, "Attempting peer reconnections for {0} active syncshells", activeSyncshells.Count);
             
             foreach (var syncshell in activeSyncshells)
             {
@@ -269,7 +270,7 @@ namespace FyteClub.Core
                 }
                 catch (Exception ex)
                 {
-                    ModularLogger.LogAlways(LogModule.Syncshells, "Failed to reconnect to syncshell {0}: {1}", syncshell.Name, ex.Message);
+                    FyteLog.Error(LogModule.Syncshells, "Failed to reconnect to syncshell {0}: {1}", syncshell.Name, ex.Message);
                 }
             }
         }
@@ -283,14 +284,14 @@ namespace FyteClub.Core
             
             try
             {
-                var testConnection = await WebRTCConnectionFactory.CreateConnectionAsync(_turnManager);
+                var testConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
                 testConnection?.Dispose();
                 
-                ModularLogger.LogDebug(LogModule.WebRTC, "WebRTC P2P ready for {0} active syncshells", activeSyncshells.Count);
+                FyteLog.Debug(LogModule.WebRTC, "WebRTC P2P ready for {0} active syncshells", activeSyncshells.Count);
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.WebRTC, "WebRTC initialization failed - {0}", ex.Message);
+                FyteLog.Error(LogModule.WebRTC, "WebRTC initialization failed - {0}", ex.Message);
             }
         }
 

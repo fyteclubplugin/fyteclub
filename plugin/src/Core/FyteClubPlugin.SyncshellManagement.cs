@@ -4,8 +4,10 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Text.Json;
 using System.Collections.Concurrent;
-using FyteClub.WebRTC;
+using FyteClub.Networking;
 using FyteClub.Core.Logging;
+using FyteClub.Syncshells;
+using FyteClub.ModSync.Protocol;
 
 namespace FyteClub.Core
 {
@@ -16,7 +18,7 @@ namespace FyteClub.Core
     {
         public async Task<SyncshellInfo> CreateSyncshell(string name)
         {
-            ModularLogger.LogDebug(LogModule.Core, "Creating syncshell: {0}", name);
+            FyteLog.Debug(LogModule.Core, "Creating syncshell: {0}", name);
             
             try
             {
@@ -33,29 +35,29 @@ namespace FyteClub.Core
                 // Collect and cache host's own mod data immediately and synchronously
                 string? hostPlayerName = null;
                 await _framework.RunOnTick(() => {
-                    var localPlayer = _clientState.LocalPlayer;
+                    var localPlayer = _objectTable.LocalPlayer;
                     hostPlayerName = localPlayer?.Name?.TextValue;
                 });
                 
                 if (!string.IsNullOrEmpty(hostPlayerName))
                 {
-                    ModularLogger.LogDebug(LogModule.Core, "Collecting own mod data for host: {0}", hostPlayerName);
+                    FyteLog.Debug(LogModule.Core, "Collecting own mod data for host: {0}", hostPlayerName);
                     await SharePlayerModsToSyncshells(hostPlayerName);
-                    ModularLogger.LogDebug(LogModule.Core, "Host mod data collection completed for: {0}", hostPlayerName);
+                    FyteLog.Debug(LogModule.Core, "Host mod data collection completed for: {0}", hostPlayerName);
                 }
                 
                 return syncshell;
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.Core, "Failed to create syncshell: {0}", ex.Message);
+                FyteLog.Error(LogModule.Core, "Failed to create syncshell: {0}", ex.Message);
                 throw;
             }
         }
 
         public bool JoinSyncshell(string syncshellName, string encryptionKey)
         {
-            ModularLogger.LogDebug(LogModule.Core, "Joining syncshell: {0}", syncshellName);
+            FyteLog.Debug(LogModule.Core, "Joining syncshell: {0}", syncshellName);
             
             try
             {
@@ -68,7 +70,7 @@ namespace FyteClub.Core
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.Core, "Failed to join syncshell: {0}", ex.Message);
+                FyteLog.Error(LogModule.Core, "Failed to join syncshell: {0}", ex.Message);
                 return false;
             }
         }
@@ -88,7 +90,7 @@ namespace FyteClub.Core
         {
             try
             {
-                ModularLogger.LogDebug(LogModule.WebRTC, "Establishing initial P2P connection");
+                FyteLog.Debug(LogModule.WebRTC, "Establishing initial P2P connection");
                 
                 string syncshellName = "Unknown";
                 if (inviteCode.StartsWith("NOSTR:"))
@@ -102,7 +104,7 @@ namespace FyteClub.Core
                     }
                     catch
                     {
-                        ModularLogger.LogAlways(LogModule.WebRTC, "Failed to parse NOSTR invite code");
+                        FyteLog.Error(LogModule.WebRTC, "Failed to parse NOSTR invite code");
                         return;
                     }
                 }
@@ -115,27 +117,27 @@ namespace FyteClub.Core
                 var syncshell = _syncshellManager?.GetSyncshells().FirstOrDefault(s => s.Name == syncshellName);
                 if (syncshell == null)
                 {
-                    ModularLogger.LogAlways(LogModule.WebRTC, "Could not find joined syncshell: {0}", syncshellName);
+                    FyteLog.Info(LogModule.WebRTC, "Could not find joined syncshell: {0}", syncshellName);
                     return;
                 }
                 
                 string? capturedPlayerName = null;
                 await _framework.RunOnTick(() =>
                 {
-                    var localPlayer = _clientState.LocalPlayer;
+                    var localPlayer = _objectTable.LocalPlayer;
                     capturedPlayerName = localPlayer?.Name?.TextValue;
                 });
                 
                 if (!string.IsNullOrEmpty(capturedPlayerName))
                 {
-                    ModularLogger.LogDebug(LogModule.WebRTC, "Starting joiner mod data collection for {0}", capturedPlayerName);
+                    FyteLog.Debug(LogModule.WebRTC, "Starting joiner mod data collection for {0}", capturedPlayerName);
                     await SharePlayerModsToSyncshells(capturedPlayerName);
-                    ModularLogger.LogDebug(LogModule.WebRTC, "Completed joiner mod data collection for {0}", capturedPlayerName);
+                    FyteLog.Debug(LogModule.WebRTC, "Completed joiner mod data collection for {0}", capturedPlayerName);
                 }
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.WebRTC, "Error in post-join member sync: {0}", ex.Message);
+                FyteLog.Error(LogModule.WebRTC, "Error in post-join member sync: {0}", ex.Message);
             }
         }
 
@@ -143,31 +145,31 @@ namespace FyteClub.Core
         {
             if (_p2pMessageHandlingWired)
             {
-                ModularLogger.LogDebug(LogModule.WebRTC, "Message handling already wired up");
+                FyteLog.Debug(LogModule.WebRTC, "Message handling already wired up");
                 return;
             }
             
-            ModularLogger.LogDebug(LogModule.WebRTC, "Wiring up P2P message handling for syncshell {0}", syncshellId);
+            FyteLog.Debug(LogModule.WebRTC, "Wiring up P2P message handling for syncshell {0}", syncshellId);
             
-            var localPlayerName = _clientState.LocalPlayer?.Name?.TextValue;
+            var localPlayerName = _objectTable.LocalPlayer?.Name?.TextValue;
             if (!string.IsNullOrEmpty(localPlayerName))
             {
                 _syncshellManager?.SetLocalPlayerName(localPlayerName);
             }
             
             var connection = _syncshellManager?.GetWebRTCConnection(syncshellId);
-            if (connection is RobustWebRTCConnection robustConnection && _p2pModSyncIntegration != null)
+            if (connection is WebRTCConnection robustConnection && _p2pModSyncIntegration != null)
             {
                 // Register the WebRTC connection with the new P2P integration
                 _p2pModSyncIntegration.RegisterConnection(syncshellId, robustConnection);
                 
-                ModularLogger.LogDebug(LogModule.WebRTC, "Registered WebRTC connection with P2P mod sync integration");
+                FyteLog.Debug(LogModule.WebRTC, "Registered WebRTC connection with P2P mod sync integration");
             }
             else
             {
                 // Fallback to legacy mod data handler for backward compatibility
                 _syncshellManager?.WireUpModDataHandler(async (playerName, modData) => {
-                    ModularLogger.LogDebug(LogModule.WebRTC, "Processing legacy mod data for: {0}", playerName);
+                    FyteLog.Debug(LogModule.WebRTC, "Processing legacy mod data for: {0}", playerName);
                     await ProcessReceivedModData(playerName, modData);
                 });
             }
@@ -179,7 +181,7 @@ namespace FyteClub.Core
         {
             try
             {
-                ModularLogger.LogDebug(LogModule.ModSync, "Processing received mod data for {0}", playerName);
+                FyteLog.Debug(LogModule.ModSync, "Processing received mod data for {0}", playerName);
                 
                 // Normalize player name for consistent cache storage
                 var normalizedName = playerName.Split('@')[0];
@@ -225,7 +227,7 @@ namespace FyteClub.Core
                 var outfitHash = modData.TryGetProperty("outfitHash", out var hashProperty) ? 
                     hashProperty.GetString() : null;
                 
-                var playerInfo = new AdvancedPlayerInfo
+                var playerInfo = new PlayerInfo
                 {
                     PlayerName = normalizedName,
                     Mods = mods,
@@ -259,7 +261,7 @@ namespace FyteClub.Core
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.ModSync, "Failed to process mod data for {0}: {1}", playerName, ex.Message);
+                FyteLog.Error(LogModule.ModSync, "Failed to process mod data for {0}: {1}", playerName, ex.Message);
             }
         }
 

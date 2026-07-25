@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0-windows7.0</TargetFramework>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
     <RootNamespace>FyteClub.Tests</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -29,13 +29,23 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Serilog" Version="4.0.0" />
+    <PackageReference Include="Serilog" Version="4.4.0" />
   </ItemGroup>
 
+  <!-- Mirrors Dalamud.NET.Sdk's own DalamudLibPath resolution (DALAMUD_HOME override, else the
+       local XIVLauncher dev-hooks path) so CI — which has no XIVLauncher install — can point this
+       at a downloaded Dalamud distrib via the DALAMUD_HOME env var. -->
+  <PropertyGroup>
+    <DalamudLibPath Condition="'$(DALAMUD_HOME)' != ''">$(DALAMUD_HOME)\</DalamudLibPath>
+    <DalamudLibPath Condition="'$(DalamudLibPath)' == ''">$(APPDATA)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
+  </PropertyGroup>
+
   <ItemGroup>
+    <!-- Private=true (copy-local) because tests run standalone via `dotnet test`, outside a
+         Dalamud host process, so the CLR needs its own copy of Dalamud.dll to resolve at runtime. -->
     <Reference Include="Dalamud">
-      <HintPath>$(APPDATA)\XIVLauncher\addon\Hooks\dev\Dalamud.dll</HintPath>
-      <Private>false</Private>
+      <HintPath>$(DalamudLibPath)Dalamud.dll</HintPath>
+      <Private>true</Private>
     </Reference>
   </ItemGroup>
 

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dalamud.Plugin.Services;
 
-namespace FyteClub
+namespace FyteClub.Core
 {
     public class P2PNetworkLogger
     {

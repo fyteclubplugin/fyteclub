@@ -3,6 +3,7 @@ using System;
 using System.Text;
 using Xunit;
 using FyteClub;
+using FyteClub.Security;
 
 namespace FyteClubPlugin.Tests
 {
@@ -25,7 +26,7 @@ namespace FyteClubPlugin.Tests
             // Ed25519 signatures are 64 bytes
             Assert.Equal(64, signature.Length);
 
-            var pub = id.ExportPublicKey();
+            var pub = id.GetPublicKey();
 
             // Static verification using raw public key
             Assert.True(Ed25519Identity.Verify(message, signature, pub),
@@ -44,7 +45,7 @@ namespace FyteClubPlugin.Tests
 
             // Parsing should return the original raw public key
             var parsed = Ed25519Identity.ParsePeerId(peerId);
-            Assert.Equal(id.ExportPublicKey(), parsed);
+            Assert.Equal(id.GetPublicKey(), parsed);
 
             // Formatting the parsed key must reproduce the same PeerId string
             var formatted = Ed25519Identity.FormatPeerId(parsed);
@@ -65,7 +66,7 @@ namespace FyteClubPlugin.Tests
             var id = new Ed25519Identity(seed);
 
             // Public key derivation must match RFC vector
-            Assert.Equal(expectedPublic, id.ExportPublicKey());
+            Assert.Equal(expectedPublic, id.GetPublicKey());
 
             // Signature for empty message must match RFC vector
             var sig = id.SignData(Array.Empty<byte>());

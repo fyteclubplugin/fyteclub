@@ -5,14 +5,17 @@ using System.Threading.Tasks;
 using Xunit;
 using Moq;
 using Dalamud.Plugin.Services;
-using FyteClub.WebRTC;
-using FyteClub.ModSystem;
-using FyteClub.Plugin.ModSystem;
+using FyteClub.Networking;
 using System.Collections.Concurrent;
 using System.Threading;
 using System.Linq;
 using FyteClub;
 
+using FyteClub.ModSync.Protocol;
+using FyteClub.ModSync.Transfer;
+using FyteClub.ModSync.Cache;
+using FyteClub.ModSync.Application;
+using FyteClub.ModSync.Orchestration;
 namespace FyteClubPlugin.Tests
 {
     /// <summary>
@@ -269,7 +272,7 @@ namespace FyteClubPlugin.Tests
                 
                 // Create orchestrator for host
                 var mockProtocol = new Mock<P2PModProtocol>(_hostLogger);
-                var orchestrator = new SmartTransferOrchestrator(_hostLogger, mockProtocol.Object);
+                var orchestrator = new TransferOrchestrator(_hostLogger, mockProtocol.Object);
                 
                 // Set up joiner to receive files
                 var receivedFiles = new ConcurrentDictionary<string, TransferableFile>();

@@ -2,7 +2,7 @@ using System;
 using System.Text.RegularExpressions;
 using System.Web;
 
-namespace FyteClub
+namespace FyteClub.Core
 {
     public static class InputValidator
     {

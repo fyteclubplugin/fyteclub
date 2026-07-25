@@ -1,14 +1,16 @@
 using System;
 using System.Security.Cryptography;
 using System.Text;
+using FyteClub.Security;
 
-namespace FyteClub
+namespace FyteClub.Syncshells
 {
     public class SyncshellIdentity
     {
         public string Name { get; }
         public byte[] MasterPasswordHash { get; }
-        public byte[] EncryptionKey { get; }
+        public byte[] EncryptionKey { get; private set; }
+        public int KeyEpoch { get; private set; } = 0;
         public byte[] PublicKey => Ed25519Identity.GetPublicKey(); // Now returns Ed25519 public key
         public Ed25519Identity Ed25519Identity { get; }
 
@@ -75,6 +77,23 @@ namespace FyteClub
         {
             var salt = Encoding.UTF8.GetBytes($"fyteclub_syncshell_{groupId}_{Ed25519Identity.PeerId}");
             return Rfc2898DeriveBytes.Pbkdf2(groupId, salt, 100000, HashAlgorithmName.SHA256, 32);
+        }
+
+        /// <summary>
+        /// Advances this identity to a new key epoch (member-removal rekey). No-op (returns false,
+        /// does not throw) on a stale/duplicate/out-of-order epoch so it's safe to call from both the
+        /// primary rekey-broadcast path and lazy catch-up resends.
+        /// </summary>
+        public bool ApplyRekey(byte[] newKey, int newEpoch)
+        {
+            if (newKey.Length != 32)
+                throw new ArgumentException("Rekey key must be 32 bytes", nameof(newKey));
+            if (newEpoch <= KeyEpoch)
+                return false;
+
+            EncryptionKey = newKey;
+            KeyEpoch = newEpoch;
+            return true;
         }
     }
 }

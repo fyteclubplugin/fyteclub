@@ -2,6 +2,8 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using FyteClub.Core.Logging;
+using FyteClub.Syncshells;
+using FyteClub.ModSync.Protocol;
 
 namespace FyteClub.Core
 {
@@ -46,28 +48,28 @@ namespace FyteClub.Core
                 {
                     if (syncshell.Members?.Contains(playerName) == true)
                     {
-                        ModularLogger.LogDebug(LogModule.WebRTC, "Attempting P2P connection to known member {0} in syncshell {1}", 
+                        FyteLog.Debug(LogModule.WebRTC, "Attempting P2P connection to known member {0} in syncshell {1}", 
                             playerName, syncshell.Name);
                         
                         var success = await _syncshellManager.ConnectToPeer(syncshell.Id, playerName, "");
                         if (success)
                         {
-                            ModularLogger.LogDebug(LogModule.WebRTC, "P2P connection established with known member {0}", playerName);
+                            FyteLog.Debug(LogModule.WebRTC, "P2P connection established with known member {0}", playerName);
                             _syncshellManager.AddToPhonebook(playerName, syncshell.Id);
                             return;
                         }
                         else
                         {
-                            ModularLogger.LogDebug(LogModule.WebRTC, "Failed to connect to known member {0}", playerName);
+                            FyteLog.Debug(LogModule.WebRTC, "Failed to connect to known member {0}", playerName);
                         }
                     }
                 }
                 
-                ModularLogger.LogDebug(LogModule.WebRTC, "Player {0} not found in any active syncshell member lists", playerName);
+                FyteLog.Debug(LogModule.WebRTC, "Player {0} not found in any active syncshell member lists", playerName);
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.WebRTC, "Failed to establish P2P connection with known player {0}: {1}", 
+                FyteLog.Error(LogModule.WebRTC, "Failed to establish P2P connection with known player {0}: {1}", 
                     playerName, ex.Message);
             }
         }
@@ -81,23 +83,23 @@ namespace FyteClub.Core
                 var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive);
                 foreach (var syncshell in activeSyncshells)
                 {
-                    ModularLogger.LogDebug(LogModule.WebRTC, "Attempting syncshell discovery with {0} for {1}", 
+                    FyteLog.Debug(LogModule.WebRTC, "Attempting syncshell discovery with {0} for {1}", 
                         playerName, syncshell.Name);
                     
                     var success = await _syncshellManager.ConnectToPeer(syncshell.Id, playerName, "");
                     if (success)
                     {
-                        ModularLogger.LogDebug(LogModule.WebRTC, "Discovered {0} is in syncshell {1}", playerName, syncshell.Name);
+                        FyteLog.Debug(LogModule.WebRTC, "Discovered {0} is in syncshell {1}", playerName, syncshell.Name);
                         _syncshellManager.AddToPhonebook(playerName, syncshell.Id);
                         return;
                     }
                 }
                 
-                ModularLogger.LogDebug(LogModule.WebRTC, "Player {0} not found in any active syncshells", playerName);
+                FyteLog.Debug(LogModule.WebRTC, "Player {0} not found in any active syncshells", playerName);
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.WebRTC, "Failed to discover syncshells for {0}: {1}", playerName, ex.Message);
+                FyteLog.Error(LogModule.WebRTC, "Failed to discover syncshells for {0}: {1}", playerName, ex.Message);
             }
         }
 
@@ -113,7 +115,7 @@ namespace FyteClub.Core
                     var cachedMods = await _clientCache.GetCachedPlayerMods(normalizedName);
                     if (cachedMods != null)
                     {
-                        ModularLogger.LogDebug(LogModule.Cache, "Cache hit for {0}", playerName);
+                        FyteLog.Debug(LogModule.Cache, "Cache hit for {0}", playerName);
                         return;
                     }
                 }
@@ -134,7 +136,7 @@ namespace FyteClub.Core
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.ModSync, "Safe mod request failed for {0}: {1}", playerName, ex.Message);
+                FyteLog.Error(LogModule.ModSync, "Safe mod request failed for {0}: {1}", playerName, ex.Message);
                 _loadingStates[playerName] = LoadingState.Failed;
             }
         }
@@ -143,7 +145,7 @@ namespace FyteClub.Core
         {
             try
             {
-                ModularLogger.LogDebug(LogModule.ModSync, "Player {0} detected nearby - checking for P2P sync opportunity", playerName);
+                FyteLog.Debug(LogModule.ModSync, "Player {0} detected nearby - checking for P2P sync opportunity", playerName);
                 
                 _loadingStates[playerName] = LoadingState.Downloading;
                 
@@ -174,27 +176,27 @@ namespace FyteClub.Core
                     
                     if (modList.Count > 0)
                     {
-                        ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Processing {0} mods for path resolution", modList.Count);
+                        FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Processing {0} mods for path resolution", modList.Count);
                         var updatedMods = new System.Collections.Generic.List<string>();
                         var pathsUpdated = 0;
                         
                         var cacheDir = _modSystemIntegration._fileTransferSystem._cacheDirectory;
-                        ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Cache directory: {0}", cacheDir);
-                        ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Cache directory exists: {0}", System.IO.Directory.Exists(cacheDir));
+                        FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Cache directory: {0}", cacheDir);
+                        FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Cache directory exists: {0}", System.IO.Directory.Exists(cacheDir));
                         
                         if (System.IO.Directory.Exists(cacheDir))
                         {
                             var allCachedFiles = System.IO.Directory.GetFiles(cacheDir, "*.*");
-                            ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Found {0} cached files", allCachedFiles.Length);
+                            FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Found {0} cached files", allCachedFiles.Length);
                             foreach (var cachedFile in allCachedFiles.Take(3))
                             {
-                                ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Cached file: {0}", System.IO.Path.GetFileName(cachedFile));
+                                FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Cached file: {0}", System.IO.Path.GetFileName(cachedFile));
                             }
                         }
                         
                         foreach (var mod in modList)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Processing mod: {0}", mod);
+                            FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Processing mod: {0}", mod);
                             
                             if (mod.Contains('|'))
                             {
@@ -204,16 +206,16 @@ namespace FyteClub.Core
                                     var gamePath = parts[0];
                                     var senderPath = parts[1];
                                     
-                                    ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Game path: {0}, Sender path: {1}", gamePath, senderPath);
+                                    FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Game path: {0}, Sender path: {1}", gamePath, senderPath);
                                     
                                     // Check if this is a sender's local file path that needs to be converted to cached path
                                     if (senderPath.StartsWith("C:\\") && !senderPath.Contains("FileCache"))
                                     {
-                                        ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Needs path conversion: {0}", senderPath);
+                                        FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Needs path conversion: {0}", senderPath);
                                         
                                         // Try to find this file in our received files cache
                                         var fileName = System.IO.Path.GetFileName(senderPath);
-                                        ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Looking for file: {0}", fileName);
+                                        FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Looking for file: {0}", fileName);
                                         
                                         // Look for cached file with same name
                                         if (System.IO.Directory.Exists(cacheDir))
@@ -223,24 +225,24 @@ namespace FyteClub.Core
                                                            System.IO.Path.GetFileName(f).Equals(fileName, StringComparison.OrdinalIgnoreCase))
                                                 .FirstOrDefault();
                                             
-                                            ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Found cached file: {0}", cachedFiles ?? "NONE");
+                                            FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Found cached file: {0}", cachedFiles ?? "NONE");
                                             
                                             if (!string.IsNullOrEmpty(cachedFiles))
                                             {
                                                 updatedMods.Add($"{gamePath}|{cachedFiles}");
                                                 pathsUpdated++;
-                                                ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] ✅ Updated mod path: {0} -> {1}", senderPath, cachedFiles);
+                                                FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Updated mod path: {0} -> {1}", senderPath, cachedFiles);
                                                 continue;
                                             }
                                             else
                                             {
-                                                ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] ❌ No cached file found for: {0}", fileName);
+                                                FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] No cached file found for: {0}", fileName);
                                             }
                                         }
                                     }
                                     else
                                     {
-                                        ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] Path doesn't need conversion: {0}", senderPath);
+                                        FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Path doesn't need conversion: {0}", senderPath);
                                     }
                                 }
                             }
@@ -253,15 +255,15 @@ namespace FyteClub.Core
                         if (pathsUpdated > 0)
                         {
                             modList = updatedMods;
-                            ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] ✅ Updated {0} mod paths to use local cached files for {1}", pathsUpdated, normalizedName);
+                            FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] Updated {0} mod paths to use local cached files for {1}", pathsUpdated, normalizedName);
                         }
                         else
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "🔧 [PATH DEBUG] ❌ No paths were updated for {0}", normalizedName);
+                            FyteLog.Debug(LogModule.ModSync, " [PATH DEBUG] No paths were updated for {0}", normalizedName);
                         }
                     }
                     
-                    var reconstructedPlayerInfo = new AdvancedPlayerInfo
+                    var reconstructedPlayerInfo = new PlayerInfo
                     {
                         PlayerName = normalizedName,
                         Mods = modList,
@@ -271,7 +273,7 @@ namespace FyteClub.Core
                     var success = await _modSystemIntegration.ApplyPlayerMods(reconstructedPlayerInfo, normalizedName);
                     if (success)
                     {
-                        ModularLogger.LogDebug(LogModule.ModSync, "Applied P2P mods for {0} from syncshell {1}", playerName, syncshell.Name);
+                        FyteLog.Debug(LogModule.ModSync, "Applied P2P mods for {0} from syncshell {1}", playerName, syncshell.Name);
                         _loadingStates[playerName] = LoadingState.Complete;
                         _playerLastSeen[playerName] = DateTime.UtcNow;
                         _recentlySyncedUsers.TryAdd(playerName, 0);
@@ -284,13 +286,13 @@ namespace FyteClub.Core
                     var cachedMods = _clientCache != null ? await _clientCache.GetCachedPlayerMods(normalizedName) : null;
                     if (cachedMods?.RecipeData != null && _clientCache != null)
                     {
-                        var playerInfo = cachedMods.RecipeData as AdvancedPlayerInfo;
+                        var playerInfo = cachedMods.RecipeData as PlayerInfo;
                         if (playerInfo != null)
                         {
                             var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, normalizedName);
                             if (success)
                             {
-                                ModularLogger.LogDebug(LogModule.ModSync, "Applied cached mods for {0} from syncshell {1}", 
+                                FyteLog.Debug(LogModule.ModSync, "Applied cached mods for {0} from syncshell {1}", 
                                     playerName, syncshell.Name);
                                 _loadingStates[playerName] = LoadingState.Complete;
                                 _playerLastSeen[playerName] = DateTime.UtcNow;
@@ -304,7 +306,7 @@ namespace FyteClub.Core
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.ModSync, "Safe syncshell request failed: {0}", ex.Message);
+                FyteLog.Error(LogModule.ModSync, "Safe syncshell request failed: {0}", ex.Message);
                 return false;
             }
         }

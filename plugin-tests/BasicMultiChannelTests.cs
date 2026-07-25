@@ -7,12 +7,15 @@ using System.Threading.Tasks;
 using Xunit;
 using Moq;
 using Dalamud.Plugin.Services;
-using FyteClub.ModSystem;
-using FyteClub.Plugin.ModSystem;
-using FyteClub.WebRTC;
+using FyteClub.Networking;
 using FyteClub;
 using System.Threading;
 
+using FyteClub.ModSync.Protocol;
+using FyteClub.ModSync.Transfer;
+using FyteClub.ModSync.Cache;
+using FyteClub.ModSync.Application;
+using FyteClub.ModSync.Orchestration;
 namespace FyteClubPlugin.Tests
 {
     /// <summary>
@@ -42,7 +45,7 @@ namespace FyteClubPlugin.Tests
             }
 
             var mockProtocol = new Mock<P2PModProtocol>(_mockLogger.Object);
-            var orchestrator = new SmartTransferOrchestrator(_mockLogger.Object, mockProtocol.Object);
+            var orchestrator = new TransferOrchestrator(_mockLogger.Object, mockProtocol.Object);
 
             // Act - Test that we can create transferable files
             var transferableFiles = modFiles.ToDictionary(f => f.GamePath, f => new TransferableFile
@@ -85,7 +88,7 @@ namespace FyteClubPlugin.Tests
         {
             // Arrange
             var mockProtocol = new Mock<P2PModProtocol>(_mockLogger.Object);
-            var orchestrator = new SmartTransferOrchestrator(_mockLogger.Object, mockProtocol.Object);
+            var orchestrator = new TransferOrchestrator(_mockLogger.Object, mockProtocol.Object);
             
             var transferableFiles = new Dictionary<string, TransferableFile>
             {

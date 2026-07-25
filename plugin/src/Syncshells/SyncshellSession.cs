@@ -4,7 +4,9 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace FyteClub
+using FyteClub.Core.Logging;
+
+namespace FyteClub.Syncshells
 {
     public class SyncshellSession : IDisposable
     {
@@ -31,9 +33,9 @@ namespace FyteClub
             _listener = new TcpListener(IPAddress.Any, 7777);
             _listener.Start();
             
-            Console.WriteLine($"Syncshell host listening on port 7777");
+            FyteLog.Debug(LogModule.Syncshells, $"Syncshell host listening on port 7777");
             
-            _ = Task.Run(AcceptConnections, _cancellation.Token);
+            _ = FyteClub.Core.SafeTask.Run(AcceptConnections, _cancellation.Token, LogModule.Syncshells);
             return Task.CompletedTask;
         }
 
@@ -53,15 +55,7 @@ namespace FyteClub
             Array.Copy(buffer, phonebookData, received);
             
             Phonebook = SyncshellPhonebook.Deserialize(phonebookData);
-            Console.WriteLine($"Received phonebook with {Phonebook.Members.Count} members");
-        }
-
-        public string GenerateInviteCode()
-        {
-            if (!IsHost) throw new InvalidOperationException("Only host can generate invite codes");
-            
-            var localIP = GetLocalIPAddress();
-            return InviteCodeGenerator.GenerateCode(localIP, 7777, Identity.EncryptionKey, Phonebook.SequenceCounter, Identity.Ed25519Identity.ExportPrivateKey());
+            FyteLog.Debug(LogModule.Syncshells, $"Received phonebook with {Phonebook.Members.Count} members");
         }
 
         public void IncrementUptime()
@@ -82,8 +76,8 @@ namespace FyteClub
             if (IsHost) return;
             
             IsHost = true;
-            Console.WriteLine("Became new syncshell host");
-            _ = Task.Run(() => StartListening());
+            FyteLog.Debug(LogModule.Syncshells, "Became new syncshell host");
+            _ = FyteClub.Core.SafeTask.Run(() => StartListening(), LogModule.Syncshells);
         }
 
         private async Task AcceptConnections()
@@ -95,7 +89,7 @@ namespace FyteClub
                     try
                     {
                         var client = await _listener.AcceptTcpClientAsync();
-                        _ = Task.Run(() => HandleNewMember(client), _cancellation.Token);
+                        _ = FyteClub.Core.SafeTask.Run(() => HandleNewMember(client), _cancellation.Token, LogModule.Syncshells);
                     }
                     catch (ObjectDisposedException)
                     {
@@ -103,7 +97,7 @@ namespace FyteClub
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Error accepting connection: {ex.Message}");
+                        FyteLog.Error(LogModule.Syncshells, $"Error accepting connection: {ex.Message}");
                     }
                 }
             }
@@ -140,29 +134,15 @@ namespace FyteClub
                 var phonebookData = Phonebook.Serialize();
                 await client.GetStream().WriteAsync(phonebookData, _cancellation.Token);
                 
-                Console.WriteLine("New member authenticated and received phonebook");
+                FyteLog.Debug(LogModule.Syncshells, "New member authenticated and received phonebook");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error handling new member: {ex.Message}");
+                FyteLog.Error(LogModule.Syncshells, $"Error handling new member: {ex.Message}");
             }
             finally
             {
                 client.Close();
-            }
-        }
-
-        private static IPAddress GetLocalIPAddress()
-        {
-            try
-            {
-                using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, 0);
-                socket.Connect("8.8.8.8", 65530);
-                return ((IPEndPoint)socket.LocalEndPoint!).Address;
-            }
-            catch
-            {
-                return IPAddress.Loopback;
             }
         }
 

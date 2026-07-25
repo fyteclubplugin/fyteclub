@@ -9,7 +9,11 @@ using System.Numerics;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
 using FyteClub.Core.Logging;
-using FyteClub.ModSystem;
+using FyteClub.ModSync.Protocol;
+using FyteClub.ModSync.Transfer;
+using FyteClub.ModSync.Cache;
+using FyteClub.ModSync.Application;
+using FyteClub.ModSync.Orchestration;
 
 namespace FyteClub.Core
 {
@@ -22,23 +26,23 @@ namespace FyteClub.Core
         {
             _framework.RunOnFrameworkThread(() =>
             {
-                var localPlayer = _clientState.LocalPlayer;
+                var localPlayer = _objectTable.LocalPlayer;
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 if (string.IsNullOrEmpty(localPlayerName)) return;
                 
                 var capturedPlayerName = localPlayerName;
-                _ = Task.Run(async () =>
+                _ = SafeTask.Run(async () =>
                 {
                     try
                     {
                         await SharePlayerModsToSyncshells(capturedPlayerName);
-                        ModularLogger.LogDebug(LogModule.ModSync, "Shared mods to syncshell peers");
+                        FyteLog.Debug(LogModule.ModSync, "Shared mods to syncshell peers");
                     }
                     catch (Exception ex)
                     {
-                        ModularLogger.LogAlways(LogModule.ModSync, "Failed to share mods: {0}", ex.Message);
+                        FyteLog.Error(LogModule.ModSync, "Failed to share mods: {0}", ex.Message);
                     }
-                });
+                }, LogModule.ModSync);
             });
         }
 
@@ -46,12 +50,12 @@ namespace FyteClub.Core
         {
             _framework.RunOnFrameworkThread(() =>
             {
-                var localPlayer = _clientState.LocalPlayer;
+                var localPlayer = _objectTable.LocalPlayer;
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 if (string.IsNullOrEmpty(localPlayerName)) return;
                 
                 var capturedPlayerName = localPlayerName;
-                _ = Task.Run(async () =>
+                _ = SafeTask.Run(async () =>
                 {
                     try
                     {
@@ -59,9 +63,9 @@ namespace FyteClub.Core
                     }
                     catch (Exception ex)
                     {
-                        ModularLogger.LogAlways(LogModule.ModSync, "Manual mod upload failed: {0}", ex.Message);
+                        FyteLog.Error(LogModule.ModSync, "Manual mod upload failed: {0}", ex.Message);
                     }
-                });
+                }, LogModule.ModSync);
             });
         }
 
@@ -84,12 +88,12 @@ namespace FyteClub.Core
         {
             _framework.RunOnFrameworkThread(() =>
             {
-                var localPlayer = _clientState.LocalPlayer;
+                var localPlayer = _objectTable.LocalPlayer;
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 if (!string.IsNullOrEmpty(localPlayerName))
                 {
                     var playerName = localPlayerName;
-                    _ = Task.Run(async () =>
+                    _ = SafeTask.Run(async () =>
                     {
                         await Task.Delay(1000); // Brief delay for changes to apply
                         
@@ -106,16 +110,16 @@ namespace FyteClub.Core
                         
                         // Cache our own mods first
                         await CacheLocalPlayerMods(playerName);
-                        
+
                         await SharePlayerModsToSyncshells(playerName);
-                    });
+                    }, LogModule.ModSync);
                 }
             });
         }
 
 
 
-        private string CalculateModDataHash(AdvancedPlayerInfo playerInfo)
+        private string CalculateModDataHash(PlayerInfo playerInfo)
         {
             var hashData = new
             {
@@ -136,22 +140,22 @@ namespace FyteClub.Core
         {
             _framework.RunOnFrameworkThread(() =>
             {
-                var localPlayer = _clientState.LocalPlayer;
+                var localPlayer = _objectTable.LocalPlayer;
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 if (string.IsNullOrEmpty(localPlayerName))
                 {
-                    ModularLogger.LogDebug(LogModule.ModSync, "No local player found for mod detection test");
+                    FyteLog.Debug(LogModule.ModSync, "No local player found for mod detection test");
                     return;
                 }
                 
                 var capturedPlayerName = localPlayerName;
-                _ = Task.Run(async () =>
+                _ = SafeTask.Run(async () =>
                 {
                     try
                     {
                         if (_modSystemIntegration == null)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "Mod system integration not available");
+                            FyteLog.Debug(LogModule.ModSync, "Mod system integration not available");
                             return;
                         }
 
@@ -160,29 +164,29 @@ namespace FyteClub.Core
                         var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
                         if (playerInfo == null)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "Failed to get player mod data");
+                            FyteLog.Debug(LogModule.ModSync, "Failed to get player mod data");
                             return;
                         }
                         
                         var modCount = playerInfo.Mods?.Count ?? 0;
                         var hash = CalculateModDataHash(playerInfo);
                         
-                        ModularLogger.LogDebug(LogModule.ModSync, "Mod test: {0} mods found, hash: {1}", modCount, hash[..8]);
+                        FyteLog.Debug(LogModule.ModSync, "Mod test: {0} mods found, hash: {1}", modCount, hash[..8]);
                         
                         if (modCount == 0)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "No mods detected - check Penumbra integration");
+                            FyteLog.Debug(LogModule.ModSync, "No mods detected - check Penumbra integration");
                         }
                         
                         // Test P2P packaging
                         try
                         {
                             await SharePlayerModsToSyncshells(capturedPlayerName);
-                            ModularLogger.LogDebug(LogModule.ModSync, "P2P packaging test completed");
+                            FyteLog.Debug(LogModule.ModSync, "P2P packaging test completed");
                         }
                         catch (Exception packEx)
                         {
-                            ModularLogger.LogAlways(LogModule.ModSync, "P2P packaging test failed: {0}", packEx.Message);
+                            FyteLog.Error(LogModule.ModSync, "P2P packaging test failed: {0}", packEx.Message);
                         }
                         
                         // Test complete mod transfer with file contents
@@ -191,12 +195,12 @@ namespace FyteClub.Core
                             if (_modSyncOrchestrator != null)
                             {
                                 await _modSyncOrchestrator.TestCompleteModTransfer(capturedPlayerName);
-                                ModularLogger.LogDebug(LogModule.ModSync, "Complete mod transfer test completed");
+                                FyteLog.Debug(LogModule.ModSync, "Complete mod transfer test completed");
                             }
                         }
                         catch (Exception transferEx)
                         {
-                            ModularLogger.LogAlways(LogModule.ModSync, "Complete mod transfer test failed: {0}", transferEx.Message);
+                            FyteLog.Error(LogModule.ModSync, "Complete mod transfer test failed: {0}", transferEx.Message);
                         }
                         
                         // Test complete round-trip: serialize, deserialize, and apply
@@ -205,46 +209,46 @@ namespace FyteClub.Core
                             if (_modSyncOrchestrator != null)
                             {
                                 await _modSyncOrchestrator.TestCompleteRoundTrip(capturedPlayerName);
-                                ModularLogger.LogDebug(LogModule.ModSync, "Complete round-trip test completed");
+                                FyteLog.Debug(LogModule.ModSync, "Complete round-trip test completed");
                             }
                         }
                         catch (Exception roundTripEx)
                         {
-                            ModularLogger.LogAlways(LogModule.ModSync, "Complete round-trip test failed: {0}", roundTripEx.Message);
+                            FyteLog.Error(LogModule.ModSync, "Complete round-trip test failed: {0}", roundTripEx.Message);
                         }
                     }
                     catch (Exception ex)
                     {
-                        ModularLogger.LogAlways(LogModule.ModSync, "Mod detection test failed: {0}", ex.Message);
+                        FyteLog.Error(LogModule.ModSync, "Mod detection test failed: {0}", ex.Message);
                     }
-                });
+                }, LogModule.ModSync);
             });
         }
-        
+
         public void ApplyMyModsToEverythingNearby()
         {
             _framework.RunOnFrameworkThread(() =>
             {
-                var localPlayer = _clientState.LocalPlayer;
+                var localPlayer = _objectTable.LocalPlayer;
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 if (string.IsNullOrEmpty(localPlayerName))
                 {
-                    ModularLogger.LogAlways(LogModule.ModSync, "No local player found for chaos mode");
+                    FyteLog.Info(LogModule.ModSync, "No local player found for chaos mode");
                     return;
                 }
                 
                 var capturedPlayerName = localPlayerName;
-                _ = Task.Run(async () =>
+                _ = SafeTask.Run(async () =>
                 {
                     try
                     {
                         if (_modSystemIntegration == null)
                         {
-                            ModularLogger.LogAlways(LogModule.ModSync, "Mod system not available for chaos mode");
+                            FyteLog.Info(LogModule.ModSync, "Mod system not available for chaos mode");
                             return;
                         }
                         
-                        ModularLogger.LogDebug(LogModule.ModSync, "🚀 CHAOS MODE: Bypassing ALL P2P systems for maximum speed");
+                        FyteLog.Debug(LogModule.ModSync, " CHAOS MODE: Bypassing ALL P2P systems for maximum speed");
                         
                         // Get your mods DIRECTLY - no P2P involvement
                         await WaitForPenumbraReadyAsync().ConfigureAwait(false);
@@ -252,8 +256,8 @@ namespace FyteClub.Core
                         var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
                         if (playerInfo == null || (playerInfo.Mods?.Count ?? 0) == 0)
                         {
-                            ModularLogger.LogAlways(LogModule.ModSync, "No mods available for chaos mode - check Penumbra integration");
-                            ModularLogger.LogDebug(LogModule.ModSync, "Plugin availability - Penumbra: {0}, Glamourer: {1}", _modSystemIntegration.IsPenumbraAvailable, _modSystemIntegration.IsGlamourerAvailable);
+                            FyteLog.Info(LogModule.ModSync, "No mods available for chaos mode - check Penumbra integration");
+                            FyteLog.Debug(LogModule.ModSync, "Plugin availability - Penumbra: {0}, Glamourer: {1}", _modSystemIntegration.IsPenumbraAvailable, _modSystemIntegration.IsGlamourerAvailable);
                             return;
                         }
                         
@@ -263,24 +267,24 @@ namespace FyteClub.Core
                         
                         if (targets.Count == 0)
                         {
-                            ModularLogger.LogAlways(LogModule.ModSync, "No targets found for chaos mode - no nearby characters detected");
+                            FyteLog.Info(LogModule.ModSync, "No targets found for chaos mode - no nearby characters detected");
                             return;
                         }
                         
-                        ModularLogger.LogDebug(LogModule.ModSync, "🚀 CHAOS MODE: Targeting {0} characters with {1} mods - DIRECT APPLICATION", targets.Count, playerInfo.Mods?.Count ?? 0);
+                        FyteLog.Debug(LogModule.ModSync, " CHAOS MODE: Targeting {0} characters with {1} mods - DIRECT APPLICATION", targets.Count, playerInfo.Mods?.Count ?? 0);
                         
                         // Apply mods DIRECTLY with maximum parallelism - NO P2P OVERHEAD
-                        var tasks = targets.Select(async target =>
+                        var tasks = targets.Select(async (string target) =>
                         {
                             try
                             {
                                 // DIRECT mod application - uses enhanced approach with rate limiting
                                 var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, target);
-                                return new { Target = target, Success = success, Error = (string?)null };
+                                return (Target: target, Success: success, Error: (string?)null);
                             }
                             catch (Exception ex)
                             {
-                                return new { Target = target, Success = false, Error = (string?)ex.Message };
+                                return (Target: target, Success: false, Error: (string?)ex.Message);
                             }
                         }).ToArray();
                         
@@ -292,40 +296,40 @@ namespace FyteClub.Core
                         foreach (var result in results.Where(r => !r.Success))
                         {
                             var errorMsg = result.Error != null ? $": {result.Error}" : "";
-                            ModularLogger.LogAlways(LogModule.ModSync, "Failed to transform '{0}'{1}", result.Target, errorMsg);
+                            FyteLog.Error(LogModule.ModSync, "Failed to transform '{0}'{1}", result.Target, errorMsg);
                         }
                         
-                        ModularLogger.LogAlways(LogModule.ModSync, "🚀 CHAOS MODE COMPLETE: {0} successful, {1} failed - P2P BYPASSED", successCount, failCount);
-                        ModularLogger.LogDebug(LogModule.ModSync, "🎯 Chaos performance: {0} targets processed in parallel", targets.Count);
+                        FyteLog.Error(LogModule.ModSync, " CHAOS MODE COMPLETE: {0} successful, {1} failed - P2P BYPASSED", successCount, failCount);
+                        FyteLog.Debug(LogModule.ModSync, " Chaos performance: {0} targets processed in parallel", targets.Count);
                     }
                     catch (Exception ex)
                     {
-                        ModularLogger.LogAlways(LogModule.ModSync, "Chaos mode failed: {0}", ex.Message);
+                        FyteLog.Error(LogModule.ModSync, "Chaos mode failed: {0}", ex.Message);
                     }
-                });
+                }, LogModule.ModSync);
             });
         }
-        
+
         public void ApplyMyModsToEveryone()
         {
             _framework.RunOnFrameworkThread(() =>
             {
-                var localPlayer = _clientState.LocalPlayer;
+                var localPlayer = _objectTable.LocalPlayer;
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 if (string.IsNullOrEmpty(localPlayerName))
                 {
-                    ModularLogger.LogDebug(LogModule.ModSync, "No local player found");
+                    FyteLog.Debug(LogModule.ModSync, "No local player found");
                     return;
                 }
                 
                 var capturedPlayerName = localPlayerName;
-                _ = Task.Run(async () =>
+                _ = SafeTask.Run(async () =>
                 {
                     try
                     {
                         if (_modSystemIntegration == null)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "Mod system not available");
+                            FyteLog.Debug(LogModule.ModSync, "Mod system not available");
                             return;
                         }
                         
@@ -335,7 +339,7 @@ namespace FyteClub.Core
                         var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
                         if (playerInfo == null || (playerInfo.Mods?.Count ?? 0) == 0)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "No mods available to share");
+                            FyteLog.Debug(LogModule.ModSync, "No mods available to share");
                             return;
                         }
                         
@@ -345,23 +349,23 @@ namespace FyteClub.Core
                         
                         if (targets.Count == 0)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "No nearby players found");
+                            FyteLog.Debug(LogModule.ModSync, "No nearby players found");
                             return;
                         }
                         
-                        ModularLogger.LogDebug(LogModule.ModSync, "Applying mods to {0} players", targets.Count);
+                        FyteLog.Debug(LogModule.ModSync, "Applying mods to {0} players", targets.Count);
                         
                         // Apply your mods to everyone in parallel for speed
-                        var tasks = targets.Select(async target =>
+                        var tasks = targets.Select(async (string target) =>
                         {
                             try
                             {
                                 var success = await _modSystemIntegration.ApplyPlayerMods(playerInfo, target);
-                                return new { Target = target, Success = success, Error = (string?)null };
+                                return (Target: target, Success: success, Error: (string?)null);
                             }
                             catch (Exception ex)
                             {
-                                return new { Target = target, Success = false, Error = (string?)ex.Message };
+                                return (Target: target, Success: false, Error: (string?)ex.Message);
                             }
                         }).ToArray();
                         
@@ -373,39 +377,39 @@ namespace FyteClub.Core
                         foreach (var result in results.Where(r => !r.Success))
                         {
                             var errorMsg = result.Error != null ? $": {result.Error}" : "";
-                            ModularLogger.LogDebug(LogModule.ModSync, "Failed to transform '{0}'{1}", result.Target, errorMsg);
+                            FyteLog.Debug(LogModule.ModSync, "Failed to transform '{0}'{1}", result.Target, errorMsg);
                         }
                         
-                        ModularLogger.LogAlways(LogModule.ModSync, "Mass transformation complete: {0} successful, {1} failed", successCount, failCount);
+                        FyteLog.Error(LogModule.ModSync, "Mass transformation complete: {0} successful, {1} failed", successCount, failCount);
                     }
                     catch (Exception ex)
                     {
-                        ModularLogger.LogAlways(LogModule.ModSync, "Mass transformation failed: {0}", ex.Message);
+                        FyteLog.Error(LogModule.ModSync, "Mass transformation failed: {0}", ex.Message);
                     }
-                });
+                }, LogModule.ModSync);
             });
         }
-        
+
         public void TestApplyModsToRandomPerson()
         {
             _framework.RunOnFrameworkThread(() =>
             {
-                var localPlayer = _clientState.LocalPlayer;
+                var localPlayer = _objectTable.LocalPlayer;
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 if (string.IsNullOrEmpty(localPlayerName))
                 {
-                    ModularLogger.LogDebug(LogModule.ModSync, "No local player found");
+                    FyteLog.Debug(LogModule.ModSync, "No local player found");
                     return;
                 }
                 
                 var capturedPlayerName = localPlayerName;
-                _ = Task.Run(async () =>
+                _ = SafeTask.Run(async () =>
                 {
                     try
                     {
                         if (_modSystemIntegration == null)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "Mod system not available");
+                            FyteLog.Debug(LogModule.ModSync, "Mod system not available");
                             return;
                         }
                         
@@ -415,7 +419,7 @@ namespace FyteClub.Core
                         var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
                         if (playerInfo == null || (playerInfo.Mods?.Count ?? 0) == 0)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "No mods available to apply");
+                            FyteLog.Debug(LogModule.ModSync, "No mods available to apply");
                             return;
                         }
                         
@@ -425,7 +429,7 @@ namespace FyteClub.Core
                         
                         if (victims.Count == 0)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "No nearby players found");
+                            FyteLog.Debug(LogModule.ModSync, "No nearby players found");
                             return;
                         }
                         
@@ -433,7 +437,7 @@ namespace FyteClub.Core
                         var random = new Random();
                         var victim = victims[random.Next(victims.Count)];
                         
-                        ModularLogger.LogDebug(LogModule.ModSync, "Applying {0} mods to '{1}'", playerInfo.Mods?.Count ?? 0, victim);
+                        FyteLog.Debug(LogModule.ModSync, "Applying {0} mods to '{1}'", playerInfo.Mods?.Count ?? 0, victim);
                         
                         // Test individual plugin APIs first
                         await TestIndividualPluginAPIs(victim!);
@@ -443,18 +447,18 @@ namespace FyteClub.Core
                         
                         if (success)
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "Successfully applied mods to '{0}'", victim);
+                            FyteLog.Debug(LogModule.ModSync, "Successfully applied mods to '{0}'", victim);
                         }
                         else
                         {
-                            ModularLogger.LogDebug(LogModule.ModSync, "Failed to apply mods to {0}", victim);
+                            FyteLog.Debug(LogModule.ModSync, "Failed to apply mods to {0}", victim);
                         }
                     }
                     catch (Exception ex)
                     {
-                        ModularLogger.LogAlways(LogModule.ModSync, "Random mod application failed: {0}", ex.Message);
+                        FyteLog.Error(LogModule.ModSync, "Random mod application failed: {0}", ex.Message);
                     }
-                });
+                }, LogModule.ModSync);
             });
         }
         
@@ -465,7 +469,7 @@ namespace FyteClub.Core
                 return await _framework.RunOnFrameworkThread(() =>
                 {
                     var allCharacters = new List<string>();
-                    var localPlayer = _clientState.LocalPlayer;
+                    var localPlayer = _objectTable.LocalPlayer;
                     if (localPlayer == null) return allCharacters;
                     
                     try
@@ -496,7 +500,7 @@ namespace FyteClub.Core
                     }
                     catch (InvalidOperationException ex) when (ex.Message.Contains("main thread"))
                     {
-                        ModularLogger.LogAlways(LogModule.ModSync, "Cannot access ObjectTable from background thread for chaos check");
+                        FyteLog.Info(LogModule.ModSync, "Cannot access ObjectTable from background thread for chaos check");
                     }
                     
                     return allCharacters;
@@ -504,7 +508,7 @@ namespace FyteClub.Core
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.ModSync, "Error getting all nearby characters: {0}", ex.Message);
+                FyteLog.Error(LogModule.ModSync, "Error getting all nearby characters: {0}", ex.Message);
                 return new List<string>();
             }
         }
@@ -516,7 +520,7 @@ namespace FyteClub.Core
                 return await _framework.RunOnFrameworkThread(() =>
                 {
                     var proximityPlayers = new List<string>();
-                    var localPlayer = _clientState.LocalPlayer;
+                    var localPlayer = _objectTable.LocalPlayer;
                     if (localPlayer == null) return proximityPlayers;
                     
                     var localPosition = localPlayer.Position;
@@ -541,7 +545,7 @@ namespace FyteClub.Core
                     }
                     catch (InvalidOperationException ex) when (ex.Message.Contains("main thread"))
                     {
-                        ModularLogger.LogAlways(LogModule.ModSync, "Cannot access ObjectTable from background thread for proximity check");
+                        FyteLog.Info(LogModule.ModSync, "Cannot access ObjectTable from background thread for proximity check");
                     }
                     
                     return proximityPlayers;
@@ -549,7 +553,7 @@ namespace FyteClub.Core
             }
             catch (Exception ex)
             {
-                ModularLogger.LogAlways(LogModule.ModSync, "Error getting proximity players: {0}", ex.Message);
+                FyteLog.Error(LogModule.ModSync, "Error getting proximity players: {0}", ex.Message);
                 return new List<string>();
             }
         }
@@ -559,32 +563,32 @@ namespace FyteClub.Core
         /// </summary>
         public void StartChaosMode()
         {
-            ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] Button pressed - starting chaos mode");
+            FyteLog.Info(LogModule.ModSync, " [CHAOS] Button pressed - starting chaos mode");
             
             _framework.RunOnFrameworkThread(() =>
             {
-                var localPlayer = _clientState.LocalPlayer;
+                var localPlayer = _objectTable.LocalPlayer;
                 var localPlayerName = localPlayer?.Name?.TextValue;
                 if (string.IsNullOrEmpty(localPlayerName))
                 {
-                    ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] ERROR: No local player found for chaos mode");
+                    FyteLog.Error(LogModule.ModSync, " [CHAOS] ERROR: No local player found for chaos mode");
                     return;
                 }
                 
-                ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] Local player found: {0}", localPlayerName);
+                FyteLog.Info(LogModule.ModSync, " [CHAOS] Local player found: {0}", localPlayerName);
                 
                 var capturedPlayerName = localPlayerName;
-                _ = Task.Run(async () =>
+                _ = SafeTask.Run(async () =>
                 {
                     try
                     {
                         if (_modSystemIntegration == null)
                         {
-                            ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] ERROR: Mod system not available for chaos mode");
+                            FyteLog.Error(LogModule.ModSync, " [CHAOS] ERROR: Mod system not available for chaos mode");
                             return;
                         }
                         
-                        ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] Mod system available, getting player mods...");
+                        FyteLog.Info(LogModule.ModSync, " [CHAOS] Mod system available, getting player mods...");
                         
                         // Get your mods
                         await WaitForPenumbraReadyAsync().ConfigureAwait(false);
@@ -592,32 +596,32 @@ namespace FyteClub.Core
                         var playerInfo = await _modSystemIntegration.GetCurrentPlayerMods(capturedPlayerName);
                         if (playerInfo == null)
                         {
-                            ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] ERROR: Failed to get player info for chaos mode");
+                            FyteLog.Error(LogModule.ModSync, " [CHAOS] ERROR: Failed to get player info for chaos mode");
                             return;
                         }
                         
                         var modCount = playerInfo.Mods?.Count ?? 0;
                         if (modCount == 0)
                         {
-                            ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] ERROR: No mods available for chaos mode (count: {0})", modCount);
+                            FyteLog.Error(LogModule.ModSync, " [CHAOS] ERROR: No mods available for chaos mode (count: {0})", modCount);
                             return;
                         }
                         
-                        ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] Found {0} mods, starting chaos mode in mod integration...", modCount);
+                        FyteLog.Info(LogModule.ModSync, " [CHAOS] Found {0} mods, starting chaos mode in mod integration...", modCount);
                         
                         // Start chaos mode in mod integration
                         await _modSystemIntegration.StartChaosMode();
                         
-                        ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] Chaos mode started successfully!");
+                        FyteLog.Info(LogModule.ModSync, " [CHAOS] Chaos mode started successfully!");
                     }
                     catch (Exception ex)
                     {
-                        ModularLogger.LogAlways(LogModule.ModSync, "😈 [CHAOS] ERROR: Failed to start chaos mode: {0}", ex.Message);
+                        FyteLog.Error(LogModule.ModSync, " [CHAOS] ERROR: Failed to start chaos mode: {0}", ex.Message);
                     }
-                });
+                }, LogModule.ModSync);
             });
         }
-        
+
         /// <summary>
         /// Stop chaos mode
         /// </summary>
@@ -652,7 +656,7 @@ namespace FyteClub.Core
                 
                 if (character == null)
                 {
-                    ModularLogger.LogDebug(LogModule.ModSync, "Character not found for API testing");
+                    FyteLog.Debug(LogModule.ModSync, "Character not found for API testing");
                     return;
                 }
                 
@@ -673,13 +677,13 @@ namespace FyteClub.Core
                             {
                                 var method = heelsRegister.GetType().GetMethod("InvokeFunc");
                                 method?.Invoke(heelsRegister, new object[] { (int)character.ObjectIndex, "0.1" });
-                                ModularLogger.LogDebug(LogModule.ModSync, "SimpleHeels RegisterPlayer test completed");
+                                FyteLog.Debug(LogModule.ModSync, "SimpleHeels RegisterPlayer test completed");
                             }
                         });
                     }
                     catch (Exception ex)
                     {
-                        ModularLogger.LogDebug(LogModule.ModSync, "SimpleHeels RegisterPlayer test failed: {0}", ex.Message);
+                        FyteLog.Debug(LogModule.ModSync, "SimpleHeels RegisterPlayer test failed: {0}", ex.Message);
                     }
                 }
                 
@@ -699,19 +703,19 @@ namespace FyteClub.Core
                             {
                                 var method = honorificSet.GetType().GetMethod("InvokeFunc");
                                 method?.Invoke(honorificSet, new object[] { (int)character.ObjectIndex, "Test Title" });
-                                ModularLogger.LogDebug(LogModule.ModSync, "Honorific SetCharacterTitle test completed");
+                                FyteLog.Debug(LogModule.ModSync, "Honorific SetCharacterTitle test completed");
                             }
                         });
                     }
                     catch (Exception ex)
                     {
-                        ModularLogger.LogDebug(LogModule.ModSync, "Honorific SetCharacterTitle test failed: {0}", ex.Message);
+                        FyteLog.Debug(LogModule.ModSync, "Honorific SetCharacterTitle test failed: {0}", ex.Message);
                     }
                 }
             }
             catch (Exception ex)
             {
-                ModularLogger.LogDebug(LogModule.ModSync, "Individual API test failed: {0}", ex.Message);
+                FyteLog.Debug(LogModule.ModSync, "Individual API test failed: {0}", ex.Message);
             }
         }
     }

@@ -4,7 +4,7 @@ using System.IO;
 using System.Text.Json;
 using Dalamud.Plugin.Services;
 
-namespace FyteClub
+namespace FyteClub.Security
 {
     public class SecureTokenStorage
     {

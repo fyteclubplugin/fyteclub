@@ -1,7 +1,7 @@
 using System;
 using System.Security.Cryptography;
 
-namespace FyteClub
+namespace FyteClub.Security
 {
     public class ReconnectChallenge
     {

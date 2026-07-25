@@ -108,7 +108,7 @@ namespace FyteClub.UI
             if (_clearLogResult != null && (DateTime.Now - _clearLogResultTime).TotalSeconds < 5)
             {
                 ImGui.SameLine();
-                if (_clearLogResult.StartsWith("✅"))
+                if (_clearLogResult.StartsWith(""))
                 {
                     ImGui.TextColored(new Vector4(0, 1, 0, 1), _clearLogResult);
                 }
@@ -130,7 +130,7 @@ namespace FyteClub.UI
                 
                 if (!File.Exists(dalamudLogPath))
                 {
-                    _clearLogResult = "❌ Log file not found";
+                    _clearLogResult = " Log file not found";
                     _clearLogResultTime = DateTime.Now;
                     return;
                 }
@@ -143,12 +143,12 @@ namespace FyteClub.UI
                     fileStream.Flush();
                 }
                 
-                _clearLogResult = "✅ Log cleared successfully";
+                _clearLogResult = " Log cleared successfully";
                 _clearLogResultTime = DateTime.Now;
             }
             catch (Exception ex)
             {
-                _clearLogResult = $"❌ Error: {ex.Message}";
+                _clearLogResult = $" Error: {ex.Message}";
                 _clearLogResultTime = DateTime.Now;
             }
         }

@@ -10,6 +10,7 @@ namespace FyteClub.Syncshells.Models
     {
         public string Name { get; init; } = string.Empty;
         public string Id { get; init; } = string.Empty;
+        public string PeerId { get; init; } = string.Empty;
         public MemberStatus Status { get; init; } = MemberStatus.Unknown;
         public DateTime LastSeen { get; init; } = DateTime.UtcNow;
         public DateTime JoinedAt { get; init; } = DateTime.UtcNow;

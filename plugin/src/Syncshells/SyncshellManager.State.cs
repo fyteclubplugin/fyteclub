@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading;
 using FyteClub.Syncshells.Models;
 
-namespace FyteClub
+namespace FyteClub.Syncshells
 {
     /// <summary>
     /// State management layer for SyncshellManager with roster dictionary and events

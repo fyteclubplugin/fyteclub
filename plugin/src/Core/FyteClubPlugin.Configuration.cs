@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Dalamud.Configuration;
 using FyteClub.Core.Logging;
+using FyteClub.Syncshells;
 
 namespace FyteClub.Core
 {
@@ -17,26 +18,13 @@ namespace FyteClub.Core
             return _pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         }
         
-        public void UpdateTurnServerPort(int newPort)
-        {
-            var config = GetConfiguration();
-            config.TurnServerPort = newPort;
-            _pluginInterface.SavePluginConfig(config);
-        }
-        
         public void SaveConfiguration()
         {
-            var existingConfig = GetConfiguration();
-            var config = new Configuration 
-            { 
+            var config = new Configuration
+            {
                 Syncshells = _syncshellManager?.GetSyncshells() ?? new List<SyncshellInfo>(),
                 BlockedUsers = _blockedUsers.Keys.ToList(),
-                RecentlySyncedUsers = _recentlySyncedUsers.Keys.ToList(),
-                EnableTurnHosting = _turnManager?.IsHostingEnabled ?? false,
-                TurnServerPort = existingConfig.TurnServerPort,
-                TurnMaxConnections = existingConfig.TurnMaxConnections,
-                TurnSessionTimeoutMinutes = existingConfig.TurnSessionTimeoutMinutes,
-                TurnEnableLogging = existingConfig.TurnEnableLogging
+                RecentlySyncedUsers = _recentlySyncedUsers.Keys.ToList()
             };
             _pluginInterface.SavePluginConfig(config);
         }
@@ -62,6 +50,20 @@ namespace FyteClub.Core
                     if (loadedSyncshell != null)
                     {
                         loadedSyncshell.IsActive = syncshell.IsActive;
+
+                        // Key-epoch rotation state doesn't survive CreateSyncshellInternal/JoinSyncshellById
+                        // (they build a fresh SyncshellInfo at epoch 0) - restore it from the saved config,
+                        // and re-apply it into the freshly-reconstructed identity so signaling encryption
+                        // uses the current rotated key, not the stale epoch-0 one, immediately after restart.
+                        loadedSyncshell.KeyEpoch = syncshell.KeyEpoch;
+                        loadedSyncshell.EpochKeyBase64 = syncshell.EpochKeyBase64;
+                        loadedSyncshell.HostPeerId = syncshell.HostPeerId;
+                        loadedSyncshell.RemovedPeerIds = syncshell.RemovedPeerIds ?? new List<string>();
+
+                        if (syncshell.KeyEpoch > 0 && !string.IsNullOrEmpty(syncshell.EpochKeyBase64))
+                        {
+                            _syncshellManager.ApplyStoredEpoch(loadedSyncshell.Id, syncshell.KeyEpoch, Convert.FromBase64String(syncshell.EpochKeyBase64));
+                        }
                     }
                 }
             }
@@ -74,17 +76,6 @@ namespace FyteClub.Core
             foreach (var syncedUser in config.RecentlySyncedUsers ?? new List<string>())
             {
                 _recentlySyncedUsers.TryAdd(syncedUser, 0);
-            }
-            
-            if (config.EnableTurnHosting)
-            {
-                _ = Task.Run(async () => {
-                    if (_turnManager != null)
-                    {
-                        await _turnManager.EnableHostingAsync(config.TurnServerPort);
-                        ModularLogger.LogAlways(LogModule.TURN, "Auto-enabled hosting on port {0}", config.TurnServerPort);
-                    }
-                });
             }
         }
 
@@ -122,11 +113,11 @@ namespace FyteClub.Core
 
         public void ReconnectAllPeers()
         {
-            _ = Task.Run(async () =>
+            _ = SafeTask.Run(async () =>
             {
                 await PerformPeerDiscovery();
                 await AttemptPeerReconnections();
-            });
+            }, LogModule.WebRTC);
         }
 
         public void CleanupOldPlayerAssociations()
@@ -143,20 +134,20 @@ namespace FyteClub.Core
             
             if (toRemove.Count > 0)
             {
-                ModularLogger.LogDebug(LogModule.Core, "Cleaned up {0} old player associations", toRemove.Count);
+                FyteLog.Debug(LogModule.Core, "Cleaned up {0} old player associations", toRemove.Count);
             }
         }
 
         public async Task RetryDetection()
         {
-            ModularLogger.LogDebug(LogModule.Core, "Retrying mod system detection");
+            FyteLog.Debug(LogModule.Core, "Retrying mod system detection");
             CheckModSystemAvailability();
             await Task.Delay(1000);
         }
 
         public async Task HandlePluginRecovery()
         {
-            ModularLogger.LogAlways(LogModule.Core, "Starting plugin recovery sequence");
+            FyteLog.Info(LogModule.Core, "Starting plugin recovery sequence");
             
             try
             {
@@ -168,11 +159,11 @@ namespace FyteClub.Core
                 
                 await PerformPeerDiscovery();
                 
-                ModularLogger.LogAlways(LogModule.Core, "Plugin recovery completed");
+                FyteLog.Info(LogModule.Core, "Plugin recovery completed");
             }
             catch
             {
-                ModularLogger.LogAlways(LogModule.Core, "Plugin recovery failed");
+                FyteLog.Error(LogModule.Core, "Plugin recovery failed");
             }
         }
     }
@@ -185,10 +176,5 @@ namespace FyteClub.Core
         public int ProximityRange { get; set; } = 50;
         public List<string> BlockedUsers { get; set; } = new();
         public List<string> RecentlySyncedUsers { get; set; } = new();
-        public bool EnableTurnHosting { get; set; } = false;
-        public int TurnServerPort { get; set; } = 49000;
-        public int TurnMaxConnections { get; set; } = 50;
-        public int TurnSessionTimeoutMinutes { get; set; } = 10;
-        public bool TurnEnableLogging { get; set; } = false;
     }
 }

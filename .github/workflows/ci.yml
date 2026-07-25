@@ -1,16 +1,8 @@
-# Basic CI for FyteClub — conservative, fast feedback loop
-# - Runs on Windows (matches developer/dev CI for Dalamud plugins)
-# - Builds vendored Microsoft.MixedReality.WebRTC project (in-repo)
-# - Attempts plugin build (best-effort; non-fatal in CI until Dalamud host deps are resolved)
-# - Runs unit tests but gates RealP2P (hardware/network) tests behind manual run
-# - Uploads test results for debugging
-#
-# Notes for maintainers:
-# - RealP2P tests are slow / environment-dependent and are executed via the "Real P2P (manual)" workflow_dispatch job.
-# - After adding CI, target incremental dependency upgrades (Dalamud → Penumbra → MR-WebRTC).
-# - If plugin build fails due to local Dalamud artifacts, prioritize adding a self-hosted runner or stubbing those dependencies for CI.
+# Builds the plugin against a real Dalamud install and runs unit tests.
+# RealP2P tests are slow/network-dependent, gated behind manual workflow_dispatch.
+# dalamud-staging-canary builds against Dalamud's staging branch to catch API breaks early.
 
-name: CI — build & tests (basic)
+name: CI — build & tests
 
 on:
   push:
@@ -22,14 +14,15 @@ on:
     branches:
       - main
       - develop
-  workflow_dispatch: {} # allow manual runs (useful for gating integration)
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-  # Increase this if your repo requires a specific dotnet runtime; default uses SDK matrix below where applicable
+  DALAMUD_DISTRIB_URL: 'https://goatcorp.github.io/dalamud-distrib/latest.zip'
+  DALAMUD_DISTRIB_STAGING_URL: 'https://goatcorp.github.io/dalamud-distrib/stg/latest.zip'
 
 concurrency:
   group: fyteclub-ci-${{ github.ref }}
@@ -37,7 +30,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: Build (best-effort) & Unit tests (fast)
+    name: Build & unit tests (required)
     runs-on: windows-latest
     timeout-minutes: 60
 
@@ -48,42 +41,43 @@ jobs:
           fetch-depth: 0
 
       - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'    # match local/dev where possible; fallback to 7/8 if necessary
+          dotnet-version: '10.0.x'
+
+      - name: Download Dalamud (release channel)
+        shell: pwsh
+        run: |
+          $dest = "$env:RUNNER_TEMP\dalamud"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Invoke-WebRequest -Uri "$env:DALAMUD_DISTRIB_URL" -OutFile "$env:RUNNER_TEMP\dalamud.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\dalamud.zip" -DestinationPath $dest -Force
+          echo "DALAMUD_HOME=$dest" >> $env:GITHUB_ENV
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj','**/packages.lock.json') }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/packages.lock.json') }}
           restore-keys: |
             nuget-${{ runner.os }}-
 
-      - name: Restore (solution)
+      - name: Restore
         run: dotnet restore --verbosity minimal
 
-      # Build a self-contained in-repo project first (low external deps)
       - name: Build vendored MR-WebRTC (fast / deterministic)
         run: dotnet build Microsoft.MixedReality.WebRTC/Microsoft.MixedReality.WebRTC.csproj -c Release --no-restore
         timeout-minutes: 10
 
-      # Try to build the plugin project — may fail on GH runner if Dalamud host assemblies are required.
-      # Do not block the CI for that failure on first pass; it'll surface in PR logs for follow-up.
-      - name: Build plugin (best-effort; non-fatal)
-        run: |
-          echo "Attempting plugin build (may require Dalamud host files on dev machine)."
-          dotnet build plugin/FyteClub.csproj -c Release --no-restore
-        continue-on-error: true
+      - name: Build plugin (required)
+        run: dotnet build plugin/FyteClub.csproj -c Release --no-restore
         timeout-minutes: 12
 
-      # Run fast unit tests; exclude heavy RealP2P integration tests by trait
-      - name: Run unit tests (exclude RealP2P)
+      - name: Build & run unit tests (required, exclude RealP2P)
         run: |
-          dotnet test plugin-tests/plugin-tests.csproj \
-            --no-build \
-            --filter "Category!=RealP2P" \
-            --logger "trx;LogFileName=unit-test-results.trx" \
+          dotnet test plugin-tests/plugin-tests.csproj `
+            --filter "Category!=RealP2P" `
+            --logger "trx;LogFileName=unit-test-results.trx" `
             --results-directory ./TestResults
         timeout-minutes: 20
 
@@ -94,15 +88,40 @@ jobs:
           name: unit-test-results
           path: TestResults/**/*.trx
 
-      - name: Static diagnostics (informational)
+  dalamud-staging-canary:
+    name: Dalamud staging canary (allowed to fail)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download Dalamud (staging channel)
+        shell: pwsh
         run: |
-          echo "You can add additional static checks here (format/lint/roslyn analyzers)."
-          echo "If the plugin build failed due to host artifacts, run the plugin build locally inside a Dalamud dev environment."
+          $dest = "$env:RUNNER_TEMP\dalamud-stg"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Invoke-WebRequest -Uri "$env:DALAMUD_DISTRIB_STAGING_URL" -OutFile "$env:RUNNER_TEMP\dalamud-stg.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\dalamud-stg.zip" -DestinationPath $dest -Force
+          echo "DALAMUD_HOME=$dest" >> $env:GITHUB_ENV
+
+      - name: Restore
+        run: dotnet restore --verbosity minimal
+
+      - name: Build plugin against Dalamud staging
+        run: dotnet build plugin/FyteClub.csproj -c Release --no-restore
+        timeout-minutes: 12
 
   realp2p-manual:
     name: Real P2P (manual / gated)
     runs-on: windows-latest
-    if: github.event_name == 'workflow_dispatch'  # manual trigger only
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 90
 
     steps:
@@ -110,29 +129,39 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
-      - name: NOTE — self-hosted runner recommended
+      - name: Download Dalamud (release channel)
+        shell: pwsh
         run: |
-          echo "REAL-P2P tests require an environment with:"
-          echo " - Dalamud + XIVLauncher (dev hooks) OR a configured test harness"
-          echo " - Optional: Pi test node reachable from the runner"
-          echo ""
-          echo "If you plan to run these on GitHub-hosted runners, ensure the necessary host files are present (not recommended)."
+          $dest = "$env:RUNNER_TEMP\dalamud"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Invoke-WebRequest -Uri "$env:DALAMUD_DISTRIB_URL" -OutFile "$env:RUNNER_TEMP\dalamud.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\dalamud.zip" -DestinationPath $dest -Force
+          echo "DALAMUD_HOME=$dest" >> $env:GITHUB_ENV
 
-      - name: Build (expect host deps)
-        run: dotnet build plugin/FyteClub.csproj -c Release
+      - name: Restore
+        run: dotnet restore --verbosity minimal
 
-      - name: Run RealP2P integration tests (environment-required)
+      - name: Build
+        run: dotnet build plugin/FyteClub.csproj -c Release --no-restore
+
+      - name: Run RealP2P integration tests
+        # separate processes per class - running them together hangs, shared static state in WebRTCConnectionFactory/mrwebrtc.dll isn't reentrant
         run: |
-          dotnet test plugin-tests/plugin-tests.csproj \
-            --no-build \
-            --filter "Category=RealP2P" \
-            --logger "trx;LogFileName=realp2p-test-results.trx" \
+          dotnet test plugin-tests/plugin-tests.csproj `
+            --no-build `
+            --filter "FullyQualifiedName~LocalTwoPeerConnectionTests" `
+            --logger "trx;LogFileName=realp2p-local-two-peer-results.trx" `
             --results-directory ./TestResults
-        timeout-minutes: 60
+          dotnet test plugin-tests/plugin-tests.csproj `
+            --no-build `
+            --filter "FullyQualifiedName~SyncshellIntegrationTests" `
+            --logger "trx;LogFileName=realp2p-syncshell-integration-results.trx" `
+            --results-directory ./TestResults
+        timeout-minutes: 20
 
       - name: Upload RealP2P results
         if: always()
@@ -140,8 +169,3 @@ jobs:
         with:
           name: realp2p-test-results
           path: TestResults/**/*.trx
-
-# Recommended follow-ups (not enforced in this workflow):
-# - Add a nightly job that runs full integration tests on a self‑hosted runner with Dalamud/FFXIV installed.
-# - Add a Dependabot configuration to open dependency upgrade PRs automatically.
-# - Add an optional job that runs code coverage and publishes coverage reports.

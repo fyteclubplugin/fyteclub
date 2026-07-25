@@ -4,8 +4,9 @@ using System.Linq;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using FyteClub.Security;
 
-namespace FyteClub
+namespace FyteClub.Phonebook
 {
     public class PhonebookEntry
     {

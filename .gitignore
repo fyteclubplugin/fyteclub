@@ -8,10 +8,8 @@ MareClient/
 LightlessServer/
 
 # .NET build artifacts
-plugin/bin/
-plugin/obj/
-plugin-tests/bin/
-plugin-tests/obj/
+**/bin/
+**/obj/
 *.user
 *.suo
 .vs/
@@ -72,3 +70,8 @@ TestResults/
 # Documentation builds
 docs/_build/
 site/
+
+# Internal planning/research docs - not meant to be public
+docs/PLAN.md
+docs/VISION.md
+plugin/research/

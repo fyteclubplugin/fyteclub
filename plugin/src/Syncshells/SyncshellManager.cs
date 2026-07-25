@@ -8,23 +8,24 @@ using System.Threading.Tasks;
 using System.Text;
 using System.Web;
 using Dalamud.Plugin.Services;
-using Microsoft.MixedReality.WebRTC;
+using FyteClub.Core;
 using FyteClub.Core.Logging;
 using FyteClub.Syncshells.Models;
+using FyteClub.Networking;
+using FyteClub.Security;
 
-namespace FyteClub
+namespace FyteClub.Syncshells
 {
     public partial class SyncshellManager : IDisposable
     {
         private readonly IPluginLog? _pluginLog;
         private readonly Dictionary<string, SyncshellSession> _sessions = new();
-        private readonly Dictionary<string, IWebRTCConnection> _webrtcConnections = new();
-        private readonly Dictionary<string, DateTime> _pendingConnections = new();
+        private readonly Networking.ConnectionManager _connections = new();
+        private readonly Dictionary<Networking.ConnectionKey, DateTime> _pendingConnections = new();
         private readonly Dictionary<string, List<MemberToken>> _issuedTokens = new();
         private readonly Dictionary<string, List<string>> _syncshellConnectionRegistry = new(); // Track connections per syncshell
         private readonly HashSet<string> _processedMessageHashes = new();
         private readonly object _messageLock = new();
-        private readonly object _connectionLock = new(); // Prevent race conditions when creating/replacing connections
 
         private string _lastAnswerCode = "";
 
@@ -54,85 +55,85 @@ namespace FyteClub
 
         public Task<SyncshellInfo> CreateSyncshell(string name)
         {
-            ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell START - name: '{0}'", name);
-            ModularLogger.LogDebug(LogModule.Syncshells, "SyncshellManager.CreateSyncshell called with name: '{0}' (length: {1})", name, name?.Length ?? 0);
+            FyteLog.Debug(LogModule.Syncshells, "CreateSyncshell START - name: '{0}'", name);
+            FyteLog.Debug(LogModule.Syncshells, "SyncshellManager.CreateSyncshell called with name: '{0}' (length: {1})", name, name?.Length ?? 0);
             
             if (string.IsNullOrEmpty(name))
             {
-                ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell FAIL - name is null or empty");
+                FyteLog.Debug(LogModule.Syncshells, "CreateSyncshell FAIL - name is null or empty");
                 throw new ArgumentException("Syncshell name cannot be null or empty");
             }
             
-            ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell - validating name");
+            FyteLog.Debug(LogModule.Syncshells, "CreateSyncshell - validating name");
             if (!InputValidator.IsValidSyncshellName(name))
             {
-                ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell FAIL - name validation failed for: '{0}'", name);
+                FyteLog.Debug(LogModule.Syncshells, "CreateSyncshell FAIL - name validation failed for: '{0}'", name);
                 
                 var invalidChars = name.Where(c => !char.IsLetterOrDigit(c) && c != ' ' && c != '-' && c != '_' && c != '.').ToList();
                 if (invalidChars.Any())
                 {
                     var invalidCharStr = string.Join(", ", invalidChars.Select(c => $"'{c}' (code: {(int)c})"));
-                    ModularLogger.LogDebug(LogModule.Syncshells, "Invalid characters found: {0}", invalidCharStr);
+                    FyteLog.Debug(LogModule.Syncshells, "Invalid characters found: {0}", invalidCharStr);
                 }
                 
                 throw new ArgumentException($"Invalid syncshell name: '{name}'. Name must contain only letters, numbers, spaces, hyphens, underscores, and dots.");
             }
             
-            ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell - generating password");
+            FyteLog.Debug(LogModule.Syncshells, "CreateSyncshell - generating password");
             var masterPassword = SyncshellIdentity.GenerateSecurePassword();
-            ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell - password generated, length: {0}", masterPassword?.Length ?? 0);
+            FyteLog.Debug(LogModule.Syncshells, "CreateSyncshell - password generated, length: {0}", masterPassword?.Length ?? 0);
             
             if (masterPassword == null)
             {
                 throw new InvalidOperationException("Failed to generate secure password");
             }
             
-            ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell - creating session");
+            FyteLog.Debug(LogModule.Syncshells, "CreateSyncshell - creating session");
             var session = CreateSyncshellInternal(name, masterPassword);
-            ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell - session created");
+            FyteLog.Debug(LogModule.Syncshells, "CreateSyncshell - session created");
             
-            ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell - getting created syncshell from list");
+            FyteLog.Debug(LogModule.Syncshells, "CreateSyncshell - getting created syncshell from list");
             var result = _syncshells.LastOrDefault(s => s.Name == name && s.EncryptionKey == masterPassword);
             if (result == null)
             {
                 throw new InvalidOperationException("Failed to create syncshell");
             }
             
-            ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell - found syncshell, ID: {0}", result.Id);
-            ModularLogger.LogDebug(LogModule.Syncshells, "SyncshellInfo created successfully with ID: {0}, Name: {1}", result.Id, result.Name);
-            ModularLogger.LogDebug(LogModule.Syncshells, "CreateSyncshell SUCCESS - returning result");
+            FyteLog.Debug(LogModule.Syncshells, "CreateSyncshell - found syncshell, ID: {0}", result.Id);
+            FyteLog.Debug(LogModule.Syncshells, "SyncshellInfo created successfully with ID: {0}, Name: {1}", result.Id, result.Name);
+            FyteLog.Debug(LogModule.Syncshells, "CreateSyncshell SUCCESS - returning result");
             return Task.FromResult(result);
         }
 
         public SyncshellSession CreateSyncshellInternal(string name, string masterPassword)
         {
-            Console.WriteLine($"[DEBUG] CreateSyncshellInternal START - name: '{name}'");
-            SecureLogger.LogInfo("Creating SyncshellIdentity...");
+            FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] CreateSyncshellInternal START - name: '{name}'");
+            FyteLog.Info(LogModule.Syncshells, "Creating SyncshellIdentity...");
             var identity = new SyncshellIdentity(name, masterPassword);
-            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - identity created");
+            FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] CreateSyncshellInternal - identity created");
             
-            SecureLogger.LogInfo("Creating SyncshellPhonebook...");
+            FyteLog.Info(LogModule.Syncshells, "Creating SyncshellPhonebook...");
             var phonebook = new SyncshellPhonebook
             {
                 SyncshellName = name,
                 MasterPasswordHash = identity.MasterPasswordHash,
                 EncryptionKey = identity.EncryptionKey
             };
-            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - phonebook created");
+            FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] CreateSyncshellInternal - phonebook created");
 
-            SecureLogger.LogInfo("Getting local IP address...");
+            FyteLog.Info(LogModule.Syncshells, "Getting local IP address...");
             var localIP = GetLocalIPAddress();
-            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - local IP: {localIP}");
+            FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] CreateSyncshellInternal - local IP: {localIP}");
             phonebook.AddMember(identity.PublicKey, localIP, 7777);
-            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - member added to phonebook");
+            FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] CreateSyncshellInternal - member added to phonebook");
 
-            SecureLogger.LogInfo("Creating SyncshellSession...");
+            FyteLog.Info(LogModule.Syncshells, "Creating SyncshellSession...");
             var session = new SyncshellSession(identity, phonebook, isHost: true);
-            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - session created");
+            FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] CreateSyncshellInternal - session created");
             
-            SecureLogger.LogInfo("Adding session to sessions dictionary...");
+            FyteLog.Info(LogModule.Syncshells, "Adding session to sessions dictionary...");
             _sessions[identity.GetSyncshellHash()] = session;
-            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - session added to dictionary");
+            FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] CreateSyncshellInternal - session added to dictionary");
 
             // Add to syncshells list for configuration persistence
             var syncshell = new SyncshellInfo
@@ -142,179 +143,90 @@ namespace FyteClub
                 EncryptionKey = masterPassword,
                 IsOwner = true,
                 IsActive = true,
-                Members = new List<string> { "You (Host)" }
+                Members = new List<string> { "You (Host)" },
+                HostPeerId = identity.Ed25519Identity.PeerId
             };
             _syncshells.Add(syncshell);
 
-            Console.WriteLine($"[DEBUG] CreateSyncshellInternal - session ready for WebRTC P2P");
+            FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] CreateSyncshellInternal - session ready for WebRTC P2P");
             
-            SecureLogger.LogInfo("Syncshell '{0}' created successfully as host", name);
-            Console.WriteLine($"[DEBUG] CreateSyncshellInternal SUCCESS - returning session");
+            FyteLog.Info(LogModule.Syncshells, "Syncshell '{0}' created successfully as host", name);
+            FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] CreateSyncshellInternal SUCCESS - returning session");
             
             return session;
         }
 
-        private async Task<SyncshellSession> JoinSyncshellWebRTC(SyncshellIdentity identity, string inviteCode)
-        {
-            var (syncshellId, offerSdp, answerChannel, bootstrapInfo) = InviteCodeGenerator.DecodeBootstrapInvite(inviteCode, identity.EncryptionKey);
-            if (bootstrapInfo != null)
-            {
-                Console.WriteLine($"Bootstrap connection available - Peer: {bootstrapInfo.PublicKey}");
-                Console.WriteLine($"Direct connection to {bootstrapInfo.IpAddress}:{bootstrapInfo.Port}");
-            }
-
-            // CRITICAL: Check if we already have a healthy connection before creating a new one
-            if (IsConnectionHealthy(syncshellId))
-            {
-                SecureLogger.LogWarning("⚠️ PREVENTED: Attempted to create new connection for {0} but healthy connection already exists! Reusing existing connection.", syncshellId);
-                
-                // Return existing session if available
-                var existingSession = _sessions.Values.FirstOrDefault(s => s.Identity.GetSyncshellHash() == syncshellId);
-                if (existingSession != null)
-                {
-                    return existingSession;
-                }
-                
-                // If no session exists but connection is healthy, create session with existing connection
-                var newSession = new SyncshellSession(identity, null, isHost: false);
-                _sessions[identity.GetSyncshellHash()] = newSession;
-                return newSession;
-            }
-
-            var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
-            await connection.InitializeAsync();
-            ApplyReconnectionMetadata(syncshellId, connection, Convert.ToBase64String(identity.EncryptionKey));
-
-            connection.OnDataReceived += (data, channelIndex) => {
-                // Notify P2P orchestrator first for new protocol messages
-                OnP2PMessageReceived?.Invoke(syncshellId, data);
-                
-                // Then handle with legacy system
-                HandleModData(syncshellId, data);
-            };
-            connection.OnConnected += () => {
-                Console.WriteLine($"WebRTC joined syncshell {syncshellId}");
-                
-                // Notify P2P orchestrator of new peer connection
-                OnPeerConnected?.Invoke(syncshellId, async (data) => {
-                    await connection.SendDataAsync(data);
-                });
-            };
-            connection.OnDisconnected += () => {
-                Console.WriteLine($"WebRTC disconnected from syncshell {syncshellId}");
-                
-                // Get connection context for recovery
-                var (turnServers, encryptionKey) = GetConnectionContext(syncshellId);
-                
-                // Notify with context for recovery
-                OnConnectionDropWithContext?.Invoke(syncshellId, turnServers, encryptionKey);
-                
-                // Notify P2P orchestrator of peer disconnection (legacy)
-                OnPeerDisconnected?.Invoke(syncshellId);
-            };
-
-            var answer = await connection.CreateAnswerAsync(offerSdp);
-            var answerCode = InviteCodeGenerator.GenerateWebRTCAnswer(syncshellId, answer, identity.EncryptionKey);
-
-            bool automated = false;
-            if (!string.IsNullOrEmpty(answerChannel))
-            {
-                Console.WriteLine("Attempting automated answer exchange...");
-                automated = await InviteCodeGenerator.SendAutomatedAnswer(answerChannel, answerCode);
-            }
-
-            if (!automated)
-            {
-                Console.WriteLine($"Generated answer code: {answerCode}");
-                Console.WriteLine("Send this answer code to the host to complete connection.");
-            }
-            else
-            {
-                Console.WriteLine("Answer sent automatically - connection should establish shortly.");
-            }
-
-            ReplaceWebRTCConnection(syncshellId, connection);
-
-            var session = new SyncshellSession(identity, null, isHost: false);
-            _sessions[identity.GetSyncshellHash()] = session;
-
-            return session;
-        }
-
-        public async Task<string> GenerateInviteCode(string syncshellId, bool enableAutomated = true, FyteClub.TURN.TurnServerManager? turnManager = null)
+        public async Task<string> GenerateInviteCode(string syncshellId, bool enableAutomated = true)
         {
             var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
             if (syncshell == null) return string.Empty;
-            
+
             // Check if syncshell is stale (30+ days)
             if (syncshell.IsStale)
             {
-                return await CreateBootstrapCode(syncshellId, turnManager);
+                return await CreateBootstrapCode(syncshellId);
             }
-            
+
             // Check if we already have P2P connections - use bootstrap mode
-            if (_webrtcConnections.ContainsKey(syncshellId) && _webrtcConnections[syncshellId].IsConnected)
+            if (_connections.GetPrimary(syncshellId)?.IsConnected == true)
             {
                 return GenerateBootstrapCode(syncshellId);
             }
-            
+
             // First connection - use manual exchange
-            return await GenerateNostrInviteCode(syncshellId, turnManager);
+            return await GenerateNostrInviteCode(syncshellId);
         }
-        
-        public Task<string> CreateBootstrapCode(string syncshellId, FyteClub.TURN.TurnServerManager? turnManager = null)
+
+        public Task<string> CreateBootstrapCode(string syncshellId)
         {
-            Console.WriteLine($"🚀 [SyncshellManager] Creating bootstrap code for syncshell: {syncshellId}");
-            
             var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
-            if (syncshell == null) 
+            if (syncshell == null)
             {
-                Console.WriteLine($"❌ [SyncshellManager] Syncshell {syncshellId} not found for bootstrap");
+                FyteLog.Warn(LogModule.Syncshells, "Syncshell {0} not found for bootstrap", syncshellId);
                 return Task.FromResult(string.Empty);
             }
-            
-            Console.WriteLine($"🚀 [SyncshellManager] Found syncshell: {syncshell.Name}, IsStale: {syncshell.IsStale}");
-            
-            // Include TURN server info in bootstrap code
-            object? turnServerInfo = null;
-            if (turnManager?.IsHostingEnabled == true && turnManager.LocalServer != null)
-            {
-                turnServerInfo = new {
-                    url = $"turn:{turnManager.LocalServer.ExternalIP}:{turnManager.LocalServer.Port}",
-                    username = turnManager.LocalServer.Username,
-                    password = turnManager.LocalServer.Password
-                };
-                Console.WriteLine($"🌐 [SyncshellManager] Including TURN server in bootstrap: {turnManager.LocalServer.ExternalIP}:{turnManager.LocalServer.Port}");
-            }
-            
+
+            var iat = InviteExpiry.Now();
             var bootstrapInfo = new {
                 type = "bootstrap",
                 syncshellId = syncshellId,
                 name = syncshell.Name,
                 key = syncshell.EncryptionKey,
-                turnServer = turnServerInfo,
-                timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                hostPeerId = syncshell.HostPeerId,
+                // Current key epoch, so a new joiner's signaling handshake uses the SAME key the
+                // host derives via ResolveGroupKeyBytes - without this, joining after any rotation
+                // would silently fail (host on epoch N, brand-new joiner defaults to epoch 0).
+                keyEpoch = syncshell.KeyEpoch,
+                epochKeyBase64 = syncshell.EpochKeyBase64,
+                iat = iat,
+                exp = InviteExpiry.ExpiryFor(iat, InviteExpiry.BootstrapTtlSeconds)
             };
-            
+
             var json = System.Text.Json.JsonSerializer.Serialize(bootstrapInfo);
             var bootstrapCode = "BOOTSTRAP:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json));
-            
-            Console.WriteLine($"✅ [SyncshellManager] Bootstrap code created with TURN server info");
+
+            FyteLog.Info(LogModule.Syncshells, "Bootstrap code created for syncshell {0}", syncshell.Name);
             return Task.FromResult(bootstrapCode);
         }
-        
+
         private string GenerateBootstrapCode(string syncshellId)
         {
             var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
             if (syncshell == null) return string.Empty;
-            
+
             // Bootstrap code for joiners 3+: no manual exchange needed
+            var iat = InviteExpiry.Now();
             var bootstrapInfo = new {
                 type = "bootstrap",
                 syncshellId = syncshellId,
                 name = syncshell.Name,
                 key = syncshell.EncryptionKey,
-                connectedPeers = _webrtcConnections.Count
+                hostPeerId = syncshell.HostPeerId,
+                keyEpoch = syncshell.KeyEpoch,
+                epochKeyBase64 = syncshell.EpochKeyBase64,
+                connectedPeers = _connections.Count,
+                iat = iat,
+                exp = InviteExpiry.ExpiryFor(iat, InviteExpiry.BootstrapTtlSeconds)
             };
             
             var json = System.Text.Json.JsonSerializer.Serialize(bootstrapInfo);
@@ -325,11 +237,11 @@ namespace FyteClub
         [Obsolete("Use GenerateNostrInviteCode instead")]
         public async Task<string> GenerateManualInviteCode(string syncshellId)
         {
-            SecureLogger.LogWarning("GenerateManualInviteCode is deprecated - use Nostr signaling instead");
+            FyteLog.Warn(LogModule.Syncshells, "GenerateManualInviteCode is deprecated - use Nostr signaling instead");
             return await GenerateNostrInviteCode(syncshellId);
         }
         
-        public Task<string> GenerateNostrInviteCode(string syncshellId, FyteClub.TURN.TurnServerManager? turnManager = null)
+        public Task<string> GenerateNostrInviteCode(string syncshellId)
         {
             return Task.Run(async () =>
             {
@@ -339,16 +251,16 @@ namespace FyteClub
                     if (syncshell == null) return string.Empty;
                     
                     // Create host WebRTC connection if not exists OR if existing connection is dead
-                    if (!_webrtcConnections.ContainsKey(syncshellId) || !IsConnectionHealthy(syncshellId))
+                    if (_connections.GetPrimary(syncshellId) == null || !_connections.IsHealthyPrimary(syncshellId))
                     {
                         // Only create new connection if no healthy connection exists
-                        if (IsConnectionHealthy(syncshellId))
+                        if (_connections.IsHealthyPrimary(syncshellId))
                         {
-                            SecureLogger.LogInfo("✅ Reusing existing healthy connection for syncshell {0}", syncshellId);
+                            FyteLog.Info(LogModule.Syncshells, " Reusing existing healthy connection for syncshell {0}", syncshellId);
                         }
                         else
                         {
-                            SecureLogger.LogInfo("🔧 Creating new host connection for syncshell {0}", syncshellId);
+                            FyteLog.Info(LogModule.Syncshells, " Creating new host connection for syncshell {0}", syncshellId);
                             var hostConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
                             await hostConnection.InitializeAsync();
                         
@@ -361,7 +273,7 @@ namespace FyteClub
                                 HandleModData(syncshellId, data);
                             };
                             hostConnection.OnConnected += () => {
-                                SecureLogger.LogInfo("Host P2P connection established for syncshell {0}", syncshellId);
+                                FyteLog.Info(LogModule.Syncshells, "Host P2P connection established for syncshell {0}", syncshellId);
                                 
                                 // Notify P2P orchestrator of new peer connection
                                 OnPeerConnected?.Invoke(syncshellId, async (data) => {
@@ -369,15 +281,15 @@ namespace FyteClub
                                 });
                             };
                             ApplyReconnectionMetadata(syncshellId, hostConnection, syncshell?.EncryptionKey);
-                            
-                            ReplaceWebRTCConnection(syncshellId, hostConnection);
+
+                            _connections.ReplacePrimary(syncshellId, hostConnection);
                         }
                     }
-                
-                // Generate Nostr offer URI using RobustWebRTCConnection
-                if (_webrtcConnections[syncshellId] is WebRTC.RobustWebRTCConnection robustConnection)
+
+                // Generate Nostr offer URI using WebRTCConnection
+                if (_connections.GetPrimary(syncshellId) is Networking.WebRTCConnection robustConnection)
                 {
-                    var nostrOfferUri = await robustConnection.CreateOfferAsync();
+                    var nostrOfferUri = await robustConnection.CreateOfferAsync(ResolveGroupKeyBytes(syncshellId));
                     
                     // Extract UUID from the generated offer URI
                     var uuid = "";
@@ -392,39 +304,32 @@ namespace FyteClub
                         uuid = Guid.NewGuid().ToString();
                     }
                     
-                    // Get TURN server info from host if available
-                    object? turnServerInfo = null;
-                    if (turnManager?.IsHostingEnabled == true && turnManager.LocalServer != null)
-                    {
-                        turnServerInfo = new {
-                            url = $"turn:{turnManager.LocalServer.ExternalIP}:{turnManager.LocalServer.Port}",
-                            username = turnManager.LocalServer.Username,
-                            password = turnManager.LocalServer.Password
-                        };
-                        SecureLogger.LogInfo("Including TURN server info in invite: {0}:{1}", turnManager.LocalServer.ExternalIP, turnManager.LocalServer.Port);
-                    }
-                    
-                    // Create Nostr invite with the UUID, relays, and TURN server info
+                    // Create Nostr invite with the UUID and relays
+                    var iat = InviteExpiry.Now();
                     var nostrInvite = new {
                         type = "nostr_invite",
                         syncshellId = syncshellId,
                         name = syncshell.Name,
                         key = syncshell.EncryptionKey,
+                        hostPeerId = syncshell.HostPeerId,
+                        keyEpoch = syncshell.KeyEpoch,
+                        epochKeyBase64 = syncshell.EpochKeyBase64,
                         uuid = uuid,
-                        relays = new[] { 
-                            "wss://relay.damus.io", 
-                            "wss://nos.lol", 
+                        iat = iat,
+                        exp = InviteExpiry.ExpiryFor(iat, InviteExpiry.NostrInviteTtlSeconds),
+                        relays = new[] {
+                            "wss://relay.damus.io",
+                            "wss://nos.lol",
                             "wss://nostr-pub.wellorder.net",
                             "wss://relay.snort.social",
                             "wss://nostr.wine"
-                        },
-                        turnServer = turnServerInfo
+                        }
                     };
-                    
+
                     var json = System.Text.Json.JsonSerializer.Serialize(nostrInvite);
                     var inviteCode = "NOSTR:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json));
-                    
-                    SecureLogger.LogInfo("Generated Nostr invite code with UUID {0} and TURN server for syncshell {1}", uuid, syncshellId);
+
+                    FyteLog.Info(LogModule.Syncshells, "Generated Nostr invite code with UUID {0} for syncshell {1}", uuid, syncshellId);
                     return inviteCode;
                 }
                 
@@ -432,7 +337,7 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    SecureLogger.LogError("Failed to generate Nostr invite code: {0}", ex.Message);
+                    FyteLog.Error(LogModule.Syncshells, "Failed to generate Nostr invite code: {0}", ex.Message);
                     return string.Empty;
                 }
             });
@@ -442,15 +347,21 @@ namespace FyteClub
         {
             try
             {
-                // CRITICAL: Check if we already have a healthy connection for this peer
-                var peerKey = syncshellId + "_" + peerAddress;
-                if (IsConnectionHealthy(peerKey))
+                if (IsMemberRemoved(syncshellId, peerAddress))
                 {
-                    SecureLogger.LogWarning("⚠️ PREVENTED: Already have healthy connection to peer {0} in {1}, skipping duplicate creation", peerAddress, syncshellId);
+                    FyteLog.Warn(LogModule.Syncshells, "Refusing connection to {0} in {1} - removed via key rotation", peerAddress, syncshellId);
+                    return false;
+                }
+
+                // CRITICAL: Check if we already have a healthy connection for this peer
+                var peerKey = Networking.ConnectionKey.ForPeer(syncshellId, peerAddress);
+                if (_connections.IsHealthy(peerKey))
+                {
+                    FyteLog.Warn(LogModule.Syncshells, " PREVENTED: Already have healthy connection to peer {0} in {1}, skipping duplicate creation", peerAddress, syncshellId);
                     return true;
                 }
                 
-                SecureLogger.LogInfo("🔧 Creating new connection to peer {0} in {1}", peerAddress, syncshellId);
+                FyteLog.Info(LogModule.Syncshells, " Creating new connection to peer {0} in {1}", peerAddress, syncshellId);
                 var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                 await connection.InitializeAsync();
                 ApplyReconnectionMetadata(syncshellId, connection);
@@ -463,8 +374,8 @@ namespace FyteClub
                     HandleModData(syncshellId, data);
                 };
                 connection.OnConnected += () => {
-                    Console.WriteLine($"WebRTC connected to peer {peerAddress} in {syncshellId}");
-                    SecureLogger.LogInfo("P2P connection established with peer in syncshell {0}", syncshellId);
+                    FyteLog.Debug(LogModule.Syncshells, $"WebRTC connected to peer {peerAddress} in {syncshellId}");
+                    FyteLog.Info(LogModule.Syncshells, "P2P connection established with peer in syncshell {0}", syncshellId);
                     
                     // Notify P2P orchestrator of new peer connection
                     OnPeerConnected?.Invoke(syncshellId, async (data) => {
@@ -472,24 +383,24 @@ namespace FyteClub
                     });
                 };
                 connection.OnDisconnected += () => {
-                    Console.WriteLine($"WebRTC disconnected from peer {peerAddress} in {syncshellId}");
-                    
+                    FyteLog.Debug(LogModule.Syncshells, $"WebRTC disconnected from peer {peerAddress} in {syncshellId}");
+
                     // Notify P2P orchestrator of peer disconnection
                     OnPeerDisconnected?.Invoke(syncshellId);
-                    
-                    _webrtcConnections.Remove(syncshellId);
+
+                    _connections.Remove(peerKey);
                 };
-                
+
                 // For proximity-based P2P, we'll use a simplified connection approach
                 // In a real implementation, this would use STUN/TURN servers for NAT traversal
-                var offer = await connection.CreateOfferAsync();
-                
+                var offer = await connection.CreateOfferAsync(ResolveGroupKeyBytes(syncshellId));
+
                 // Store the connection immediately for proximity-based connections
-                ReplaceWebRTCConnection(syncshellId + "_" + peerAddress, connection);
-                _pendingConnections[syncshellId + "_" + peerAddress] = DateTime.UtcNow;
+                _connections.Replace(peerKey, connection);
+                _pendingConnections[peerKey] = DateTime.UtcNow;
                 
-                Console.WriteLine($"Initiated P2P connection to {peerAddress} in {syncshellId}");
-                SecureLogger.LogInfo("Initiated P2P connection to peer {0} in syncshell {1}", peerAddress, syncshellId);
+                FyteLog.Debug(LogModule.Syncshells, $"Initiated P2P connection to {peerAddress} in {syncshellId}");
+                FyteLog.Info(LogModule.Syncshells, "Initiated P2P connection to peer {0} in syncshell {1}", peerAddress, syncshellId);
                 
                 // Real WebRTC connection will trigger OnConnected when ready
                 
@@ -497,8 +408,8 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to connect to peer: {ex.Message}");
-                SecureLogger.LogError("Failed to connect to peer {0}: {1}", peerAddress, ex.Message);
+                FyteLog.Error(LogModule.Syncshells, $"Failed to connect to peer: {ex.Message}");
+                FyteLog.Error(LogModule.Syncshells, "Failed to connect to peer {0}: {1}", peerAddress, ex.Message);
                 return false;
             }
         }
@@ -508,9 +419,9 @@ namespace FyteClub
             try
             {
                 // CRITICAL: Check if we already have a healthy connection before creating a new one
-                if (IsConnectionHealthy(syncshellId))
+                if (_connections.IsHealthyPrimary(syncshellId))
                 {
-                    SecureLogger.LogWarning("⚠️ PREVENTED: Attempted to accept connection for {0} but healthy connection already exists! Reusing existing connection.", syncshellId);
+                    FyteLog.Warn(LogModule.Syncshells, " PREVENTED: Attempted to accept connection for {0} but healthy connection already exists! Reusing existing connection.", syncshellId);
                     return true; // Connection already exists and is healthy
                 }
                 
@@ -526,7 +437,7 @@ namespace FyteClub
                     HandleModData(syncshellId, data);
                 };
                 connection.OnConnected += () => {
-                    Console.WriteLine($"WebRTC accepted connection in {syncshellId}");
+                    FyteLog.Debug(LogModule.Syncshells, $"WebRTC accepted connection in {syncshellId}");
                     
                     // Notify P2P orchestrator of new peer connection
                     OnPeerConnected?.Invoke(syncshellId, async (data) => {
@@ -534,7 +445,7 @@ namespace FyteClub
                     });
                 };
                 connection.OnDisconnected += () => {
-                    Console.WriteLine($"WebRTC connection closed for {syncshellId}");
+                    FyteLog.Debug(LogModule.Syncshells, $"WebRTC connection closed for {syncshellId}");
                     
                     // Notify P2P orchestrator of peer disconnection
                     OnPeerDisconnected?.Invoke(syncshellId);
@@ -543,14 +454,14 @@ namespace FyteClub
                 var offer = gistId;
                 if (string.IsNullOrEmpty(offer)) return false;
                 
-                var answer = await connection.CreateAnswerAsync(offer);
+                var answer = await connection.CreateAnswerAsync(offer, ResolveGroupKeyBytes(syncshellId));
                 // Direct P2P connection - no signaling service needed
                 var answerGistId = "direct_p2p_" + Guid.NewGuid().ToString("N")[..8];
                 
                 if (!string.IsNullOrEmpty(answerGistId))
                 {
-                    ReplaceWebRTCConnection(syncshellId, connection);
-                    Console.WriteLine($"Published WebRTC answer for {syncshellId}: {answerGistId}");
+                    _connections.ReplacePrimary(syncshellId, connection);
+                    FyteLog.Debug(LogModule.Syncshells, $"Published WebRTC answer for {syncshellId}: {answerGistId}");
                     return true;
                 }
                 
@@ -559,7 +470,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to accept connection: {ex.Message}");
+                FyteLog.Error(LogModule.Syncshells, $"Failed to accept connection: {ex.Message}");
                 return false;
             }
         }
@@ -568,7 +479,7 @@ namespace FyteClub
         [Obsolete("Use Nostr signaling instead of manual answer codes")]
         public Task<bool> ProcessAnswerCode(string answerCode)
         {
-            SecureLogger.LogWarning("ProcessAnswerCode is deprecated - Nostr signaling handles WebRTC exchange automatically");
+            FyteLog.Warn(LogModule.Syncshells, "ProcessAnswerCode is deprecated - Nostr signaling handles WebRTC exchange automatically");
             return Task.FromResult(false);
         }
 
@@ -577,7 +488,7 @@ namespace FyteClub
             var tasks = new List<Task>();
             
             // Try exact match first
-            if (_webrtcConnections.TryGetValue(syncshellId, out var exactConnection))
+            if (_connections.GetPrimary(syncshellId) is { } exactConnection)
             {
                 try
                 {
@@ -601,75 +512,67 @@ namespace FyteClub
                 }
                 catch (Exception ex)
                 {
-                    ModularLogger.LogDebug(LogModule.WebRTC, "Failed to send data to exact match {0}: {1}", syncshellId, ex.Message);
+                    FyteLog.Debug(LogModule.WebRTC, "Failed to send data to exact match {0}: {1}", syncshellId, ex.Message);
                 }
             }
             
-            // Fallback to pattern matching
-            foreach (var kvp in _webrtcConnections)
+            // Fallback: try every connection registered for this syncshell (any role)
+            foreach (var connection in _connections.GetAllForSyncshell(syncshellId))
             {
-                if (kvp.Key.StartsWith(syncshellId) || kvp.Key.Contains(syncshellId))
+                try
                 {
-                    var connection = kvp.Value;
-                    
-                    try
+                    // Check if connection is actually ready before sending
+                    if (!connection.IsConnected)
                     {
-                        // Check if connection is actually ready before sending
-                        if (!connection.IsConnected)
+                        // Wait up to 2 seconds for connection to become ready
+                        for (int i = 0; i < 20; i++)
                         {
-                            // Wait up to 2 seconds for connection to become ready
-                            for (int i = 0; i < 20; i++)
-                            {
-                                await Task.Delay(100);
-                                if (connection.IsConnected) break;
-                            }
-                        }
-                        
-                        if (connection.IsConnected)
-                        {
-                            var data = Encoding.UTF8.GetBytes(modData);
-                            await connection.SendDataAsync(data);
-                            return; // Success, no need to continue
+                            await Task.Delay(100);
+                            if (connection.IsConnected) break;
                         }
                     }
-                    catch (Exception ex)
+
+                    if (connection.IsConnected)
                     {
-                        ModularLogger.LogDebug(LogModule.WebRTC, "Failed to send data to {0}: {1}", kvp.Key, ex.Message);
+                        var data = Encoding.UTF8.GetBytes(modData);
+                        await connection.SendDataAsync(data);
+                        return; // Success, no need to continue
                     }
                 }
+                catch (Exception ex)
+                {
+                    FyteLog.Debug(LogModule.WebRTC, "Failed to send data to {0}: {1}", syncshellId, ex.Message);
+                }
             }
-            
-            if (_webrtcConnections.Count == 0)
+
+            if (_connections.Count == 0)
             {
-                ModularLogger.LogDebug(LogModule.WebRTC, "No WebRTC connections available for {0}", syncshellId);
+                FyteLog.Debug(LogModule.WebRTC, "No WebRTC connections available for {0}", syncshellId);
             }
         }
 
         private void CheckConnectionTimeouts(object? state)
         {
             var now = DateTime.UtcNow;
-            var timedOut = new List<string>();
-            
-            foreach (var (syncshellId, startTime) in _pendingConnections)
+            var timedOut = new List<Networking.ConnectionKey>();
+
+            foreach (var (key, startTime) in _pendingConnections)
             {
-                if (!string.IsNullOrEmpty(syncshellId) && (now - startTime).TotalSeconds > CONNECTION_TIMEOUT_SECONDS)
+                if (!string.IsNullOrEmpty(key.SyncshellId) && (now - startTime).TotalSeconds > CONNECTION_TIMEOUT_SECONDS)
                 {
-                    timedOut.Add(syncshellId);
+                    timedOut.Add(key);
                 }
             }
-            
-            foreach (var syncshellId in timedOut)
+
+            foreach (var key in timedOut)
             {
-                if (!string.IsNullOrEmpty(syncshellId))
+                FyteLog.Warn(LogModule.Syncshells, "Connection timeout for syncshell");
+                _pendingConnections.Remove(key);
+
+                if (_connections.Get(key) is { } connection)
                 {
-                    SecureLogger.LogWarning("Connection timeout for syncshell");
-                    _pendingConnections.Remove(syncshellId);
-                    
-                    if (_webrtcConnections.TryGetValue(syncshellId, out var connection))
-                    {
-                        connection.Dispose();
-                        _webrtcConnections.Remove(syncshellId);
-                    }
+                    connection.Dispose();
+                    _connections.Remove(key);
                 }
             }
         }
@@ -686,7 +589,7 @@ namespace FyteClub
                     
                     if (_processedMessageHashes.Contains(hashString))
                     {
-                        SecureLogger.LogDebug("🔄 Duplicate message detected in SyncshellManager, skipping: {0}", hashString);
+                        FyteLog.Debug(LogModule.Syncshells, " Duplicate message detected in SyncshellManager, skipping: {0}", hashString);
                         return;
                     }
                     
@@ -706,12 +609,12 @@ namespace FyteClub
                 if (data.Length >= 4 && data[0] == 'F' && data[1] == 'C' && data[2] == 'H' && data[3] == 'K')
                 {
                     isBinaryData = true;
-                    ModularLogger.LogDebug(LogModule.Syncshells, "HandleModData: Detected FCHK binary chunk, skipping JSON parsing");
+                    FyteLog.Debug(LogModule.Syncshells, "HandleModData: Detected FCHK binary chunk, skipping JSON parsing");
                 }
                 
                 if (isBinaryData)
                 {
-                    ModularLogger.LogDebug(LogModule.Syncshells, "HandleModData: Detected binary P2P protocol data, skipping JSON parsing");
+                    FyteLog.Debug(LogModule.Syncshells, "HandleModData: Detected binary P2P protocol data, skipping JSON parsing");
                     // Binary data is handled by P2P orchestrator via OnP2PMessageReceived event
                     return;
                 }
@@ -726,7 +629,7 @@ namespace FyteClub
                     var preview = data.Length >= 8 
                         ? $"{data[0]:X2} {data[1]:X2} {data[2]:X2} {data[3]:X2} {data[4]:X2} {data[5]:X2} {data[6]:X2} {data[7]:X2}"
                         : string.Join(" ", data.Take(data.Length).Select(b => $"{b:X2}"));
-                    SecureLogger.LogDebug("HandleModData: Data doesn't look like JSON (first char: '{0}', hex: {1}), skipping", 
+                    FyteLog.Debug(LogModule.Syncshells, "HandleModData: Data doesn't look like JSON (first char: '{0}', hex: {1}), skipping", 
                         modData.Length > 0 ? modData[0].ToString() : "empty", preview);
                     return;
                 }
@@ -735,39 +638,30 @@ namespace FyteClub
                 if (parsedData != null)
                 {
                     // Handle different message types
-                    if (parsedData.TryGetValue("type", out var typeObj) && typeObj?.ToString() == "member_list_request")
-                    {
-                        HandleMemberListRequest(syncshellId, parsedData);
-                        return;
-                    }
-                    
-                    if (parsedData.TryGetValue("type", out var typeObj2) && typeObj2?.ToString() == "member_list_response")
-                    {
-                        HandleMemberListResponse(syncshellId, parsedData);
-                        return;
-                    }
-                    
                     if (parsedData.TryGetValue("type", out var typeObj3) && typeObj3?.ToString() == "phonebook_request")
                     {
-                        Console.WriteLine($"HandleModData: Processing phonebook_request");
+                        FyteLog.Debug(LogModule.Syncshells, $"HandleModData: Processing phonebook_request");
                         HandlePhonebookRequest(syncshellId, parsedData);
                         return;
                     }
-                    
+
                     if (parsedData.TryGetValue("type", out var typeObj4) && typeObj4?.ToString() == "mod_sync_request")
                     {
-                        Console.WriteLine($"HandleModData: Processing mod_sync_request");
+                        FyteLog.Debug(LogModule.Syncshells, $"HandleModData: Processing mod_sync_request");
                         HandleModSyncRequest(syncshellId, parsedData);
                         return;
                     }
-                    
-                    if (parsedData.TryGetValue("type", out var typeObj5) && typeObj5?.ToString() == "client_ready")
-                    {
-                        Console.WriteLine($"HandleModData: Processing client_ready");
-                        HandleClientReady(syncshellId, parsedData);
-                        return;
-                    }
-                    
+
+                    // "client_ready" deliberately not handled here — P2PModProtocol now
+                    // deserializes it correctly (see the type-discriminator normalization fix)
+                    // and P2PModSyncOrchestrator.HandleSyncComplete handles it; both
+                    // sides were previously no-ops so this consolidation is side-effect-free.
+                    // "member_list_request"/"member_list_response" are consolidated the same way
+                    // as of docs/PLAN.md Phase 3 item 7: P2PModSyncOrchestrator.
+                    // HandleMemberListRequest now ports the phonebook-refresh + AddToPhonebook
+                    // registration side effect this legacy path used to be the only one to do,
+                    // verified via MemberListPhonebookRegistrationTests.cs.
+
                     // Handle player mod data - store in deduped cache AND fire event
                     if (parsedData.TryGetValue("playerId", out var playerIdObj) || parsedData.TryGetValue("playerName", out playerIdObj))
                     {
@@ -784,28 +678,28 @@ namespace FyteClub
                                 
                                 if (playerId == localPlayerName || playerFirstName == localFirstName)
                                 {
-                                    SecureLogger.LogInfo("Skipping own mod data for player: {0} (local: {1})", playerId, localPlayerName);
+                                    FyteLog.Info(LogModule.Syncshells, "Skipping own mod data for player: {0} (local: {1})", playerId, localPlayerName);
                                     return;
                                 }
                             }
                             
-                            SecureLogger.LogInfo("Processing mod data for player: {0} (local player: {1})", playerId, localPlayerName ?? "unknown");
+                            FyteLog.Info(LogModule.Syncshells, "Processing mod data for player: {0} (local player: {1})", playerId, localPlayerName ?? "unknown");
                             
                             StoreReceivedModDataInCache(playerId, parsedData);
-                            SecureLogger.LogInfo("Stored P2P mod data in cache for player: {0}", playerId);
+                            FyteLog.Info(LogModule.Syncshells, "Stored P2P mod data in cache for player: {0}", playerId);
                             
                             // Fire event to trigger ProcessReceivedModData in plugin
                             var jsonElement = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(modData);
                             OnModDataReceived?.Invoke(playerId, jsonElement);
-                            SecureLogger.LogInfo("🎯 FIRED OnModDataReceived event for player: {0}", playerId);
+                            FyteLog.Info(LogModule.Syncshells, " FIRED OnModDataReceived event for player: {0}", playerId);
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to handle received mod data: {0}", ex.Message);
-                Console.WriteLine($"HandleModData: Error processing data: {ex.Message}");
+                FyteLog.Error(LogModule.Syncshells, "Failed to handle received mod data: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, $"HandleModData: Error processing data: {ex.Message}");
             }
         }
         
@@ -827,118 +721,10 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to store received mod data in cache: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to store received mod data in cache: {0}", ex.Message);
             }
         }
         
-        private void HandleMemberListRequest(string syncshellId, Dictionary<string, object> requestData)
-        {
-            try
-            {
-                SecureLogger.LogInfo("📞 Host handling member list request for syncshell {0}", syncshellId);
-                
-                // Extract requesting player name FIRST
-                string? playerName = null;
-                if (requestData.TryGetValue("requestedBy", out var requestedByObj))
-                {
-                    var fullPlayerName = requestedByObj.ToString();
-                    if (!string.IsNullOrEmpty(fullPlayerName))
-                    {
-                        playerName = fullPlayerName.Split('@')[0].Trim();
-                    }
-                }
-                
-                // CRITICAL: Add player to phonebook BEFORE generating response
-                if (!string.IsNullOrEmpty(playerName) && playerName != "Unknown Player")
-                {
-                    AddToPhonebook(playerName, syncshellId);
-                }
-                
-                if (_sessions.TryGetValue(syncshellId, out var session) && session.Phonebook != null)
-                {
-                    
-                    // Get member list from phonebook (now includes the requesting player)
-                    var phonebookMembers = session.Phonebook.GetAllMembers()
-                        .Select(entry => entry.PlayerName ?? "Unknown")
-                        .Where(name => !string.IsNullOrEmpty(name) && name != "Unknown")
-                        .Distinct()
-                        .ToList();
-                    
-                    // Update syncshell members from phonebook
-                    var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
-                    if (syncshell != null)
-                    {
-                        syncshell.Members = new List<string> { "You (Host)" };
-                        syncshell.Members.AddRange(phonebookMembers.Where(m => !m.Contains("Host")));
-                    }
-                    
-                    // Send phonebook-based member list
-                    var responseData = new
-                    {
-                        type = 11, // P2PModMessageType.MemberListResponse
-                        syncshellId = syncshellId,
-                        hostName = "You (Host)",
-                        members = phonebookMembers,
-                        isHost = true,
-                        messageId = Guid.NewGuid().ToString(),
-                        timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                    };
-                    
-                    var json = System.Text.Json.JsonSerializer.Serialize(responseData);
-                    _ = Task.Run(async () => { try { await SendModData(syncshellId, json); } catch { } });
-                    
-                    SecureLogger.LogInfo("Host sent phonebook-based member list: {0} members", phonebookMembers.Count);
-                }
-            }
-            catch (Exception ex)
-            {
-                SecureLogger.LogError("Failed to handle member list request: {0}", ex.Message);
-            }
-        }
-        
-        private void HandleMemberListResponse(string syncshellId, Dictionary<string, object> responseData)
-        {
-            try
-            {
-                SecureLogger.LogInfo("Handling member list response for syncshell {0}", syncshellId);
-                
-                if (responseData.TryGetValue("members", out var membersObj))
-                {
-                    var membersJson = System.Text.Json.JsonSerializer.Serialize(membersObj);
-                    var members = System.Text.Json.JsonSerializer.Deserialize<List<string>>(membersJson);
-                    
-                    if (members != null && _sessions.TryGetValue(syncshellId, out var session) && session.Phonebook != null)
-                    {
-                        // Update local phonebook with received member list
-                        foreach (var member in members.Where(m => !string.IsNullOrEmpty(m) && m != "Unknown Player" && !m.Contains("Host")))
-                        {
-                            AddToPhonebook(member, syncshellId);
-                        }
-                        
-                        // Update UI member list from phonebook
-                        var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
-                        if (syncshell != null)
-                        {
-                            var phonebookMembers = session.Phonebook.GetAllMembers()
-                                .Select(entry => entry.PlayerName ?? "Unknown")
-                                .Where(name => !string.IsNullOrEmpty(name) && name != "Unknown")
-                                .Distinct()
-                                .ToList();
-                            
-                            syncshell.Members = new List<string> { "You" };
-                            syncshell.Members.AddRange(phonebookMembers);
-                            
-                            SecureLogger.LogInfo("Updated phonebook and member list for syncshell {0}: {1} members", syncshellId, syncshell.Members.Count);
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                SecureLogger.LogError("Failed to handle member list response: {0}", ex.Message);
-            }
-        }
-
         private readonly List<SyncshellInfo> _syncshells = new();
         
         public async Task<JoinResult> JoinSyncshellByInviteCode(string inviteCode)
@@ -957,147 +743,17 @@ namespace FyteClub
                     return await JoinViaNostrInvite(inviteCode.Substring(6));
                 }
                 
-                // Legacy manual invite code (first joiner)
-                var parts = inviteCode.Split(':', 4);
-                if (parts.Length < 2)
-                {
-                    SecureLogger.LogError("Invalid invite code format");
-                    return JoinResult.InvalidCode;
-                }
-                
-                var name = parts[0];
-                var password = parts[1];
-                var offerBase64 = parts.Length > 2 ? parts[2] : null;
-                var hostBase64 = parts.Length > 3 ? parts[3] : null;
-                
-                // Check if already in this syncshell
-                var identity = new SyncshellIdentity(name, password);
-                var syncshellId = identity.GetSyncshellHash();
-                
-                if (_syncshells.Any(s => s.Id == syncshellId))
-                {
-                    SecureLogger.LogInfo("Already in syncshell '{0}' with ID '{1}'", name, syncshellId);
-                    return JoinResult.AlreadyJoined;
-                }
-                
-                var success = JoinSyncshell(name, password);
-                if (success)
-                {
-                    // Process host info from invite to bootstrap P2P
-                    if (!string.IsNullOrEmpty(hostBase64))
-                    {
-                        try
-                        {
-                            var hostJson = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(hostBase64));
-                            var hostData = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(hostJson);
-                            if (hostData?.TryGetValue("host", out var hostObj) == true)
-                            {
-                                // Bootstrap: Add host to member list so proximity detection works
-                                var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
-                                if (syncshell != null)
-                                {
-                                    if (syncshell.Members == null) syncshell.Members = new List<string>();
-                                    if (!syncshell.Members.Contains("Host")) syncshell.Members.Add("Host");
-                                    SecureLogger.LogInfo("Added host to member list for P2P bootstrap");
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            SecureLogger.LogError("Failed to process host info from invite: {0}", ex.Message);
-                        }
-                    }
-                    
-                    // Process WebRTC offer from invite and wait for answer code
-                    Console.WriteLine($"Checking offerBase64: {!string.IsNullOrEmpty(offerBase64)}");
-                    if (!string.IsNullOrEmpty(offerBase64))
-                    {
-                        try
-                        {
-                            Console.WriteLine($"Processing WebRTC offer for syncshell {syncshellId}");
-                            
-                            // CRITICAL: Check if we already have a healthy connection before creating a new one
-                            if (IsConnectionHealthy(syncshellId))
-                            {
-                                SecureLogger.LogWarning("⚠️ PREVENTED: Attempted to create new connection for {0} but healthy connection already exists! Skipping offer processing.", syncshellId);
-                                return JoinResult.Success; // Connection already exists and is healthy
-                            }
-                            
-                            // Create connection and process offer
-                            var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
-                            await connection.InitializeAsync();
-                            ApplyReconnectionMetadata(syncshellId, connection);
-                            
-                            connection.OnDataReceived += (data, channelIndex) => {
-                                // Notify P2P orchestrator first for new protocol messages
-                                OnP2PMessageReceived?.Invoke(syncshellId, data);
-                                
-                                // Then handle with legacy system
-                                HandleModData(syncshellId, data);
-                            };
-                            connection.OnConnected += () => {
-                                SecureLogger.LogInfo("WebRTC connected to host for syncshell {0}", syncshellId);
-                                
-                                // Notify P2P orchestrator of new peer connection
-                                OnPeerConnected?.Invoke(syncshellId, async (data) => {
-                                    await connection.SendDataAsync(data);
-                                });
-                                
-                                // CRITICAL: Automatically request member list sync when connection is established
-                                _ = Task.Run(async () => {
-                                    await Task.Delay(1000); // Brief delay to ensure connection is stable
-                                    await RequestMemberListSync(syncshellId, GetLocalPlayerName());
-                                });
-                            };
-                            
-                            // Subscribe to answer code generation and process invite
-                            if (connection is WebRTC.RobustWebRTCConnection robustConnection)
-                            {
-                                robustConnection.OnAnswerCodeGenerated += (answerCode) => {
-                                    _lastAnswerCode = answerCode;
-                                    Console.WriteLine($"Answer code stored via callback: {!string.IsNullOrEmpty(_lastAnswerCode)}");
-                                };
-                                robustConnection.ProcessInviteWithIce(offerBase64);
-                                Console.WriteLine($"Processed invite with ICE for robust connection");
-                                
-                                // Extract offer SDP from invite code and create answer
-                                var inviteJson = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(offerBase64));
-                                var inviteData = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(inviteJson);
-                                var offerSdp = inviteData.GetProperty("offer").GetString() ?? "";
-                                
-                                var answer = await robustConnection.CreateAnswerAsync(offerSdp);
-                                Console.WriteLine($"Answer created for syncshell {syncshellId}");
-                            }
-                            else
-                            {
-                                Console.WriteLine($"Connection is not RobustWebRTCConnection: {connection.GetType().Name}");
-                                // Fallback for non-robust connections
-                                var offerSdp = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(offerBase64));
-                                var answer = await connection.CreateAnswerAsync(offerSdp);
-                            }
-                            Console.WriteLine($"Answer created for syncshell {syncshellId}");
-                            
-                            // Answer code will be generated via callback from CreateAnswerAsync
-                            Console.WriteLine($"Answer creation completed - callback should have been triggered");
-                            
-                            // Store connection
-                            ReplaceWebRTCConnection(syncshellId, connection);
-                            
-                            SecureLogger.LogInfo("WebRTC answer created for syncshell {0}", syncshellId);
-                        }
-                        catch (Exception ex)
-                        {
-                            SecureLogger.LogError("Failed to process WebRTC offer: {0}", ex.Message);
-                            Console.WriteLine($"Error processing WebRTC offer: {ex.Message}");
-                        }
-                    }
-                }
-                
-                return success ? JoinResult.Success : JoinResult.Failed;
+                // No live code generates any other invite format any more (GenerateManualInviteCode
+                // is [Obsolete] and forwards to Nostr; GenerateInviteWithIce has zero callers) - the
+                // colon-delimited manual format this used to parse had no expiry or integrity check
+                // of any kind, so it's rejected outright rather than kept as unreachable-by-design
+                // attack surface (2026-07-22 security review).
+                FyteLog.Error(LogModule.Syncshells, "Invalid invite code format");
+                return JoinResult.InvalidCode;
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to join syncshell by invite code: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to join syncshell by invite code: {0}", ex.Message);
                 return JoinResult.Failed;
             }
         }
@@ -1112,24 +768,46 @@ namespace FyteClub
                 var syncshellId = nostrInvite.GetProperty("syncshellId").GetString() ?? "";
                 var name = nostrInvite.GetProperty("name").GetString() ?? "";
                 var key = nostrInvite.GetProperty("key").GetString() ?? "";
+                var hostPeerId = nostrInvite.TryGetProperty("hostPeerId", out var hostPeerIdProp) ? hostPeerIdProp.GetString() ?? "" : "";
+                var keyEpoch = nostrInvite.TryGetProperty("keyEpoch", out var keyEpochProp) ? keyEpochProp.GetInt32() : 0;
+                var epochKeyBase64 = nostrInvite.TryGetProperty("epochKeyBase64", out var epochKeyProp) ? epochKeyProp.GetString() ?? "" : "";
                 var uuid = nostrInvite.GetProperty("uuid").GetString() ?? "";
                 var relays = nostrInvite.GetProperty("relays").EnumerateArray().Select(r => r.GetString() ?? "").Where(r => !string.IsNullOrEmpty(r)).ToArray();
                 
                 // Check if already in this syncshell
                 if (_syncshells.Any(s => s.Id == syncshellId))
                 {
-                    SecureLogger.LogInfo("Already in syncshell '{0}' with ID '{1}'", name, syncshellId);
+                    FyteLog.Info(LogModule.Syncshells, "Already in syncshell '{0}' with ID '{1}'", name, syncshellId);
                     return JoinResult.AlreadyJoined;
                 }
-                
+
+                if (!nostrInvite.TryGetProperty("exp", out var expProperty) || !expProperty.TryGetInt64(out var expiresAt))
+                {
+                    FyteLog.Error(LogModule.Syncshells, "Nostr invite missing expiry field - rejecting");
+                    return JoinResult.InvalidCode;
+                }
+                if (InviteExpiry.IsExpired(expiresAt))
+                {
+                    FyteLog.Warn(LogModule.Syncshells, "Nostr invite for syncshell '{0}' has expired", name);
+                    return JoinResult.Expired;
+                }
+
                 // Join syncshell with correct name and key
                 var success = JoinSyncshell(name, key);
                 if (success)
                 {
-                    SecureLogger.LogInfo("Successfully joined syncshell '{0}' via Nostr invite", name);
-                    
+                    var joinedSyncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+                    if (joinedSyncshell != null)
+                    {
+                        joinedSyncshell.HostPeerId = hostPeerId;
+                        joinedSyncshell.KeyEpoch = keyEpoch;
+                        joinedSyncshell.EpochKeyBase64 = epochKeyBase64;
+                    }
+
+                    FyteLog.Info(LogModule.Syncshells, "Successfully joined syncshell '{0}' via Nostr invite", name);
+
                     // Extract TURN server info from invite if available
-                    var turnServers = new List<FyteClub.TURN.TurnServerInfo>();
+                    var turnServers = new List<FyteClub.Networking.TurnServerInfo>();
                     if (nostrInvite.TryGetProperty("turnServer", out var turnServerProperty) && turnServerProperty.ValueKind != System.Text.Json.JsonValueKind.Null)
                     {
                         var turnUrl = turnServerProperty.GetProperty("url").GetString() ?? "";
@@ -1138,29 +816,29 @@ namespace FyteClub
                         
                         if (!string.IsNullOrEmpty(turnUrl))
                         {
-                            turnServers.Add(new FyteClub.TURN.TurnServerInfo
+                            turnServers.Add(new FyteClub.Networking.TurnServerInfo
                             {
                                 Url = turnUrl,
                                 Username = turnUsername,
                                 Password = turnPassword
                             });
-                            SecureLogger.LogInfo("JOINER: Extracted TURN server from invite: {0}", turnUrl);
+                            FyteLog.Info(LogModule.Syncshells, "JOINER: Extracted TURN server from invite: {0}", turnUrl);
                         }
                     }
                     
                     // CRITICAL: Wire up mod data handler BEFORE creating connection
                     // This ensures we can process data received during bootstrap
-                    SecureLogger.LogInfo("[P2P] Pre-wiring mod data handler for immediate bootstrap processing");
+                    FyteLog.Info(LogModule.Syncshells, "[P2P] Pre-wiring mod data handler for immediate bootstrap processing");
                     
                     // Check if connection already exists and is healthy to prevent duplicates
-                    if (IsConnectionHealthy(syncshellId))
+                    if (_connections.IsHealthyPrimary(syncshellId))
                     {
-                        SecureLogger.LogWarning("⚠️ PREVENTED: WebRTC connection already exists and is healthy for syncshell {0}, skipping duplicate creation", syncshellId);
+                        FyteLog.Warn(LogModule.Syncshells, " PREVENTED: WebRTC connection already exists and is healthy for syncshell {0}, skipping duplicate creation", syncshellId);
                     }
                     else
                     {
                         // Create WebRTC connection and process Nostr offer
-                        SecureLogger.LogInfo("🔧 Creating new WebRTC connection for syncshell {0}", syncshellId);
+                        FyteLog.Info(LogModule.Syncshells, " Creating new WebRTC connection for syncshell {0}", syncshellId);
                         var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                         await connection.InitializeAsync();
                         ApplyReconnectionMetadata(syncshellId, connection, key);
@@ -1174,7 +852,7 @@ namespace FyteClub
                             HandleModData(syncshellId, data);
                         };
                         connection.OnConnected += () => {
-                            SecureLogger.LogInfo("Nostr P2P connection established for syncshell {0}", syncshellId);
+                            FyteLog.Info(LogModule.Syncshells, "Nostr P2P connection established for syncshell {0}", syncshellId);
                             
                             // Notify P2P orchestrator of new peer connection
                             OnPeerConnected?.Invoke(syncshellId, async (data) => {
@@ -1183,24 +861,24 @@ namespace FyteClub
                             
                             // CRITICAL: Automatically request member list sync when connection is established
                             // This tells the host that we've joined and gets us added to the member list
-                            _ = Task.Run(async () => {
+                            _ = FyteClub.Core.SafeTask.Run(async () => {
                                 await Task.Delay(1000); // Brief delay to ensure connection is stable
                                 await RequestMemberListSync(syncshellId, GetLocalPlayerName());
-                            });
+                            }, LogModule.Syncshells);
                         };
                         
                         // Store connection AFTER wiring up handlers
-                        ReplaceWebRTCConnection(syncshellId, connection);
+                        _connections.ReplacePrimary(syncshellId, connection);
                     }
-                    
-                    // Use RobustWebRTCConnection to handle Nostr signaling
-                    if (_webrtcConnections.TryGetValue(syncshellId, out var storedConnection) && storedConnection is WebRTC.RobustWebRTCConnection robustConnection)
+
+                    // Use WebRTCConnection to handle Nostr signaling
+                    if (_connections.GetPrimary(syncshellId) is Networking.WebRTCConnection robustConnection)
                     {
                         // Configure TURN servers from invite before creating answer
                         if (turnServers.Count > 0)
                         {
                             robustConnection.ConfigureTurnServers(turnServers);
-                            SecureLogger.LogInfo("JOINER: Configured {0} TURN servers from invite", turnServers.Count);
+                            FyteLog.Info(LogModule.Syncshells, "JOINER: Configured {0} TURN servers from invite", turnServers.Count);
                         }
                         
                         // Create nostr offer URI for the connection
@@ -1208,18 +886,18 @@ namespace FyteClub
                         var nostrOfferUri = $"nostr://offer?uuid={uuid}&relays={Uri.EscapeDataString(relayParam)}";
                         
                         // Process the offer URI - this will subscribe to Nostr and wait for offer
-                        var answer = await robustConnection.CreateAnswerAsync(nostrOfferUri);
-                        SecureLogger.LogInfo("Processed Nostr offer and created answer for syncshell {0}", syncshellId);
+                        var answer = await robustConnection.CreateAnswerAsync(nostrOfferUri, new SyncshellIdentity(name, key).EncryptionKey);
+                        FyteLog.Info(LogModule.Syncshells, "Processed Nostr offer and created answer for syncshell {0}", syncshellId);
                     }
                     
-                    SecureLogger.LogInfo("WebRTC connection established via Nostr signaling for syncshell {0}", syncshellId);
+                    FyteLog.Info(LogModule.Syncshells, "WebRTC connection established via Nostr signaling for syncshell {0}", syncshellId);
                 }
                 
                 return success ? JoinResult.Success : JoinResult.Failed;
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to join via Nostr invite: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to join via Nostr invite: {0}", ex.Message);
                 return JoinResult.Failed;
             }
         }
@@ -1234,20 +912,41 @@ namespace FyteClub
                 var name = bootstrapInfo.GetProperty("name").GetString() ?? "";
                 var key = bootstrapInfo.GetProperty("key").GetString() ?? "";
                 var syncshellId = bootstrapInfo.GetProperty("syncshellId").GetString() ?? "";
-                
+                var hostPeerId = bootstrapInfo.TryGetProperty("hostPeerId", out var hostPeerIdProp) ? hostPeerIdProp.GetString() ?? "" : "";
+                var keyEpoch = bootstrapInfo.TryGetProperty("keyEpoch", out var keyEpochProp) ? keyEpochProp.GetInt32() : 0;
+                var epochKeyBase64 = bootstrapInfo.TryGetProperty("epochKeyBase64", out var epochKeyProp) ? epochKeyProp.GetString() ?? "" : "";
+
+                if (!bootstrapInfo.TryGetProperty("exp", out var expProperty) || !expProperty.TryGetInt64(out var expiresAt))
+                {
+                    FyteLog.Error(LogModule.Syncshells, "Bootstrap code missing expiry field - rejecting");
+                    return JoinResult.InvalidCode;
+                }
+                if (InviteExpiry.IsExpired(expiresAt))
+                {
+                    FyteLog.Warn(LogModule.Syncshells, "Bootstrap code for syncshell {0} has expired", name);
+                    return JoinResult.Expired;
+                }
+
                 // Join syncshell directly
                 var success = JoinSyncshell(name, key);
                 if (success)
                 {
+                    var joinedSyncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+                    if (joinedSyncshell != null)
+                    {
+                        joinedSyncshell.HostPeerId = hostPeerId;
+                        joinedSyncshell.KeyEpoch = keyEpoch;
+                        joinedSyncshell.EpochKeyBase64 = epochKeyBase64;
+                    }
                     // Real mesh routing: discover existing peers and connect through them
                     var meshSuccess = await ConnectThroughMesh(syncshellId, name);
                     if (meshSuccess)
                     {
-                        SecureLogger.LogInfo("Joined syncshell via bootstrap mesh routing - connected through existing peers");
+                        FyteLog.Info(LogModule.Syncshells, "Joined syncshell via bootstrap mesh routing - connected through existing peers");
                     }
                     else
                     {
-                        SecureLogger.LogWarning("Bootstrap mesh routing failed - no existing peers found");
+                        FyteLog.Warn(LogModule.Syncshells, "Bootstrap mesh routing failed - no existing peers found");
                         return JoinResult.Failed;
                     }
                 }
@@ -1256,7 +955,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to join via bootstrap: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to join via bootstrap: {0}", ex.Message);
                 return JoinResult.Failed;
             }
         }
@@ -1270,29 +969,28 @@ namespace FyteClub
                 
                 // Check if any nearby players are already in this syncshell
                 // This uses the existing proximity detection system
-                foreach (var existingConnection in _webrtcConnections)
+                foreach (var existingConnection in _connections.GetAllForSyncshell(syncshellId).Where(c => c.IsConnected))
                 {
-                    if (existingConnection.Key.Contains(syncshellId) && existingConnection.Value.IsConnected)
                     {
                         // Found an existing peer in this syncshell
-                        SecureLogger.LogInfo("Found existing peer connection for mesh routing: {0}", existingConnection.Key);
-                        
+                        FyteLog.Info(LogModule.Syncshells, "Found existing peer connection for mesh routing in syncshell {0}", syncshellId);
+
                         // CRITICAL: Check if we already have a healthy connection before creating a new one
-                        var meshKey = syncshellId + "_mesh";
-                        if (IsConnectionHealthy(meshKey))
+                        var meshKey = Networking.ConnectionKey.Mesh(syncshellId);
+                        if (_connections.IsHealthy(meshKey))
                         {
-                            SecureLogger.LogWarning("⚠️ PREVENTED: Mesh connection already exists and is healthy for {0}, skipping duplicate creation", meshKey);
+                            FyteLog.Warn(LogModule.Syncshells, " PREVENTED: Mesh connection already exists and is healthy for {0}, skipping duplicate creation", meshKey);
                             return true;
                         }
                         
                         // Route through this existing peer
-                        SecureLogger.LogInfo("🔧 Creating new mesh connection for {0}", meshKey);
+                        FyteLog.Info(LogModule.Syncshells, " Creating new mesh connection for {0}", meshKey);
                         var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                         await connection.InitializeAsync();
                         ApplyReconnectionMetadata(syncshellId, connection);
                         
                         connection.OnDataReceived += (data, channelIndex) => {
-                            SecureLogger.LogInfo("📨📨📨 MESH CONNECTION received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
+                            FyteLog.Debug(LogModule.Syncshells, " MESH CONNECTION received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
                             
                             // Notify P2P orchestrator first for new protocol messages
                             OnP2PMessageReceived?.Invoke(syncshellId, data);
@@ -1301,7 +999,7 @@ namespace FyteClub
                             HandleModData(syncshellId, data);
                         };
                         connection.OnConnected += () => {
-                            SecureLogger.LogInfo("Mesh routing connection established for syncshell {0}", syncshellId);
+                            FyteLog.Info(LogModule.Syncshells, "Mesh routing connection established for syncshell {0}", syncshellId);
                             
                             // Notify P2P orchestrator of new peer connection
                             OnPeerConnected?.Invoke(syncshellId, async (data) => {
@@ -1309,13 +1007,13 @@ namespace FyteClub
                             });
                         };
                         connection.OnDisconnected += () => {
-                            SecureLogger.LogInfo("Mesh routing connection lost for syncshell {0}", syncshellId);
+                            FyteLog.Info(LogModule.Syncshells, "Mesh routing connection lost for syncshell {0}", syncshellId);
                             
                             // Notify P2P orchestrator of peer disconnection
                             OnPeerDisconnected?.Invoke(syncshellId);
                         };
                         
-                        ReplaceWebRTCConnection(syncshellId + "_mesh", connection);
+                        _connections.Replace(meshKey, connection);
                         
                         // Send mesh join request through existing peer
                         var meshJoinRequest = new {
@@ -1328,7 +1026,7 @@ namespace FyteClub
                         var requestJson = System.Text.Json.JsonSerializer.Serialize(meshJoinRequest);
                         var requestData = System.Text.Encoding.UTF8.GetBytes(requestJson);
                         
-                        await existingConnection.Value.SendDataAsync(requestData);
+                        await existingConnection.SendDataAsync(requestData);
                         
                         // Wait for mesh routing to complete
                         await Task.Delay(2000);
@@ -1340,32 +1038,32 @@ namespace FyteClub
                     }
                 }
                 
-                SecureLogger.LogWarning("No existing peers found for mesh routing in syncshell {0}", syncshellName);
+                FyteLog.Warn(LogModule.Syncshells, "No existing peers found for mesh routing in syncshell {0}", syncshellName);
                 return false;
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Mesh routing failed: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Mesh routing failed: {0}", ex.Message);
                 return false;
             }
         }
         
         public bool JoinSyncshell(string name, string masterPassword)
         {
-            Console.WriteLine($"[DEBUG] JoinSyncshell START - name: '{name}'");
-            SecureLogger.LogInfo("JoinSyncshell called with name: '{0}'", name);
+            FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] JoinSyncshell START - name: '{name}'");
+            FyteLog.Info(LogModule.Syncshells, "JoinSyncshell called with name: '{0}'", name);
             
             try
             {
-                Console.WriteLine($"[DEBUG] JoinSyncshell - creating identity");
+                FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] JoinSyncshell - creating identity");
                 // Use same ID generation as SyncshellIdentity.GetSyncshellHash()
                 var identity = new SyncshellIdentity(name, masterPassword);
-                Console.WriteLine($"[DEBUG] JoinSyncshell - identity created");
+                FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] JoinSyncshell - identity created");
                 
                 var syncshellId = identity.GetSyncshellHash();
-                Console.WriteLine($"[DEBUG] JoinSyncshell - syncshell ID: {syncshellId}");
+                FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] JoinSyncshell - syncshell ID: {syncshellId}");
                 
-                Console.WriteLine($"[DEBUG] JoinSyncshell - creating SyncshellInfo");
+                FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] JoinSyncshell - creating SyncshellInfo");
                 var syncshell = new SyncshellInfo
                 {
                     Id = syncshellId,
@@ -1375,27 +1073,27 @@ namespace FyteClub
                     IsActive = true,
                     Members = new List<string> { "You" }
                 };
-                Console.WriteLine($"[DEBUG] JoinSyncshell - SyncshellInfo created");
+                FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] JoinSyncshell - SyncshellInfo created");
                 
                 _syncshells.Add(syncshell);
-                Console.WriteLine($"[DEBUG] JoinSyncshell - added to list, total syncshells: {_syncshells.Count}");
+                FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] JoinSyncshell - added to list, total syncshells: {_syncshells.Count}");
                 
-                SecureLogger.LogInfo("Successfully joined syncshell '{0}' with ID '{1}'", name, syncshellId);
-                Console.WriteLine($"[DEBUG] JoinSyncshell SUCCESS - returning true");
+                FyteLog.Info(LogModule.Syncshells, "Successfully joined syncshell '{0}' with ID '{1}'", name, syncshellId);
+                FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] JoinSyncshell SUCCESS - returning true");
                 return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DEBUG] JoinSyncshell EXCEPTION: {ex.Message}");
-                Console.WriteLine($"[DEBUG] JoinSyncshell Stack trace: {ex.StackTrace}");
-                SecureLogger.LogError("Failed to join syncshell '{0}': {1}", name, ex.Message);
+                FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] JoinSyncshell EXCEPTION: {ex.Message}");
+                FyteLog.Debug(LogModule.Syncshells, $"[DEBUG] JoinSyncshell Stack trace: {ex.StackTrace}");
+                FyteLog.Error(LogModule.Syncshells, "Failed to join syncshell '{0}': {1}", name, ex.Message);
                 return false;
             }
         }
         
         public bool JoinSyncshellById(string syncshellId, string encryptionKey, string? syncshellName = null)
         {
-            SecureLogger.LogInfo("JoinSyncshellById called with ID: '{0}', Name: '{1}'", syncshellId, syncshellName ?? "Unknown");
+            FyteLog.Info(LogModule.Syncshells, "JoinSyncshellById called with ID: '{0}', Name: '{1}'", syncshellId, syncshellName ?? "Unknown");
             
             try
             {
@@ -1410,22 +1108,22 @@ namespace FyteClub
                 };
                 
                 _syncshells.Add(syncshell);
-                SecureLogger.LogInfo("Successfully joined syncshell by ID '{0}'", syncshellId);
+                FyteLog.Info(LogModule.Syncshells, "Successfully joined syncshell by ID '{0}'", syncshellId);
                 return true;
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to join syncshell by ID '{0}': {1}", syncshellId, ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to join syncshell by ID '{0}': {1}", syncshellId, ex.Message);
                 return false;
             }
         }
         
         public void RemoveSyncshell(string syncshellId)
         {
-            SecureLogger.LogInfo("RemoveSyncshell called with ID: '{0}'", syncshellId);
+            FyteLog.Info(LogModule.Syncshells, "RemoveSyncshell called with ID: '{0}'", syncshellId);
             
             var removed = _syncshells.RemoveAll(s => s.Id == syncshellId);
-            SecureLogger.LogInfo("Removed {0} syncshells with ID '{1}'", removed, syncshellId);
+            FyteLog.Info(LogModule.Syncshells, "Removed {0} syncshells with ID '{1}'", removed, syncshellId);
         }
         
         public void ClearSyncshellMembers(string syncshellId)
@@ -1435,7 +1133,7 @@ namespace FyteClub
             {
                 var oldCount = syncshell.Members?.Count ?? 0;
                 syncshell.Members = syncshell.IsOwner ? new List<string> { "You (Host)" } : new List<string> { "You" };
-                SecureLogger.LogInfo("Cleared member list for syncshell {0}: {1} -> {2} members", syncshellId, oldCount, syncshell.Members.Count);
+                FyteLog.Info(LogModule.Syncshells, "Cleared member list for syncshell {0}: {1} -> {2} members", syncshellId, oldCount, syncshell.Members.Count);
             }
         }
         
@@ -1472,7 +1170,7 @@ namespace FyteClub
                 
                 if (originalCount != syncshell.Members.Count)
                 {
-                    SecureLogger.LogInfo("Cleaned up member list for syncshell {0}: {1} -> {2} members", syncshellId, originalCount, syncshell.Members.Count);
+                    FyteLog.Info(LogModule.Syncshells, "Cleaned up member list for syncshell {0}: {1} -> {2} members", syncshellId, originalCount, syncshell.Members.Count);
                 }
             }
         }
@@ -1482,9 +1180,9 @@ namespace FyteClub
             return new List<SyncshellInfo>(_syncshells);
         }
         
-        public IWebRTCConnection? GetWebRTCConnection(string syncshellId)
+        public Networking.IWebRTCConnection? GetWebRTCConnection(string syncshellId)
         {
-            return _webrtcConnections.TryGetValue(syncshellId, out var connection) ? connection : null;
+            return _connections.GetPrimary(syncshellId);
         }
         
         private bool _modDataHandlerWired = false;
@@ -1495,11 +1193,11 @@ namespace FyteClub
             {
                 OnModDataReceived += handler;
                 _modDataHandlerWired = true;
-                SecureLogger.LogInfo("Wired up mod data handler in SyncshellManager");
+                FyteLog.Info(LogModule.Syncshells, "Wired up mod data handler in SyncshellManager");
             }
             else
             {
-                SecureLogger.LogInfo("Mod data handler already wired up, skipping duplicate");
+                FyteLog.Info(LogModule.Syncshells, "Mod data handler already wired up, skipping duplicate");
             }
         }
         
@@ -1535,7 +1233,7 @@ namespace FyteClub
                 // Normalize player name for consistent cache storage
                 var normalizedName = playerName.Split('@')[0];
                 
-                SecureLogger.LogInfo("[CACHE UPDATE] Storing mod data for '{0}'", normalizedName);
+                FyteLog.Info(LogModule.Syncshells, "[CACHE UPDATE] Storing mod data for '{0}'", normalizedName);
                 
                 // Extract the actual mod data from componentData
                 Dictionary<string, object> modPayload = new();
@@ -1552,7 +1250,7 @@ namespace FyteClub
                     }
                 }
                 
-                SecureLogger.LogInfo("[CACHE UPDATE] ModPayload has {0} keys: {1}", modPayload.Count, string.Join(", ", modPayload.Keys));
+                FyteLog.Info(LogModule.Syncshells, "[CACHE UPDATE] ModPayload has {0} keys: {1}", modPayload.Count, string.Join(", ", modPayload.Keys));
                 
                 _playerModData[normalizedName] = PlayerModEntry.Create(normalizedName, normalizedName, modPayload) with 
                 {
@@ -1562,24 +1260,24 @@ namespace FyteClub
                     Timestamp = DateTime.UtcNow
                 };
                 
-                SecureLogger.LogInfo("[CACHE UPDATE] Successfully stored cache for {0}", normalizedName);
+                FyteLog.Info(LogModule.Syncshells, "[CACHE UPDATE] Successfully stored cache for {0}", normalizedName);
                 
                 // Verify storage immediately
                 var verify = GetPlayerModData(normalizedName);
                 if (verify != null)
                 {
-                    SecureLogger.LogInfo("[CACHE UPDATE] ✅ Verification successful - cache contains {0} payload items", verify.ModPayload?.Count ?? 0);
+                    FyteLog.Info(LogModule.Syncshells, "[CACHE UPDATE] Verification successful - cache contains {0} payload items", verify.ModPayload?.Count ?? 0);
                 }
                 else
                 {
-                    SecureLogger.LogWarning("[CACHE UPDATE] ❌ Verification failed - cache is null");
+                    FyteLog.Warn(LogModule.Syncshells, "[CACHE UPDATE] Verification failed - cache is null");
                 }
             }
             catch (Exception ex)
             {
                 var normalizedName = playerName.Split('@')[0];
-                SecureLogger.LogError("[CACHE UPDATE] Failed to update cache for {0}: {1}", normalizedName, ex.Message);
-                SecureLogger.LogError("[CACHE UPDATE] Stack trace: {0}", ex.StackTrace ?? "No stack trace available");
+                FyteLog.Error(LogModule.Syncshells, "[CACHE UPDATE] Failed to update cache for {0}: {1}", normalizedName, ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "[CACHE UPDATE] Stack trace: {0}", ex.StackTrace ?? "No stack trace available");
             }
         }
         
@@ -1600,7 +1298,7 @@ namespace FyteClub
                         var dummyIP = System.Net.IPAddress.Parse("127.0.0.1");
                         
                         session.Phonebook.AddMember(playerKey, dummyIP, 7777, playerName);
-                        SecureLogger.LogInfo("Added {0} to phonebook for syncshell {1}", playerName, syncshellId);
+                        FyteLog.Info(LogModule.Syncshells, "Added {0} to phonebook for syncshell {1}", playerName, syncshellId);
                         
                         // Save phonebook to persistence
                         SavePhonebookToPersistence(syncshellId, session.Phonebook);
@@ -1629,14 +1327,14 @@ namespace FyteClub
                         var newSession = new SyncshellSession(identity, phonebook, syncshell.IsOwner);
                         _sessions[syncshellId] = newSession;
                         
-                        SecureLogger.LogInfo("Created session and added {0} to phonebook for syncshell {1}", playerName, syncshellId);
+                        FyteLog.Info(LogModule.Syncshells, "Created session and added {0} to phonebook for syncshell {1}", playerName, syncshellId);
                         SavePhonebookToPersistence(syncshellId, phonebook);
                     }
                 }
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to add {0} to phonebook: {1}", playerName, ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to add {0} to phonebook: {1}", playerName, ex.Message);
             }
         }
         
@@ -1668,7 +1366,7 @@ namespace FyteClub
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to save phonebook to persistence: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to save phonebook to persistence: {0}", ex.Message);
             }
         }
 
@@ -1684,7 +1382,7 @@ namespace FyteClub
         {
             try
             {
-                SecureLogger.LogInfo("Initializing syncshell {0} as host for P2P connections", syncshellId);
+                FyteLog.Info(LogModule.Syncshells, "Initializing syncshell {0} as host for P2P connections", syncshellId);
                 
                 // Set up the syncshell to accept incoming P2P connections
                 var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
@@ -1701,20 +1399,20 @@ namespace FyteClub
                     }
                     
                     // CRITICAL: Check if we already have a healthy connection before creating a new one
-                    if (IsConnectionHealthy(syncshellId))
+                    if (_connections.IsHealthyPrimary(syncshellId))
                     {
-                        SecureLogger.LogWarning("⚠️ PREVENTED: Host connection already exists and is healthy for {0}, skipping duplicate creation", syncshellId);
+                        FyteLog.Warn(LogModule.Syncshells, " PREVENTED: Host connection already exists and is healthy for {0}, skipping duplicate creation", syncshellId);
                         return;
                     }
                     
                     // Create host WebRTC connection ready to accept peers
-                    SecureLogger.LogInfo("🔧 Creating new host connection for syncshell {0}", syncshellId);
+                    FyteLog.Info(LogModule.Syncshells, " Creating new host connection for syncshell {0}", syncshellId);
                     var hostConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
                     await hostConnection.InitializeAsync();
                     ApplyReconnectionMetadata(syncshellId, hostConnection, syncshell.EncryptionKey);
                     
                     hostConnection.OnDataReceived += (data, channelIndex) => {
-                        SecureLogger.LogInfo("📨📨📨 INIT HOST received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
+                        FyteLog.Debug(LogModule.Syncshells, " INIT HOST received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
                         
                         // Notify P2P orchestrator first for new protocol messages
                         OnP2PMessageReceived?.Invoke(syncshellId, data);
@@ -1723,8 +1421,8 @@ namespace FyteClub
                         HandleModData(syncshellId, data);
                     };
                     hostConnection.OnConnected += () => {
-                        Console.WriteLine($"Host accepted P2P connection for {syncshellId}");
-                        SecureLogger.LogInfo("Host accepted P2P connection for syncshell {0}", syncshellId);
+                        FyteLog.Debug(LogModule.Syncshells, $"Host accepted P2P connection for {syncshellId}");
+                        FyteLog.Info(LogModule.Syncshells, "Host accepted P2P connection for syncshell {0}", syncshellId);
                         
                         // Notify P2P orchestrator of new peer connection
                         OnPeerConnected?.Invoke(syncshellId, async (data) => {
@@ -1732,16 +1430,16 @@ namespace FyteClub
                         });
                     };
                     hostConnection.OnDisconnected += () => {
-                        Console.WriteLine($"Host P2P connection lost for {syncshellId}");
+                        FyteLog.Debug(LogModule.Syncshells, $"Host P2P connection lost for {syncshellId}");
                         
                         // Notify P2P orchestrator of peer disconnection
                         OnPeerDisconnected?.Invoke(syncshellId);
-                        
-                        _webrtcConnections.Remove(syncshellId);
+
+                        _connections.RemovePrimary(syncshellId);
                     };
-                    
+
                     // Store host connection using syncshellId as key for GetWebRTCConnection
-                    ReplaceWebRTCConnection(syncshellId, hostConnection);
+                    _connections.ReplacePrimary(syncshellId, hostConnection);
                     
                     // Register host connection
                     if (!_syncshellConnectionRegistry.ContainsKey(syncshellId))
@@ -1753,12 +1451,12 @@ namespace FyteClub
                     // Clean up any duplicate or invalid member entries
                     CleanupSyncshellMembers(syncshellId);
                     
-                    SecureLogger.LogInfo("Syncshell {0} initialized as host with {1} members", syncshellId, syncshell.Members.Count);
+                    FyteLog.Info(LogModule.Syncshells, "Syncshell {0} initialized as host with {1} members", syncshellId, syncshell.Members.Count);
                 }
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to initialize syncshell {0} as host: {1}", syncshellId, ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to initialize syncshell {0} as host: {1}", syncshellId, ex.Message);
             }
         }
         
@@ -1771,7 +1469,7 @@ namespace FyteClub
         public event Action<string, byte[]>? OnP2PMessageReceived;
         
         // Event for connection drop with recovery context
-        public event Action<string, List<FyteClub.TURN.TurnServerInfo>, string>? OnConnectionDropWithContext;
+        public event Action<string, List<FyteClub.Networking.TurnServerInfo>, string>? OnConnectionDropWithContext;
         
         private string GetLocalPlayerName()
         {
@@ -1784,15 +1482,15 @@ namespace FyteClub
         public void SetLocalPlayerName(string playerName)
         {
             _localPlayerName = playerName;
-            SecureLogger.LogInfo("Set local player name: {0}", playerName);
+            FyteLog.Info(LogModule.Syncshells, "Set local player name: {0}", playerName);
         }
         
         /// <summary>
         /// Get connection context (TURN servers and encryption key) for a syncshell
         /// </summary>
-        public (List<FyteClub.TURN.TurnServerInfo> turnServers, string encryptionKey) GetConnectionContext(string syncshellId)
+        public (List<FyteClub.Networking.TurnServerInfo> turnServers, string encryptionKey) GetConnectionContext(string syncshellId)
         {
-            var turnServers = new List<FyteClub.TURN.TurnServerInfo>();
+            var turnServers = new List<FyteClub.Networking.TurnServerInfo>();
             var encryptionKey = "";
             
             // Get syncshell session
@@ -1804,17 +1502,17 @@ namespace FyteClub
                     : "";
                 
                 // Get TURN servers from connection if available
-                if (_webrtcConnections.TryGetValue(syncshellId, out var connection))
+                if (_connections.GetPrimary(syncshellId) is { } connection)
                 {
                     if (connection is LibWebRTCConnection libConn)
                     {
-                        turnServers = new List<FyteClub.TURN.TurnServerInfo>(libConn.TurnServers);
-                        SecureLogger.LogInfo("Retrieved {0} TURN servers for syncshell {1} (LibWebRTC)", turnServers.Count, syncshellId);
+                        turnServers = new List<FyteClub.Networking.TurnServerInfo>(libConn.TurnServers);
+                        FyteLog.Info(LogModule.Syncshells, "Retrieved {0} TURN servers for syncshell {1} (LibWebRTC)", turnServers.Count, syncshellId);
                     }
-                    else if (connection is FyteClub.WebRTC.RobustWebRTCConnection robustConn)
+                    else if (connection is FyteClub.Networking.WebRTCConnection robustConn)
                     {
-                        turnServers = new List<FyteClub.TURN.TurnServerInfo>(robustConn.TurnServers);
-                        SecureLogger.LogInfo("Retrieved {0} TURN servers for syncshell {1} (RobustWebRTC)", turnServers.Count, syncshellId);
+                        turnServers = new List<FyteClub.Networking.TurnServerInfo>(robustConn.TurnServers);
+                        FyteLog.Info(LogModule.Syncshells, "Retrieved {0} TURN servers for syncshell {1} (RobustWebRTC)", turnServers.Count, syncshellId);
                     }
                 }
             }
@@ -1826,13 +1524,13 @@ namespace FyteClub
         {
             try
             {
-                SecureLogger.LogInfo("Initial P2P connection will be handled by ProcessWebRTCOffer for syncshell {0}", syncshellId);
+                FyteLog.Info(LogModule.Syncshells, "Initial P2P connection will be handled by ProcessWebRTCOffer for syncshell {0}", syncshellId);
                 // Connection will be created in ProcessWebRTCOffer when processing the invite code
                 return Task.FromResult(true);
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to establish initial connection for syncshell {0}: {1}", syncshellId, ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to establish initial connection for syncshell {0}: {1}", syncshellId, ex.Message);
                 return Task.FromResult(false);
             }
         }
@@ -1841,8 +1539,8 @@ namespace FyteClub
         {
             try
             {
-                SecureLogger.LogInfo("Requesting member list sync for syncshell {0}", syncshellId);
-                Console.WriteLine($"Client: Requesting member list sync for {syncshellId} with player {playerName}");
+                FyteLog.Info(LogModule.Syncshells, "Requesting member list sync for syncshell {0}", syncshellId);
+                FyteLog.Debug(LogModule.Syncshells, $"Client: Requesting member list sync for {syncshellId} with player {playerName}");
                 
                 // CRITICAL: Get player name on framework thread if not provided
                 var actualPlayerName = playerName;
@@ -1851,7 +1549,7 @@ namespace FyteClub
                     actualPlayerName = GetLocalPlayerName();
                     if (string.IsNullOrEmpty(actualPlayerName))
                     {
-                        SecureLogger.LogWarning("Local player name not available for member list request - using fallback");
+                        FyteLog.Warn(LogModule.Syncshells, "Local player name not available for member list request - using fallback");
                         actualPlayerName = "Unknown Player";
                     }
                 }
@@ -1859,7 +1557,11 @@ namespace FyteClub
                 // Send member list request using proper P2P protocol
                 var requestData = new
                 {
-                    type = 10, // P2PModMessageType.MemberListRequest
+                    // Was hardcoded to 10, which is actually FileChunkMessage's ordinal, not
+                    // MemberListRequest's (11) - see docs/PLAN.md Phase 3 item 7 for how this was
+                    // found (it silently misdeserialized as a FileChunkMessage on the modern path
+                    // and never matched HandleModData's string-based legacy check either).
+                    type = (int)FyteClub.ModSync.Protocol.P2PModMessageType.MemberListRequest,
                     syncshellId = syncshellId,
                     requestedBy = actualPlayerName,
                     messageId = Guid.NewGuid().ToString(),
@@ -1867,166 +1569,42 @@ namespace FyteClub
                 };
                 
                 var json = System.Text.Json.JsonSerializer.Serialize(requestData);
-                Console.WriteLine($"Client: Sending member list request: {json}");
+                FyteLog.Debug(LogModule.Syncshells, $"Client: Sending member list request: {json}");
                 await SendModData(syncshellId, json);
                 
                 // Real P2P will handle member list sync
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to request member list sync for syncshell {0}: {1}", syncshellId, ex.Message);
-                Console.WriteLine($"Client: Failed to request member list sync: {ex.Message}");
+                FyteLog.Error(LogModule.Syncshells, "Failed to request member list sync for syncshell {0}: {1}", syncshellId, ex.Message);
+                FyteLog.Error(LogModule.Syncshells, $"Client: Failed to request member list sync: {ex.Message}");
             }
         }
         
 
         
 
-        
-        private Task ProcessWebRTCOffer(string syncshellId, string inviteCode)
-        {
-            return Task.Run(async () =>
-            {
-                try
-                {
-                    // CRITICAL: Check if we already have a healthy connection before creating a new one
-                    if (IsConnectionHealthy(syncshellId))
-                    {
-                        SecureLogger.LogWarning("⚠️ PREVENTED: Attempted to process WebRTC offer for {0} but healthy connection already exists! Skipping offer processing.", syncshellId);
-                        return;
-                    }
-                    
-                    SecureLogger.LogInfo("🔧 Creating new connection to process WebRTC offer for {0}", syncshellId);
-                    var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
-                    await connection.InitializeAsync();
-                    ApplyReconnectionMetadata(syncshellId, connection);
-                
-                    connection.OnDataReceived += (data, channelIndex) => {
-                        SecureLogger.LogInfo("📨📨📨 PROCESS WEBRTC received mod data from syncshell {0}: {1} bytes on channel {2}", syncshellId, data.Length, channelIndex);
-                    
-                        // Notify P2P orchestrator first for new protocol messages
-                        OnP2PMessageReceived?.Invoke(syncshellId, data);
-                    
-                        // Then handle with legacy system
-                        HandleModData(syncshellId, data);
-                    };
-                    connection.OnConnected += () => {
-                        SecureLogger.LogInfo("WebRTC connected to host for syncshell {0}", syncshellId);
-                    
-                        // Notify P2P orchestrator of new peer connection
-                        OnPeerConnected?.Invoke(syncshellId, async (data) => {
-                            await connection.SendDataAsync(data);
-                        });
-                    };
-                    connection.OnDisconnected += () => {
-                        SecureLogger.LogInfo("WebRTC disconnected from host for syncshell {0}", syncshellId);
-                    
-                        // Notify P2P orchestrator of peer disconnection
-                        OnPeerDisconnected?.Invoke(syncshellId);
-                    };
-                    
-                    // Extract the offer SDP from the invite code
-                    var offerSdp = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(inviteCode));
-                    
-                    // Process invite with ICE candidates if it's a RobustWebRTCConnection
-                    if (connection is WebRTC.RobustWebRTCConnection robustConnection)
-                    {
-                        robustConnection.ProcessInviteWithIce(inviteCode);
-                    }
-                    
-                    var answer = await connection.CreateAnswerAsync(offerSdp);
-                    Console.WriteLine($"Answer ready for host");
-                    
-                    // Generate answer code for manual exchange
-                    string answerCode;
-                if (connection is WebRTC.RobustWebRTCConnection robust)
-                {
-                    answerCode = robust.GenerateAnswerWithIce(answer);
-                    Console.WriteLine($"Generated answer code with ICE: {answerCode.Length} chars");
-                }
-                else
-                {
-                    answerCode = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(answer));
-                    Console.WriteLine($"Generated simple answer code: {answerCode.Length} chars");
-                }
-                
-                // Store for UI retrieval
-                _lastAnswerCode = answerCode;
-                Console.WriteLine($"Stored answer code in _lastAnswerCode: {!string.IsNullOrEmpty(_lastAnswerCode)}");
-                
-                // Store connection
-                ReplaceWebRTCConnection(syncshellId, connection);
-                
-                // Display answer code for manual copy-paste to host
-                Console.WriteLine($"\n=== ANSWER CODE FOR HOST ===");
-                Console.WriteLine(answerCode);
-                Console.WriteLine($"Copy this answer code and send it to the host to complete connection.");
-                Console.WriteLine($"==============================\n");
-                
-                    SecureLogger.LogInfo("WebRTC answer created for syncshell {0} - waiting for host to process answer", syncshellId);
-                }
-                catch (Exception ex)
-                {
-                    SecureLogger.LogError("Failed to process WebRTC offer for syncshell {0}: {1}", syncshellId, ex.Message);
-                }
-            });
-        }
         
         public void DisconnectFromPeer(string syncshellId, string peerId)
         {
-            var connectionKey = $"{syncshellId}_{peerId}";
-            if (_webrtcConnections.TryGetValue(connectionKey, out var connection))
+            var key = Networking.ConnectionKey.ForPeer(syncshellId, peerId);
+            if (_connections.DisposeOne(key))
             {
-                // CRITICAL: Don't dispose if actively transferring or establishing
-                if (connection.IsTransferring())
-                {
-                    SecureLogger.LogInfo("⏸️ Deferring disconnect from peer {0} - transfer in progress (buffers draining or recent send)", peerId);
-                    return;
-                }
-                
-                if (connection.IsEstablishing())
-                {
-                    SecureLogger.LogInfo("⏸️ Deferring disconnect from peer {0} - connection still establishing", peerId);
-                    return;
-                }
-                
-                connection.Dispose();
-                _webrtcConnections.Remove(connectionKey);
-                SecureLogger.LogInfo("Disconnected from peer {0} in syncshell {1}", peerId, syncshellId);
+                FyteLog.Info(LogModule.Syncshells, "Disconnected from peer {0} in syncshell {1}", peerId, syncshellId);
             }
         }
-        
+
         public void DisconnectFromSyncshell(string syncshellId)
         {
-            var keysToRemove = _webrtcConnections.Keys.Where(k => k.StartsWith(syncshellId)).ToList();
-            foreach (var key in keysToRemove)
-            {
-                var connection = _webrtcConnections[key];
-                
-                // CRITICAL: Check if transfer is active before disposing
-                if (connection.IsTransferring())
-                {
-                    SecureLogger.LogInfo("⏸️ Deferring disconnect from syncshell {0} - connection {1} has active transfer", syncshellId, key);
-                    continue; // Skip this connection, leave it for later cleanup
-                }
-                
-                if (connection.IsEstablishing())
-                {
-                    SecureLogger.LogInfo("⏸️ Deferring disconnect from syncshell {0} - connection {1} still establishing", syncshellId, key);
-                    continue;
-                }
-                
-                connection.Dispose();
-                _webrtcConnections.Remove(key);
-            }
-            SecureLogger.LogInfo("Disconnected all ready peers from syncshell {0}", syncshellId);
+            _connections.DisposeAllForSyncshell(syncshellId);
+            FyteLog.Info(LogModule.Syncshells, "Disconnected all ready peers from syncshell {0}", syncshellId);
         }
         
         private void HandlePhonebookRequest(string syncshellId, Dictionary<string, object> requestData)
         {
             try
             {
-                Console.WriteLine($"Host: Received phonebook request for {syncshellId}");
+                FyteLog.Debug(LogModule.Syncshells, $"Host: Received phonebook request for {syncshellId}");
                 
                 if (_sessions.TryGetValue(syncshellId, out var session) && session.Phonebook != null)
                 {
@@ -2034,18 +1612,18 @@ namespace FyteClub
                     {
                         type = "phonebook_response",
                         syncshellId = syncshellId,
-                        players = new List<object>(), // Simplified phonebook response (compat with RobustWebRTCConnection)
+                        players = new List<object>(), // Simplified phonebook response (compat with WebRTCConnection)
                         timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                     };
                     
                     var json = System.Text.Json.JsonSerializer.Serialize(phonebookData);
-                    _ = Task.Run(async () => { try { await SendModData(syncshellId, json); } catch { } });
-                    Console.WriteLine($"Host: Sent phonebook response");
+                    _ = FyteClub.Core.SafeTask.Run(async () => { await SendModData(syncshellId, json); }, LogModule.Syncshells);
+                    FyteLog.Debug(LogModule.Syncshells, $"Host: Sent phonebook response");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Host: Failed to handle phonebook request: {ex.Message}");
+                FyteLog.Error(LogModule.Syncshells, $"Host: Failed to handle phonebook request: {ex.Message}");
             }
         }
         
@@ -2053,13 +1631,13 @@ namespace FyteClub
         {
             try
             {
-                SecureLogger.LogInfo("🎨 HOST: Received mod sync request for syncshell {0}", syncshellId);
-                SecureLogger.LogInfo("🎨 HOST: Available player mod data: {0} players", _playerModData.Count);
+                FyteLog.Info(LogModule.Syncshells, " HOST: Received mod sync request for syncshell {0}", syncshellId);
+                FyteLog.Info(LogModule.Syncshells, " HOST: Available player mod data: {0} players", _playerModData.Count);
                 
                 // Log which players we have mod data for
                 foreach (var playerName in _playerModData.Keys)
                 {
-                    SecureLogger.LogInfo("🎨 HOST: Have mod data for: {0}", playerName);
+                    FyteLog.Info(LogModule.Syncshells, " HOST: Have mod data for: {0}", playerName);
                 }
                 
                 // Send current mod data for all known players
@@ -2077,43 +1655,24 @@ namespace FyteClub
                     };
                     
                     var json = System.Text.Json.JsonSerializer.Serialize(modSyncData);
-                    SecureLogger.LogInfo("🎨 HOST: Sending mod data for {0} ({1} bytes)", playerData.PlayerId, json.Length);
-                    _ = Task.Run(async () => { try { await SendModData(syncshellId, json); } catch { } });
+                    FyteLog.Info(LogModule.Syncshells, " HOST: Sending mod data for {0} ({1} bytes)", playerData.PlayerId, json.Length);
+                    _ = FyteClub.Core.SafeTask.Run(async () => { await SendModData(syncshellId, json); }, LogModule.Syncshells);
                     sentCount++;
                 }
                 
-                SecureLogger.LogInfo("🎨 HOST: Sent mod sync response for {0} players", sentCount);
+                FyteLog.Info(LogModule.Syncshells, " HOST: Sent mod sync response for {0} players", sentCount);
                 
                 if (sentCount == 0)
                 {
-                    SecureLogger.LogWarning("🎨 HOST: No player mod data available to send - this means 'Butter Beans' mod data is not in the cache");
+                    FyteLog.Warn(LogModule.Syncshells, " HOST: No player mod data available to send - this means 'Butter Beans' mod data is not in the cache");
                 }
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("🎨 HOST: Failed to handle mod sync request: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, " HOST: Failed to handle mod sync request: {0}", ex.Message);
             }
         }
         
-        private void HandleClientReady(string syncshellId, Dictionary<string, object> requestData)
-        {
-            try
-            {
-                Console.WriteLine($"Host: Client ready signal received for {syncshellId}");
-                
-                // Client is fully onboarded and ready for mod sharing
-                var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
-                if (syncshell != null)
-                {
-                    Console.WriteLine($"Host: Client onboarding complete for {syncshellId}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Host: Failed to handle client ready: {ex.Message}");
-            }
-        }
-
         public Task<string> GetLastAnswerCode()
         {
             return Task.FromResult(_lastAnswerCode);
@@ -2133,11 +1692,11 @@ namespace FyteClub
                 var json = System.Text.Json.JsonSerializer.Serialize(requestData);
                 await SendModData(syncshellId, json);
                 
-                SecureLogger.LogInfo("Requested phonebook update for syncshell {0}", syncshellId);
+                FyteLog.Info(LogModule.Syncshells, "Requested phonebook update for syncshell {0}", syncshellId);
             }
             catch (Exception ex)
             {
-                SecureLogger.LogError("Failed to request phonebook update: {0}", ex.Message);
+                FyteLog.Error(LogModule.Syncshells, "Failed to request phonebook update: {0}", ex.Message);
             }
         }
         
@@ -2185,7 +1744,7 @@ namespace FyteClub
             if (syncshell != null)
             {
                 syncshell.Members = new List<string>(members);
-                SecureLogger.LogInfo("Updated member list for syncshell {0}: {1} members", syncshellId, members.Count);
+                FyteLog.Info(LogModule.Syncshells, "Updated member list for syncshell {0}: {1} members", syncshellId, members.Count);
             }
         }
         
@@ -2206,22 +1765,8 @@ namespace FyteClub
                 _connectionTimeoutTimer?.Dispose();
                 
                 // Force dispose all WebRTC connections immediately
-                var connections = _webrtcConnections.Values.ToList();
-                _webrtcConnections.Clear(); // Clear immediately to prevent new operations
-                
-                foreach (var connection in connections)
-                {
-                    try
-                    {
-                        // Force immediate disposal without waiting
-                        connection.Dispose();
-                    }
-                    catch
-                    {
-                        // Ignore disposal errors to prevent hanging
-                    }
-                }
-                
+                _connections.DisposeAllImmediate();
+
                 _pendingConnections.Clear();
                 _issuedTokens.Clear();
                 _syncshellConnectionRegistry.Clear();
@@ -2251,9 +1796,9 @@ namespace FyteClub
             }
         }
 
-        private void ApplyReconnectionMetadata(string syncshellId, IWebRTCConnection connection, string? encryptionKeyOverride = null)
+        private void ApplyReconnectionMetadata(string syncshellId, Networking.IWebRTCConnection connection, string? encryptionKeyOverride = null)
         {
-            if (connection is WebRTC.RobustWebRTCConnection robustConnection)
+            if (connection is Networking.WebRTCConnection robustConnection)
             {
                 var resolvedKey = encryptionKeyOverride;
                 if (string.IsNullOrWhiteSpace(resolvedKey))
@@ -2281,91 +1826,35 @@ namespace FyteClub
         }
 
         /// <summary>
-        /// Check if an existing connection is healthy and should be reused
+        /// Resolves the real 32-byte group key for Nostr signaling encryption. SyncshellInfo's
+        /// KeyEpoch/EpochKeyBase64 are checked first since they're the authoritative record of the
+        /// current rotation epoch for every member (host and joiners alike - joiners never have a
+        /// SyncshellIdentity session to hold a rotated key in memory, see SyncshellManager.Rekey.cs).
+        /// Falls back to the epoch-0 PBKDF2 key when no rotation has ever happened. Deliberately does
+        /// NOT reuse ResolveEncryptionKey: SyncshellInfo.EncryptionKey stores the raw master password
+        /// (see CreateSyncshellInternal/JoinSyncshell), not the derived key.
         /// </summary>
-        private bool IsConnectionHealthy(string key)
+        private byte[] ResolveGroupKeyBytes(string syncshellId)
         {
-            lock (_connectionLock)
+            var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+            if (syncshell != null && syncshell.KeyEpoch > 0 && !string.IsNullOrEmpty(syncshell.EpochKeyBase64))
             {
-                if (_webrtcConnections.TryGetValue(key, out var connection))
-                {
-                    // Connection is healthy if it's connected, establishing, or actively transferring
-                    bool isHealthy = connection.IsConnected || connection.IsEstablishing() || connection.IsTransferring();
-                    
-                    if (isHealthy)
-                    {
-                        SecureLogger.LogInfo("✅ Existing connection for key {0} is healthy (IsConnected={1}, IsEstablishing={2}, IsTransferring={3})", 
-                            key, connection.IsConnected, connection.IsEstablishing(), connection.IsTransferring());
-                    }
-                    
-                    return isHealthy;
-                }
-                return false;
+                return Convert.FromBase64String(syncshell.EpochKeyBase64);
             }
-        }
-        
-        /// <summary>
-        /// Safely replaces a WebRTC connection, disposing the old one first to prevent channel leaks
-        /// CRITICAL: This method uses a lock to prevent race conditions
-        /// </summary>
-        private void ReplaceWebRTCConnection(string key, IWebRTCConnection newConnection)
-        {
-            lock (_connectionLock)
+
+            if (_sessions.TryGetValue(syncshellId, out var session) && session.Identity?.EncryptionKey is { Length: > 0 } keyBytes)
             {
-                // Dispose old connection if it exists
-                if (_webrtcConnections.TryGetValue(key, out var oldConnection))
-                {
-                    try
-                    {
-                        // Log connection states for debugging
-                        SecureLogger.LogInfo("🔍 ReplaceWebRTCConnection for key {0}: oldConnection.IsConnected={1}, IsTransferring={2}, IsEstablishing={3}", 
-                            key, oldConnection.IsConnected, oldConnection.IsTransferring(), oldConnection.IsEstablishing());
-                        
-                        // Safety check 1: Is the connection actively transferring data?
-                        if (oldConnection.IsTransferring())
-                        {
-                            SecureLogger.LogWarning("⚠️ BLOCKED: Cannot replace WebRTC connection for key {0} - active transfer in progress! Keeping existing connection.", key);
-                            // Dispose the new connection instead and keep the old one
-                            newConnection?.Dispose();
-                            return;
-                        }
-                        
-                        // Safety check 2: Is the connection still establishing (handshake in progress)?
-                        if (oldConnection.IsEstablishing())
-                        {
-                            SecureLogger.LogWarning("⚠️ BLOCKED: Cannot replace WebRTC connection for key {0} - connection still establishing! Keeping existing connection.", key);
-                            // Dispose the new connection instead and keep the old one
-                            newConnection?.Dispose();
-                            return;
-                        }
-                        
-                        // Safety check 3: Is the connection actually disconnected? Only replace dead connections!
-                        if (oldConnection.IsConnected)
-                        {
-                            SecureLogger.LogWarning("⚠️ BLOCKED: Cannot replace WebRTC connection for key {0} - existing connection is still CONNECTED and healthy! Keeping existing connection.", key);
-                            // Dispose the new connection instead and keep the working one
-                            newConnection?.Dispose();
-                            return;
-                        }
-                        
-                        SecureLogger.LogInfo("✅ Disposing old WebRTC connection for key: {0} (connection is disconnected, not transferring, and not establishing)", key);
-                        oldConnection.Dispose();
-                    }
-                    catch (Exception ex)
-                    {
-                        SecureLogger.LogError("Error disposing old WebRTC connection: {0}", ex.Message);
-                    }
-                }
-                else
-                {
-                    SecureLogger.LogInfo("✅ No existing connection for key {0}, adding new connection", key);
-                }
-                
-                // Assign new connection
-                _webrtcConnections[key] = newConnection;
-                SecureLogger.LogInfo("✅ Replaced WebRTC connection for key: {0}", key);
+                return keyBytes;
             }
+
+            if (syncshell != null && !string.IsNullOrEmpty(syncshell.EncryptionKey))
+            {
+                return new SyncshellIdentity(syncshell.Name, syncshell.EncryptionKey).EncryptionKey;
+            }
+
+            throw new InvalidOperationException($"Cannot resolve group key for syncshell {syncshellId} - no session or stored syncshell found");
         }
+
     }
 
     public static class SyncshellHashing
@@ -2391,6 +1880,7 @@ namespace FyteClub
         Success,
         AlreadyJoined,
         InvalidCode,
-        Failed
+        Failed,
+        Expired
     }
 }

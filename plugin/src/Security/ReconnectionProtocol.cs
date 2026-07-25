@@ -1,9 +1,9 @@
 using System;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
-using FyteClub.WebRTC;
+using FyteClub.Networking;
 
-namespace FyteClub
+namespace FyteClub.Security
 {
     // ...existing code...
 
