@@ -62,15 +62,12 @@ jobs:
           restore-keys: |
             nuget-${{ runner.os }}-
 
-      - name: Restore
-        run: dotnet restore --verbosity minimal
-
       - name: Build vendored MR-WebRTC (fast / deterministic)
-        run: dotnet build Microsoft.MixedReality.WebRTC/Microsoft.MixedReality.WebRTC.csproj -c Release --no-restore
+        run: dotnet build Microsoft.MixedReality.WebRTC/Microsoft.MixedReality.WebRTC.csproj -c Release
         timeout-minutes: 10
 
       - name: Build plugin (required)
-        run: dotnet build plugin/FyteClub.csproj -c Release --no-restore
+        run: dotnet build plugin/FyteClub.csproj -c Release
         timeout-minutes: 12
 
       - name: Build & run unit tests (required, exclude RealP2P)
@@ -111,11 +108,8 @@ jobs:
           Expand-Archive -Path "$env:RUNNER_TEMP\dalamud-stg.zip" -DestinationPath $dest -Force
           echo "DALAMUD_HOME=$dest" >> $env:GITHUB_ENV
 
-      - name: Restore
-        run: dotnet restore --verbosity minimal
-
       - name: Build plugin against Dalamud staging
-        run: dotnet build plugin/FyteClub.csproj -c Release --no-restore
+        run: dotnet build plugin/FyteClub.csproj -c Release
         timeout-minutes: 12
 
   realp2p-manual:
@@ -142,11 +136,8 @@ jobs:
           Expand-Archive -Path "$env:RUNNER_TEMP\dalamud.zip" -DestinationPath $dest -Force
           echo "DALAMUD_HOME=$dest" >> $env:GITHUB_ENV
 
-      - name: Restore
-        run: dotnet restore --verbosity minimal
-
       - name: Build
-        run: dotnet build plugin/FyteClub.csproj -c Release --no-restore
+        run: dotnet build plugin/FyteClub.csproj -c Release
 
       - name: Run RealP2P integration tests
         # separate processes per class - running them together hangs, shared static state in WebRTCConnectionFactory/mrwebrtc.dll isn't reentrant

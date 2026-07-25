@@ -50,14 +50,11 @@ jobs:
         Expand-Archive -Path "$env:RUNNER_TEMP\dalamud.zip" -DestinationPath $dest -Force
         echo "DALAMUD_HOME=$dest" >> $env:GITHUB_ENV
 
-    - name: Restore
-      run: dotnet restore --verbosity minimal
-
     - name: Build vendored MR-WebRTC
-      run: dotnet build Microsoft.MixedReality.WebRTC/Microsoft.MixedReality.WebRTC.csproj -c Release --no-restore
+      run: dotnet build Microsoft.MixedReality.WebRTC/Microsoft.MixedReality.WebRTC.csproj -c Release
 
     - name: Build Plugin
-      run: dotnet build plugin/FyteClub.csproj -c Release --no-restore
+      run: dotnet build plugin/FyteClub.csproj -c Release
 
     - name: Package Plugin
       shell: pwsh
