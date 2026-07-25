@@ -44,6 +44,10 @@ namespace FyteClub.Syncshells
 
         private string _localPlayerName = "";
 
+        // User-configured TURN/STUN servers (docs/PLAN.md AD-1) applied to every connection this
+        // client creates, and embedded in invites/bootstrap codes so joiners can use them too.
+        private List<FyteClub.Networking.TurnServerInfo> _customIceServers = new();
+
         public SyncshellManager(IPluginLog? pluginLog = null)
         {
             _pluginLog = pluginLog;
@@ -119,6 +123,41 @@ namespace FyteClub.Syncshells
             FyteLog.Info(LogModule.Syncshells, "Set local player name: {0}", playerName);
         }
 
+        /// <summary>
+        /// User-supplied TURN/STUN servers from the config UI. Applied to every connection this
+        /// client creates (see ApplyReconnectionMetadata) and embedded in invites/bootstrap codes.
+        /// </summary>
+        public void SetCustomIceServers(List<FyteClub.Networking.TurnServerInfo> servers)
+        {
+            _customIceServers = servers ?? new List<FyteClub.Networking.TurnServerInfo>();
+            FyteLog.Info(LogModule.Syncshells, "Set {0} custom ICE server(s)", _customIceServers.Count);
+        }
+
+        public List<FyteClub.Networking.TurnServerInfo> GetCustomIceServers()
+        {
+            return new List<FyteClub.Networking.TurnServerInfo>(_customIceServers);
+        }
+
+        private static List<FyteClub.Networking.TurnServerInfo> MergeIceServers(
+            IEnumerable<FyteClub.Networking.TurnServerInfo>? a,
+            IEnumerable<FyteClub.Networking.TurnServerInfo>? b)
+        {
+            var merged = new List<FyteClub.Networking.TurnServerInfo>();
+            var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var server in (a ?? Enumerable.Empty<FyteClub.Networking.TurnServerInfo>())
+                .Concat(b ?? Enumerable.Empty<FyteClub.Networking.TurnServerInfo>()))
+            {
+                if (server == null || string.IsNullOrWhiteSpace(server.Url)) continue;
+                if (seenUrls.Add(server.Url))
+                {
+                    merged.Add(server);
+                }
+            }
+
+            return merged;
+        }
+
         public class SyncshellMember
         {
             public string Name { get; set; } = string.Empty;
@@ -167,7 +206,11 @@ namespace FyteClub.Syncshells
             }
         }
 
-        private void ApplyReconnectionMetadata(string syncshellId, Networking.IWebRTCConnection connection, string? encryptionKeyOverride = null)
+        private void ApplyReconnectionMetadata(
+            string syncshellId,
+            Networking.IWebRTCConnection connection,
+            string? encryptionKeyOverride = null,
+            List<FyteClub.Networking.TurnServerInfo>? inviteIceServers = null)
         {
             if (connection is Networking.WebRTCConnection robustConnection)
             {
@@ -177,6 +220,12 @@ namespace FyteClub.Syncshells
                     resolvedKey = ResolveEncryptionKey(syncshellId);
                 }
                 robustConnection.SetSyncshellInfo(syncshellId, resolvedKey ?? string.Empty);
+            }
+
+            var merged = MergeIceServers(_customIceServers, inviteIceServers);
+            if (merged.Count > 0)
+            {
+                connection.ConfigureTurnServers(merged);
             }
         }
 

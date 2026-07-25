@@ -94,24 +94,11 @@ namespace FyteClub.Syncshells
 
                     FyteLog.Info(LogModule.Syncshells, "Successfully joined syncshell '{0}' via Nostr invite", name);
 
-                    // Extract TURN server info from invite if available
-                    var turnServers = new List<FyteClub.Networking.TurnServerInfo>();
-                    if (nostrInvite.TryGetProperty("turnServer", out var turnServerProperty) && turnServerProperty.ValueKind != System.Text.Json.JsonValueKind.Null)
+                    // Extract host-supplied TURN/STUN servers from the invite, if any (docs/PLAN.md AD-1)
+                    var turnServers = ParseTurnServersFromInvite(nostrInvite);
+                    if (turnServers.Count > 0)
                     {
-                        var turnUrl = turnServerProperty.GetProperty("url").GetString() ?? "";
-                        var turnUsername = turnServerProperty.GetProperty("username").GetString() ?? "";
-                        var turnPassword = turnServerProperty.GetProperty("password").GetString() ?? "";
-
-                        if (!string.IsNullOrEmpty(turnUrl))
-                        {
-                            turnServers.Add(new FyteClub.Networking.TurnServerInfo
-                            {
-                                Url = turnUrl,
-                                Username = turnUsername,
-                                Password = turnPassword
-                            });
-                            FyteLog.Info(LogModule.Syncshells, "JOINER: Extracted TURN server from invite: {0}", turnUrl);
-                        }
+                        FyteLog.Info(LogModule.Syncshells, "JOINER: Extracted {0} TURN/STUN server(s) from invite", turnServers.Count);
                     }
 
                     // CRITICAL: Wire up mod data handler BEFORE creating connection
@@ -129,7 +116,7 @@ namespace FyteClub.Syncshells
                         FyteLog.Info(LogModule.Syncshells, " Creating new WebRTC connection for syncshell {0}", syncshellId);
                         var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                         await connection.InitializeAsync();
-                        ApplyReconnectionMetadata(syncshellId, connection, key);
+                        ApplyReconnectionMetadata(syncshellId, connection, key, turnServers);
 
                         // CRITICAL: Wire up data handler BEFORE storing connection
                         connection.OnDataReceived += (data, channelIndex) => {
@@ -162,12 +149,8 @@ namespace FyteClub.Syncshells
                     // Use WebRTCConnection to handle Nostr signaling
                     if (_connections.GetPrimary(syncshellId) is Networking.WebRTCConnection robustConnection)
                     {
-                        // Configure TURN servers from invite before creating answer
-                        if (turnServers.Count > 0)
-                        {
-                            robustConnection.ConfigureTurnServers(turnServers);
-                            FyteLog.Info(LogModule.Syncshells, "JOINER: Configured {0} TURN servers from invite", turnServers.Count);
-                        }
+                        // TURN/STUN servers (local custom + invite-supplied) already applied via
+                        // ApplyReconnectionMetadata above, before this connection was stored.
 
                         // Create nostr offer URI for the connection
                         var relayParam = string.Join(",", relays);
@@ -203,6 +186,7 @@ namespace FyteClub.Syncshells
                 var hostPeerId = bootstrapInfo.TryGetProperty("hostPeerId", out var hostPeerIdProp) ? hostPeerIdProp.GetString() ?? "" : "";
                 var keyEpoch = bootstrapInfo.TryGetProperty("keyEpoch", out var keyEpochProp) ? keyEpochProp.GetInt32() : 0;
                 var epochKeyBase64 = bootstrapInfo.TryGetProperty("epochKeyBase64", out var epochKeyProp) ? epochKeyProp.GetString() ?? "" : "";
+                var turnServers = ParseTurnServersFromInvite(bootstrapInfo);
 
                 if (!bootstrapInfo.TryGetProperty("exp", out var expProperty) || !expProperty.TryGetInt64(out var expiresAt))
                 {
@@ -227,7 +211,7 @@ namespace FyteClub.Syncshells
                         joinedSyncshell.EpochKeyBase64 = epochKeyBase64;
                     }
                     // Real mesh routing: discover existing peers and connect through them
-                    var meshSuccess = await ConnectThroughMesh(syncshellId, name);
+                    var meshSuccess = await ConnectThroughMesh(syncshellId, name, turnServers);
                     if (meshSuccess)
                     {
                         FyteLog.Info(LogModule.Syncshells, "Joined syncshell via bootstrap mesh routing - connected through existing peers");
@@ -248,7 +232,7 @@ namespace FyteClub.Syncshells
             }
         }
 
-        private async Task<bool> ConnectThroughMesh(string syncshellId, string syncshellName)
+        private async Task<bool> ConnectThroughMesh(string syncshellId, string syncshellName, List<FyteClub.Networking.TurnServerInfo>? turnServers = null)
         {
             try
             {
@@ -275,7 +259,7 @@ namespace FyteClub.Syncshells
                         FyteLog.Info(LogModule.Syncshells, " Creating new mesh connection for {0}", meshKey);
                         var connection = await WebRTCConnectionFactory.CreateConnectionAsync();
                         await connection.InitializeAsync();
-                        ApplyReconnectionMetadata(syncshellId, connection);
+                        ApplyReconnectionMetadata(syncshellId, connection, inviteIceServers: turnServers);
 
                         connection.OnDataReceived += (data, channelIndex) => {
                             FyteLog.Debug(LogModule.Syncshells, " MESH CONNECTION received mod data from syncshell {0}: {1} bytes", syncshellId, data.Length);
@@ -404,6 +388,36 @@ namespace FyteClub.Syncshells
                 FyteLog.Error(LogModule.Syncshells, "Failed to join syncshell by ID '{0}': {1}", syncshellId, ex.Message);
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Parses the "turnServers" array (docs/PLAN.md AD-1) an invite/bootstrap code may carry.
+        /// Missing/empty/malformed entries are skipped rather than failing the whole join.
+        /// </summary>
+        private static List<FyteClub.Networking.TurnServerInfo> ParseTurnServersFromInvite(System.Text.Json.JsonElement invite)
+        {
+            var servers = new List<FyteClub.Networking.TurnServerInfo>();
+
+            if (!invite.TryGetProperty("turnServers", out var turnServersProperty) ||
+                turnServersProperty.ValueKind != System.Text.Json.JsonValueKind.Array)
+            {
+                return servers;
+            }
+
+            foreach (var entry in turnServersProperty.EnumerateArray())
+            {
+                var url = entry.TryGetProperty("url", out var urlProp) ? urlProp.GetString() ?? "" : "";
+                if (string.IsNullOrWhiteSpace(url)) continue;
+
+                servers.Add(new FyteClub.Networking.TurnServerInfo
+                {
+                    Url = url,
+                    Username = entry.TryGetProperty("username", out var userProp) ? userProp.GetString() ?? "" : "",
+                    Password = entry.TryGetProperty("password", out var passProp) ? passProp.GetString() ?? "" : ""
+                });
+            }
+
+            return servers;
         }
     }
 }

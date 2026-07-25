@@ -24,7 +24,8 @@ namespace FyteClub.Core
             {
                 Syncshells = _syncshellManager?.GetSyncshells() ?? new List<SyncshellInfo>(),
                 BlockedUsers = _blockedUsers.Keys.ToList(),
-                RecentlySyncedUsers = _recentlySyncedUsers.Keys.ToList()
+                RecentlySyncedUsers = _recentlySyncedUsers.Keys.ToList(),
+                CustomIceServers = _syncshellManager?.GetCustomIceServers() ?? new List<FyteClub.Networking.TurnServerInfo>()
             };
             _pluginInterface.SavePluginConfig(config);
         }
@@ -77,6 +78,19 @@ namespace FyteClub.Core
             {
                 _recentlySyncedUsers.TryAdd(syncedUser, 0);
             }
+
+            _syncshellManager?.SetCustomIceServers(config.CustomIceServers ?? new List<FyteClub.Networking.TurnServerInfo>());
+        }
+
+        public List<FyteClub.Networking.TurnServerInfo> GetCustomIceServers()
+        {
+            return _syncshellManager?.GetCustomIceServers() ?? new List<FyteClub.Networking.TurnServerInfo>();
+        }
+
+        public void SetCustomIceServers(List<FyteClub.Networking.TurnServerInfo> servers)
+        {
+            _syncshellManager?.SetCustomIceServers(servers);
+            SaveConfiguration();
         }
 
         public void BlockUser(string playerName)
@@ -176,5 +190,11 @@ namespace FyteClub.Core
         public int ProximityRange { get; set; } = 50;
         public List<string> BlockedUsers { get; set; } = new();
         public List<string> RecentlySyncedUsers { get; set; } = new();
+
+        /// <summary>
+        /// User-supplied TURN/STUN servers (docs/PLAN.md AD-1), applied to every connection this
+        /// client creates and embedded in invites/bootstrap codes for joiners to use too.
+        /// </summary>
+        public List<FyteClub.Networking.TurnServerInfo> CustomIceServers { get; set; } = new();
     }
 }

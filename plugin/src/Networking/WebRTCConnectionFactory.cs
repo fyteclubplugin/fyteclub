@@ -154,5 +154,7 @@ namespace FyteClub.Networking
         Task SendDataAsync(byte[] data);
         bool IsTransferring(); // Check if actively sending data
         bool IsEstablishing(); // Check if connection handshake is in progress
+        List<TurnServerInfo> TurnServers { get; }
+        void ConfigureTurnServers(List<TurnServerInfo> turnServers);
     }
 }

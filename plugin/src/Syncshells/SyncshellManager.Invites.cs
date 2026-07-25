@@ -161,6 +161,7 @@ namespace FyteClub.Syncshells
                 // would silently fail (host on epoch N, brand-new joiner defaults to epoch 0).
                 keyEpoch = syncshell.KeyEpoch,
                 epochKeyBase64 = syncshell.EpochKeyBase64,
+                turnServers = BuildTurnServerPayload(),
                 iat = iat,
                 exp = InviteExpiry.ExpiryFor(iat, InviteExpiry.BootstrapTtlSeconds)
             };
@@ -188,6 +189,7 @@ namespace FyteClub.Syncshells
                 keyEpoch = syncshell.KeyEpoch,
                 epochKeyBase64 = syncshell.EpochKeyBase64,
                 connectedPeers = _connections.Count,
+                turnServers = BuildTurnServerPayload(),
                 iat = iat,
                 exp = InviteExpiry.ExpiryFor(iat, InviteExpiry.BootstrapTtlSeconds)
             };
@@ -278,6 +280,7 @@ namespace FyteClub.Syncshells
                         keyEpoch = syncshell.KeyEpoch,
                         epochKeyBase64 = syncshell.EpochKeyBase64,
                         uuid = uuid,
+                        turnServers = BuildTurnServerPayload(),
                         iat = iat,
                         exp = InviteExpiry.ExpiryFor(iat, InviteExpiry.NostrInviteTtlSeconds),
                         relays = new[] {
@@ -304,6 +307,17 @@ namespace FyteClub.Syncshells
                     return string.Empty;
                 }
             });
+        }
+
+        /// <summary>
+        /// User-configured TURN/STUN servers (docs/PLAN.md AD-1), shaped for embedding in an
+        /// invite/bootstrap payload so joiners can use the host's servers too.
+        /// </summary>
+        private List<object> BuildTurnServerPayload()
+        {
+            return _customIceServers
+                .Select(s => (object)new { url = s.Url, username = s.Username, password = s.Password })
+                .ToList();
         }
     }
 }

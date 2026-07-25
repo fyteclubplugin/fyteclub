@@ -26,6 +26,7 @@ namespace FyteClub.UI
         private bool? _webrtcAvailable = null;
         private DateTime _lastWebrtcTest = DateTime.MinValue;
         private string _blockPlayerName = "";
+        private List<TurnServerInfo>? _iceServerEdits = null;
 
         public ConfigWindow(FyteClubPlugin plugin) : base("FyteClub - P2P Mod Sharing")
         {
@@ -64,7 +65,13 @@ namespace FyteClub.UI
                     DrawLoggingTab();
                     ImGui.EndTabItem();
                 }
-                
+
+                if (ImGui.BeginTabItem("Network"))
+                {
+                    DrawNetworkTab();
+                    ImGui.EndTabItem();
+                }
+
                 ImGui.EndTabBar();
             }
         }
@@ -633,6 +640,77 @@ namespace FyteClub.UI
 
             ImGui.Separator();
             DrawProtocolVersionMismatches();
+        }
+
+        private void DrawNetworkTab()
+        {
+            _iceServerEdits ??= _plugin.GetCustomIceServers();
+
+            ImGui.TextWrapped("Custom STUN/TURN servers, applied to your own connections and shared with anyone you invite. FyteClub already falls back to public STUN + a public TURN relay for NAT traversal - add servers here only if you have your own (e.g. a self-hosted TURN server) or connections are failing behind a strict NAT.");
+            ImGui.Separator();
+
+            int? removeIndex = null;
+            for (int i = 0; i < _iceServerEdits.Count; i++)
+            {
+                var server = _iceServerEdits[i];
+                ImGui.PushID(i);
+
+                var url = server.Url;
+                ImGui.SetNextItemWidth(260);
+                if (ImGui.InputText("URL (turn:host:port or stun:host:port)", ref url, 200))
+                {
+                    server.Url = url;
+                }
+
+                var username = server.Username;
+                ImGui.SetNextItemWidth(150);
+                if (ImGui.InputText("Username (TURN only)", ref username, 100))
+                {
+                    server.Username = username;
+                }
+                ImGui.SameLine();
+
+                var password = server.Password;
+                ImGui.SetNextItemWidth(150);
+                if (ImGui.InputText("Password##pass", ref password, 100, ImGuiInputTextFlags.Password))
+                {
+                    server.Password = password;
+                }
+                ImGui.SameLine();
+
+                if (ImGui.SmallButton("Remove"))
+                {
+                    removeIndex = i;
+                }
+
+                ImGui.Separator();
+                ImGui.PopID();
+            }
+
+            if (removeIndex.HasValue)
+            {
+                _iceServerEdits.RemoveAt(removeIndex.Value);
+                _plugin.SetCustomIceServers(_iceServerEdits);
+            }
+
+            if (ImGui.Button("Add Server"))
+            {
+                _iceServerEdits.Add(new TurnServerInfo());
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Save"))
+            {
+                // Drop blank rows before persisting/sharing them in invites.
+                _iceServerEdits = _iceServerEdits.Where(s => !string.IsNullOrWhiteSpace(s.Url)).ToList();
+                _plugin.SetCustomIceServers(_iceServerEdits);
+                FyteLog.Info(LogModule.UI, "Saved {0} custom ICE server(s)", _iceServerEdits.Count);
+            }
+
+            if (_iceServerEdits.Count == 0)
+            {
+                ImGui.TextDisabled("No custom servers configured - using public STUN/TURN fallback only.");
+            }
         }
 
         private void DrawBackgroundTaskFaults()
