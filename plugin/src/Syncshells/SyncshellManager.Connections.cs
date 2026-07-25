@@ -382,6 +382,15 @@ namespace FyteClub.Syncshells
             return _connections.GetPrimary(syncshellId);
         }
 
+        /// <summary>
+        /// ICE connection diagnostics for the syncshell's primary connection (docs/PLAN.md
+        /// Phase 4 item 2). Null when there's no connection attempt to report on yet.
+        /// </summary>
+        public Networking.IceDiagnostics? GetIceDiagnostics(string syncshellId)
+        {
+            return _connections.GetPrimary(syncshellId)?.GetDiagnostics();
+        }
+
         public void WireUpModDataHandler(Action<string, System.Text.Json.JsonElement> handler)
         {
             if (!_modDataHandlerWired)

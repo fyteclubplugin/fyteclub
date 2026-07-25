@@ -21,6 +21,7 @@ namespace FyteClub.Networking
         private readonly ConcurrentDictionary<string, Peer> _peers = new();
         private readonly ConcurrentDictionary<string, Queue<IceCandidate>> _pendingIceCandidates = new();
         private readonly HashSet<string> _hostingUuids = new(); // Track UUIDs we're hosting to prevent self-loop
+        private string? _lastPeerId; // Most recently created peer, for connection-scoped diagnostics lookups
         private ISignalingChannel _signalingChannel;
         private readonly PeerConnectionConfiguration _config;
         private readonly IPluginLog? _pluginLog;
@@ -74,6 +75,80 @@ namespace FyteClub.Networking
 
             _pluginLog?.Info($"[WebRTC] Configured {servers.Count} ICE servers total");
             return servers;
+        }
+
+        private static void RecordCandidateType(Peer peer, string candidateContent)
+        {
+            // Standard ICE candidate SDP attribute line, e.g.
+            // "candidate:842163049 1 udp 1677729535 192.168.1.5 54367 typ host generation 0 ..."
+            if (candidateContent.Contains(" typ relay", StringComparison.OrdinalIgnoreCase)) peer.LocalCandidateTypes.Add("relay");
+            else if (candidateContent.Contains(" typ srflx", StringComparison.OrdinalIgnoreCase)) peer.LocalCandidateTypes.Add("srflx");
+            else if (candidateContent.Contains(" typ host", StringComparison.OrdinalIgnoreCase)) peer.LocalCandidateTypes.Add("host");
+        }
+
+        /// <summary>
+        /// Human-facing ICE diagnostics for docs/PLAN.md Phase 4 item 2 - what candidate types were
+        /// gathered, whether a TURN server was configured, and a plain-English guess at what to do.
+        /// Defaults to the most recently created peer when no peerId is given (the common case: one
+        /// active connection attempt per syncshell).
+        /// </summary>
+        public IceDiagnostics? GetDiagnostics(string? peerId = null)
+        {
+            var id = peerId ?? _lastPeerId;
+            if (id == null || !_peers.TryGetValue(id, out var peer)) return null;
+
+            var turnConfigured = _config.IceServers.Any(s => s.Urls.Any(u => u.StartsWith("turn:", StringComparison.OrdinalIgnoreCase)));
+            var types = peer.LocalCandidateTypes.ToList();
+
+            var state = peer.IceState switch
+            {
+                IceConnectionState.New => ConnectionDiagnosticState.Unknown,
+                IceConnectionState.Checking => ConnectionDiagnosticState.Checking,
+                IceConnectionState.Connected => ConnectionDiagnosticState.Connected,
+                IceConnectionState.Completed => ConnectionDiagnosticState.Connected,
+                IceConnectionState.Failed => ConnectionDiagnosticState.Failed,
+                IceConnectionState.Disconnected => ConnectionDiagnosticState.Disconnected,
+                IceConnectionState.Closed => ConnectionDiagnosticState.Disconnected,
+                _ => ConnectionDiagnosticState.Unknown
+            };
+
+            string message;
+            if (state == ConnectionDiagnosticState.Connected)
+            {
+                var via = types.Contains("relay") ? "a TURN relay" : types.Contains("srflx") ? "a STUN-reflexive" : "a direct";
+                message = $"Connected via {via} candidate.";
+            }
+            else if (state == ConnectionDiagnosticState.Failed || state == ConnectionDiagnosticState.Disconnected)
+            {
+                if (types.Count == 0)
+                {
+                    message = "No ICE candidates were gathered at all. Check that your firewall/router allows outbound UDP and that you have an internet connection.";
+                }
+                else if (!types.Contains("relay") && !turnConfigured)
+                {
+                    message = $"Only gathered {string.Join("/", types)} candidate(s) - no TURN relay available. If you're behind a strict/symmetric NAT (common on CGNAT or mobile connections), add a TURN server in the Network tab.";
+                }
+                else if (!types.Contains("relay") && turnConfigured)
+                {
+                    message = "A TURN server is configured but no relay candidate was gathered - double check the TURN server URL and credentials in the Network tab.";
+                }
+                else
+                {
+                    message = $"Gathered {string.Join("/", types)} candidate(s) but the connection still failed. The other peer may be offline, or something is actively blocking the connection.";
+                }
+            }
+            else
+            {
+                message = types.Count > 0 ? $"Gathering ICE candidates... ({string.Join("/", types)} so far)" : "Gathering ICE candidates...";
+            }
+
+            return new IceDiagnostics
+            {
+                State = state,
+                LocalCandidateTypes = types,
+                TurnConfigured = turnConfigured,
+                Message = message
+            };
         }
 
         public void SetSignalingChannel(ISignalingChannel signalingChannel)
@@ -365,8 +440,13 @@ namespace FyteClub.Networking
             // Interactive Connectivity Establishment candidate handling
             peerConnection.IceCandidateReadytoSend += (candidate) => {
                 _pluginLog?.Info($"[WebRTC] ICE candidate ready for {peerId}: {candidate.SdpMid}/{candidate.SdpMlineIndex} | {candidate.Content.Length} chars");
+                RecordCandidateType(peer, candidate.Content);
                 try { _signalingChannel.SendIceCandidate(peerId, candidate); }
                 catch (Exception ex) { _pluginLog?.Error($"[WebRTC] Failed to send ICE candidate for {peerId}: {ex.Message}"); }
+            };
+
+            peerConnection.IceGatheringStateChanged += (state) => {
+                peer.IceGatheringState = state;
             };
 
             // Connection established
@@ -395,7 +475,8 @@ namespace FyteClub.Networking
             };
 
             _peers[peerId] = peer;
-            
+            _lastPeerId = peerId;
+
             // Process any queued ICE candidates now that peer is ready
             _ = SafeTask.Run(async () => {
                 await Task.Delay(100); // Small delay to ensure peer is fully ready

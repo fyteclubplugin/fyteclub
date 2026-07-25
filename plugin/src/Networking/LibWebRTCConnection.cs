@@ -73,6 +73,39 @@ namespace FyteClub.Networking
         {
             _turnServers = turnServers ?? new List<FyteClub.Networking.TurnServerInfo>();
         }
+
+        private IceConnectionState? _lastIceState;
+
+        /// <summary>
+        /// Reduced-fidelity diagnostics for the fallback connection path - this class talks to
+        /// PeerConnection directly rather than through WebRTCManager, so candidate-type tracking
+        /// (see WebRTCManager.GetDiagnostics) isn't available here.
+        /// </summary>
+        public IceDiagnostics? GetDiagnostics()
+        {
+            if (_lastIceState == null) return null;
+
+            var state = _lastIceState switch
+            {
+                IceConnectionState.Checking => ConnectionDiagnosticState.Checking,
+                IceConnectionState.Connected => ConnectionDiagnosticState.Connected,
+                IceConnectionState.Completed => ConnectionDiagnosticState.Connected,
+                IceConnectionState.Failed => ConnectionDiagnosticState.Failed,
+                IceConnectionState.Disconnected => ConnectionDiagnosticState.Disconnected,
+                IceConnectionState.Closed => ConnectionDiagnosticState.Disconnected,
+                _ => ConnectionDiagnosticState.Unknown
+            };
+
+            return new IceDiagnostics
+            {
+                State = state,
+                LocalCandidateTypes = new List<string>(),
+                TurnConfigured = _turnServers.Count > 0,
+                Message = state == ConnectionDiagnosticState.Connected
+                    ? "Connected (fallback connection mode - detailed diagnostics unavailable)."
+                    : "Fallback connection mode - detailed candidate diagnostics unavailable. Try adding a TURN server in the Network tab if connections keep failing."
+            };
+        }
         
         public static string? PluginDirectory { get; set; }
 
@@ -132,6 +165,7 @@ namespace FyteClub.Networking
                 
                 _peerConnection.IceStateChanged += (state) => {
                     _pluginLog?.Debug($"ICE state changed: {state}");
+                    _lastIceState = state;
                     if (state == IceConnectionState.Disconnected || state == IceConnectionState.Failed)
                     {
                         _isConnected = false;

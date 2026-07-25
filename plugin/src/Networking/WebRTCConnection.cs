@@ -843,6 +843,11 @@ namespace FyteClub.Networking
             }
         }
         
+        public IceDiagnostics? GetDiagnostics()
+        {
+            return _webrtcManager?.GetDiagnostics();
+        }
+
         public void SelectTurnServerForSyncshell(string syncshellId)
         {
             if (_turnServers.Count == 0) return;

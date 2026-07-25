@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.MixedReality.WebRTC;
@@ -17,6 +18,8 @@ namespace FyteClub.Networking
         public bool MakingOffer { get; set; } = false;
         public bool IgnoreOffer { get; set; } = false;
         public IceConnectionState IceState { get; set; }
+        public IceGatheringState IceGatheringState { get; set; }
+        public HashSet<string> LocalCandidateTypes { get; } = new(StringComparer.OrdinalIgnoreCase); // "host"/"srflx"/"relay"
         public bool DataChannelReady { get; set; } = false;
         public bool HandlersRegistered { get; set; } = false; // Prevent duplicate handler registration
         public bool ReopenInProgress { get; set; } = false; // Prevent concurrent reopen attempts

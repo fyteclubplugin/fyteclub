@@ -156,5 +156,6 @@ namespace FyteClub.Networking
         bool IsEstablishing(); // Check if connection handshake is in progress
         List<TurnServerInfo> TurnServers { get; }
         void ConfigureTurnServers(List<TurnServerInfo> turnServers);
+        IceDiagnostics? GetDiagnostics();
     }
 }

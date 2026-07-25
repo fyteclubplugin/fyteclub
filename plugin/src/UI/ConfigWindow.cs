@@ -279,6 +279,18 @@ namespace FyteClub.UI
                 }
                 
                 ImGui.SameLine();
+                if (ImGui.SmallButton($"Diagnose##syncshell_{i}"))
+                {
+                    ImGui.OpenPopup($"IceDiagnostics##syncshell_{i}");
+                }
+
+                if (ImGui.BeginPopup($"IceDiagnostics##syncshell_{i}"))
+                {
+                    DrawIceDiagnosticsPopup(syncshell.Id);
+                    ImGui.EndPopup();
+                }
+
+                ImGui.SameLine();
                 if (ImGui.SmallButton($"Leave##syncshell_{i}"))
                 {
                     _plugin.RemoveSyncshell(syncshell.Id);
@@ -326,6 +338,36 @@ namespace FyteClub.UI
                     _ = SafeTask.Run(() => _plugin.StartChaosMode(), LogModule.UI);
                 }
             }
+        }
+
+        private void DrawIceDiagnosticsPopup(string syncshellId)
+        {
+            ImGui.SetNextWindowSizeConstraints(new Vector2(320, 0), new Vector2(420, 400));
+
+            var diagnostics = _plugin.SyncshellManager?.GetIceDiagnostics(syncshellId);
+            if (diagnostics == null)
+            {
+                ImGui.TextWrapped("No connection attempt yet - copy an invite code or wait for a peer to join.");
+                return;
+            }
+
+            var stateColor = diagnostics.State switch
+            {
+                ConnectionDiagnosticState.Connected => new Vector4(0, 1, 0, 1),
+                ConnectionDiagnosticState.Failed => new Vector4(1, 0, 0, 1),
+                ConnectionDiagnosticState.Disconnected => new Vector4(1, 0.5f, 0, 1),
+                _ => new Vector4(1, 1, 1, 1)
+            };
+            ImGui.TextColored(stateColor, $"State: {diagnostics.State}");
+
+            ImGui.Text(diagnostics.LocalCandidateTypes.Count > 0
+                ? $"Candidates gathered: {string.Join(", ", diagnostics.LocalCandidateTypes)}"
+                : "Candidates gathered: none yet");
+
+            ImGui.Text($"TURN server configured: {(diagnostics.TurnConfigured ? "yes" : "no")}");
+
+            ImGui.Separator();
+            ImGui.TextWrapped(diagnostics.Message);
         }
 
         private void DrawBlockListTab()
