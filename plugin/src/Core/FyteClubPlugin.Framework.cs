@@ -278,21 +278,47 @@ namespace FyteClub.Core
         private async Task PerformPeerDiscovery()
         {
             if (_syncshellManager == null) return;
-            
+
             var activeSyncshells = _syncshellManager.GetSyncshells().Where(s => s.IsActive).ToList();
             if (activeSyncshells.Count == 0) return;
-            
-            try
+
+            if (await IsWebRtcAvailableAsync())
             {
-                var testConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
-                testConnection?.Dispose();
-                
                 FyteLog.Debug(LogModule.WebRTC, "WebRTC P2P ready for {0} active syncshells", activeSyncshells.Count);
             }
-            catch (Exception ex)
+            else
             {
-                FyteLog.Error(LogModule.WebRTC, "WebRTC initialization failed - {0}", ex.Message);
+                FyteLog.Error(LogModule.WebRTC, "WebRTC initialization failed");
             }
+        }
+
+        private bool? _webrtcAvailable;
+        private DateTime _lastWebrtcCheck = DateTime.MinValue;
+        private static readonly TimeSpan WebrtcCheckInterval = TimeSpan.FromSeconds(30);
+
+        /// <summary>
+        /// Cached WebRTC-availability probe shared by the config UI (which used to run this same
+        /// create-and-dispose check inline in Draw(), blocking on .Result every 30s) and peer
+        /// discovery (which used to run an identical, separate check). One cache, one probe.
+        /// </summary>
+        public async Task<bool> IsWebRtcAvailableAsync()
+        {
+            if (_webrtcAvailable == null || (DateTime.UtcNow - _lastWebrtcCheck) > WebrtcCheckInterval)
+            {
+                try
+                {
+                    var testConnection = await WebRTCConnectionFactory.CreateConnectionAsync();
+                    testConnection.Dispose();
+                    _webrtcAvailable = true;
+                }
+                catch
+                {
+                    _webrtcAvailable = false;
+                }
+                _lastWebrtcCheck = DateTime.UtcNow;
+            }
+
+            return _webrtcAvailable.Value;
         }
 
         private void CheckModSystemAvailability()

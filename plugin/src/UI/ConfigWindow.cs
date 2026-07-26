@@ -23,8 +23,6 @@ namespace FyteClub.UI
         private string _inviteCode = "";
         private DateTime _lastCopyTime = DateTime.MinValue;
         private int _lastCopiedIndex = -1;
-        private bool? _webrtcAvailable = null;
-        private DateTime _lastWebrtcTest = DateTime.MinValue;
         private string _blockPlayerName = "";
         private List<TurnServerInfo>? _iceServerEdits = null;
 
@@ -191,22 +189,10 @@ namespace FyteClub.UI
                 
                 ImGui.SameLine();
                 
-                if (_webrtcAvailable == null || (DateTime.UtcNow - _lastWebrtcTest).TotalSeconds > 30)
-                {
-                    try
-                    {
-                        var testConnection = WebRTCConnectionFactory.CreateConnectionAsync().Result;
-                        testConnection.Dispose();
-                        _webrtcAvailable = true;
-                    }
-                    catch
-                    {
-                        _webrtcAvailable = false;
-                    }
-                    _lastWebrtcTest = DateTime.UtcNow;
-                }
-                
-                bool webrtcAvailable = _webrtcAvailable.Value;
+                // Shared, cached probe (FyteClubPlugin.IsWebRtcAvailableAsync) - previously this
+                // ran its own separate create-and-dispose WebRTC connection check independently
+                // of PerformPeerDiscovery's identical one.
+                bool webrtcAvailable = _plugin.IsWebRtcAvailableAsync().Result;
                 
                 if (!webrtcAvailable)
                 {
@@ -242,7 +228,11 @@ namespace FyteClub.UI
                     try
                     {
                         _ = SafeTask.Run(async () => {
-                            var inviteCode = _plugin._syncshellManager != null ? await _plugin._syncshellManager.GenerateNostrInviteCode(syncshell.Id) : "";
+                            // GenerateInviteCode picks the cheapest valid format itself (stale ->
+                            // bootstrap, already-connected -> lightweight bootstrap, otherwise a
+                            // fresh Nostr exchange) instead of always paying for a new WebRTC
+                            // offer + live relay round-trip.
+                            var inviteCode = _plugin._syncshellManager != null ? await _plugin._syncshellManager.GenerateInviteCode(syncshell.Id) : "";
                             ImGui.SetClipboardText(inviteCode);
 
                             if (inviteCode.StartsWith("BOOTSTRAP:"))
