@@ -73,6 +73,7 @@ namespace FyteClub.ModSync.Application
         // Penumbra - using API helper classes
         private GetEnabledState? _penumbraGetEnabledState;
         private Penumbra.Api.IpcSubscribers.GetGameObjectResourcePaths? _penumbraGetResourcePaths;
+        private Penumbra.Api.IpcSubscribers.GetModDirectory? _penumbraGetModDirectory;
         private CreateTemporaryCollection? _penumbraCreateTemporaryCollection;
         private AddTemporaryMod? _penumbraAddTemporaryMod;
         private RemoveTemporaryMod? _penumbraRemoveTemporaryMod;
@@ -390,6 +391,7 @@ namespace FyteClub.ModSync.Application
                 {
                     _penumbraGetEnabledState = new GetEnabledState(_pluginInterface);
                     _penumbraGetResourcePaths = new Penumbra.Api.IpcSubscribers.GetGameObjectResourcePaths(_pluginInterface);
+                    _penumbraGetModDirectory = new Penumbra.Api.IpcSubscribers.GetModDirectory(_pluginInterface);
                     _penumbraCreateTemporaryCollection = new CreateTemporaryCollection(_pluginInterface);
                     _penumbraAddTemporaryMod = new AddTemporaryMod(_pluginInterface);
                     _penumbraRemoveTemporaryMod = new RemoveTemporaryMod(_pluginInterface);
@@ -1321,6 +1323,42 @@ namespace FyteClub.ModSync.Application
             return resolvedCandidates[0];
         }
 
+        /// <summary>
+        /// Penumbra's GetGameObjectResourcePaths/GetPlayerResourcePaths returns
+        /// Dictionary&lt;ActualPath, HashSet&lt;GamePath&gt;&gt; - keyed by the actual (possibly
+        /// modded) file, valued by the set of vanilla game paths it replaces (see the Penumbra.Api
+        /// XML docs on IPenumbraApiResourceTree.GetGameObjectResourcePaths: "dictionaries of actual
+        /// paths ... to game paths"). ProcessFileReplacementsAsync read this backwards for as long
+        /// as it existed - treating the actual-path key as "the game path" and the game-path values
+        /// as "candidate replacement files". Any candidate picked that way is a short relative
+        /// game-path string, never a real file, so File.Exists always failed on it - previously
+        /// masked because the old fallback silently included the entry anyway; the
+        /// drop-if-unresolvable fix (SelectBestReplacementCandidate) later just made the resulting
+        /// empty mod list visible instead of quietly shipping broken data to every peer/chaos target.
+        /// </summary>
+        public static Dictionary<string, List<string>> InvertActualPathToGamePaths(Dictionary<string, HashSet<string>> resourcePaths)
+        {
+            var byGamePath = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in resourcePaths)
+            {
+                var actualPath = kvp.Key;
+                if (kvp.Value == null) continue;
+
+                foreach (var gamePath in kvp.Value)
+                {
+                    if (string.Equals(actualPath, gamePath, StringComparison.Ordinal)) continue; // vanilla, not a real redirect
+
+                    if (!byGamePath.TryGetValue(gamePath, out var list))
+                    {
+                        list = new List<string>();
+                        byGamePath[gamePath] = list;
+                    }
+                    list.Add(actualPath);
+                }
+            }
+            return byGamePath;
+        }
+
         private async Task<List<string>> ProcessFileReplacementsAsync(Dictionary<string, HashSet<string>> resourcePaths)
         {
             var mods = new List<string>();
@@ -1330,14 +1368,11 @@ namespace FyteClub.ModSync.Application
             var gamePathsWithReplacements = 0;
             var candidates = new List<(string GamePath, string ReplacementPath, string ResolvedPath)>();
 
-            foreach (var kvp in resourcePaths)
-            {
-                var gamePath = kvp.Key;
-                var replacementCandidates = kvp.Value?
-                    .Where(p => !string.Equals(p, gamePath, StringComparison.Ordinal))
-                    .ToList();
+            var byGamePath = InvertActualPathToGamePaths(resourcePaths);
 
-                if (replacementCandidates == null || replacementCandidates.Count == 0)
+            foreach (var (gamePath, replacementCandidates) in byGamePath)
+            {
+                if (replacementCandidates.Count == 0)
                 {
                     continue;
                 }
@@ -1515,6 +1550,25 @@ namespace FyteClub.ModSync.Application
 
         private string? GetPenumbraModDirectory()
         {
+            // Ask Penumbra directly (Penumbra.Api.IpcSubscribers.GetModDirectory) instead of
+            // scraping its config file - the config.json this used to parse doesn't exist in
+            // current Penumbra versions (config is stored differently now), so this always
+            // silently returned null, which only mattered for the rare "vanilla path swap"
+            // replacement case (real mod redirects come back from Penumbra as already-rooted
+            // absolute paths and never call this at all).
+            try
+            {
+                var dir = _penumbraGetModDirectory?.Invoke();
+                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                {
+                    return dir;
+                }
+            }
+            catch (Exception ex)
+            {
+                _pluginLog.Warning($"[PATH DEBUG] Error getting Penumbra mod dir via IPC: {ex.Message}");
+            }
+
             try
             {
                 var roamingPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
@@ -1531,7 +1585,7 @@ namespace FyteClub.ModSync.Application
                             var dir = match.Groups[1].Value.Replace("\\\\", "\\");
                             if (Directory.Exists(dir))
                             {
-                                _pluginLog.Debug($"[PATH DEBUG] Penumbra mod dir: {dir}");
+                                _pluginLog.Debug($"[PATH DEBUG] Penumbra mod dir (config fallback): {dir}");
                                 return dir;
                             }
                         }
@@ -1540,7 +1594,7 @@ namespace FyteClub.ModSync.Application
             }
             catch (Exception ex)
             {
-                _pluginLog.Warning($"[PATH DEBUG] Error getting Penumbra mod dir: {ex.Message}");
+                _pluginLog.Warning($"[PATH DEBUG] Error getting Penumbra mod dir from config: {ex.Message}");
             }
             return null;
         }

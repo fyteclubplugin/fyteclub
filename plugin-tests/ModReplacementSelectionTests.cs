@@ -105,4 +105,116 @@ namespace FyteClub.Tests
             Assert.Equal(real, result.ResolvedPath);
         }
     }
+
+    /// <summary>
+    /// Regression tests for a deeper bug found while investigating why Chaos mode stopped
+    /// finding any mods at all after the SelectBestReplacementCandidate fix shipped: Penumbra's
+    /// GetGameObjectResourcePaths/GetPlayerResourcePaths returns
+    /// Dictionary&lt;ActualPath, HashSet&lt;GamePath&gt;&gt; (confirmed against the Penumbra.Api
+    /// XML docs: "dictionaries of actual paths ... to game paths") - keyed by the real/modded
+    /// file, valued by the vanilla game paths it replaces. FyteClubModIntegration read this
+    /// backwards for as long as the method existed, treating the actual-path key as the game
+    /// path and the game-path values as candidate replacement files. Every "candidate" produced
+    /// that way is a short relative game-path string, which File.Exists can never resolve -
+    /// previously invisible because the old fallback shipped the broken entry anyway, and only
+    /// surfaced as "0 mods found" once the drop-if-unresolvable fix stopped doing that.
+    /// </summary>
+    public class ModResourcePathInversionTests
+    {
+        [Fact]
+        public void SingleActualFile_MapsToItsGamePath()
+        {
+            // Real shape: one modded file (key) redirects one vanilla game path (value).
+            var resourcePaths = new Dictionary<string, HashSet<string>>
+            {
+                [@"C:\Users\Me\Documents\penumbra\MyMod\chara\human\c0301\obj\body\b0001\texture\--c0301b0001_d.tex"]
+                    = new() { "chara/human/c0301/obj/body/b0001/texture/--c0301b0001_d.tex" }
+            };
+
+            var result = FyteClubModIntegration.InvertActualPathToGamePaths(resourcePaths);
+
+            Assert.Single(result);
+            var gamePath = "chara/human/c0301/obj/body/b0001/texture/--c0301b0001_d.tex";
+            Assert.True(result.ContainsKey(gamePath));
+            Assert.Equal(@"C:\Users\Me\Documents\penumbra\MyMod\chara\human\c0301\obj\body\b0001\texture\--c0301b0001_d.tex", result[gamePath][0]);
+        }
+
+        [Fact]
+        public void VanillaEntry_WhereKeyEqualsValue_IsNotTreatedAsAReplacement()
+        {
+            // Penumbra includes unmodified resources too, where the "actual path" is just the
+            // game path itself - not a real redirect, must be excluded.
+            var resourcePaths = new Dictionary<string, HashSet<string>>
+            {
+                ["chara/human/c0301/obj/body/b0001/texture/vanilla.tex"]
+                    = new() { "chara/human/c0301/obj/body/b0001/texture/vanilla.tex" }
+            };
+
+            var result = FyteClubModIntegration.InvertActualPathToGamePaths(resourcePaths);
+
+            Assert.Empty(result);
+        }
+
+        [Fact]
+        public void OneActualFile_ReplacingMultipleGamePaths_ProducesOneEntryPerGamePath()
+        {
+            // A single texture commonly backs more than one game path (e.g. base + overlay slots).
+            var sharedFile = @"C:\Users\Me\Documents\penumbra\MyMod\shared.tex";
+            var resourcePaths = new Dictionary<string, HashSet<string>>
+            {
+                [sharedFile] = new() { "chara/slot_a/texture.tex", "chara/slot_b/texture.tex" }
+            };
+
+            var result = FyteClubModIntegration.InvertActualPathToGamePaths(resourcePaths);
+
+            Assert.Equal(2, result.Count);
+            Assert.Equal(sharedFile, result["chara/slot_a/texture.tex"][0]);
+            Assert.Equal(sharedFile, result["chara/slot_b/texture.tex"][0]);
+        }
+
+        [Fact]
+        public void MultipleActualFiles_ClaimingSameGamePath_AreGroupedAsCandidates()
+        {
+            // The scenario that originally looked like "multi-race body mod ambiguity": two
+            // different actual files both list the same game path, so both must appear as
+            // candidates for that single game path (for SelectBestReplacementCandidate to pick
+            // between), rather than being treated as two separate unrelated game paths.
+            var highlanderFile = @"C:\Users\Me\Documents\penumbra\The_Body_SE\Step 3 - Highlander\T0\body_d.tex";
+            var vieraFile = @"C:\Users\Me\Documents\penumbra\The_Body_SE\Step 5 - Viera\T0\body_d.tex";
+            var gamePath = "chara/human/c0301/obj/body/b0001/texture/--c0301b0001_d.tex";
+
+            var resourcePaths = new Dictionary<string, HashSet<string>>
+            {
+                [highlanderFile] = new() { gamePath },
+                [vieraFile] = new() { gamePath }
+            };
+
+            var result = FyteClubModIntegration.InvertActualPathToGamePaths(resourcePaths);
+
+            Assert.Single(result);
+            Assert.Equal(2, result[gamePath].Count);
+            Assert.Contains(highlanderFile, result[gamePath]);
+            Assert.Contains(vieraFile, result[gamePath]);
+        }
+
+        [Fact]
+        public void EmptyInput_ProducesEmptyOutput()
+        {
+            var result = FyteClubModIntegration.InvertActualPathToGamePaths(new Dictionary<string, HashSet<string>>());
+            Assert.Empty(result);
+        }
+
+        [Fact]
+        public void NullValueSet_IsSkippedWithoutThrowing()
+        {
+            var resourcePaths = new Dictionary<string, HashSet<string>>
+            {
+                ["some/actual/path.tex"] = null!
+            };
+
+            var result = FyteClubModIntegration.InvertActualPathToGamePaths(resourcePaths);
+
+            Assert.Empty(result);
+        }
+    }
 }
