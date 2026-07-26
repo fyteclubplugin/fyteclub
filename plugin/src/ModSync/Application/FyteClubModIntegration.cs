@@ -1192,41 +1192,50 @@ namespace FyteClub.ModSync.Application
                         }
                     }
 
-                    // Get Glamourer data for the same target character
-                    if (IsGlamourerAvailable && targetCharacter != null)
+                    // ProcessFileReplacementsAsync above now does real file I/O (reading/hashing
+                    // mod files from disk, now that it actually resolves candidates correctly) -
+                    // .NET's async file APIs don't guarantee resuming back on the framework thread,
+                    // so everything below (which touches Glamourer/Penumbra/Customize+/Heels/
+                    // Honorific IPC - all of which assert main-thread access internally) has to
+                    // explicitly re-enter it rather than assume RunOnTick's outer wrapper still holds.
+                    await _framework.RunOnTick(async () =>
                     {
-                        _pluginLog.Info($" [GLAMOURER DEBUG] IsGlamourerAvailable=true, targetCharacter={targetCharacter.Name} (ObjectIndex={targetCharacter.ObjectIndex})");
-                        playerInfo.GlamourerData = await GetGlamourerData(targetCharacter);
-                        _pluginLog.Info($" [GLAMOURER DEBUG] GetGlamourerData returned: {playerInfo.GlamourerData?.Length ?? 0} chars");
-                    }
-                    else
-                    {
-                        _pluginLog.Info($" [GLAMOURER DEBUG] Skipped: IsGlamourerAvailable={IsGlamourerAvailable}, targetCharacter={(targetCharacter != null ? targetCharacter.Name.TextValue : "null")}");
-                    }
+                        // Get Glamourer data for the same target character
+                        if (IsGlamourerAvailable && targetCharacter != null)
+                        {
+                            _pluginLog.Info($" [GLAMOURER DEBUG] IsGlamourerAvailable=true, targetCharacter={targetCharacter.Name} (ObjectIndex={targetCharacter.ObjectIndex})");
+                            playerInfo.GlamourerData = await GetGlamourerData(targetCharacter);
+                            _pluginLog.Info($" [GLAMOURER DEBUG] GetGlamourerData returned: {playerInfo.GlamourerData?.Length ?? 0} chars");
+                        }
+                        else
+                        {
+                            _pluginLog.Info($" [GLAMOURER DEBUG] Skipped: IsGlamourerAvailable={IsGlamourerAvailable}, targetCharacter={(targetCharacter != null ? targetCharacter.Name.TextValue : "null")}");
+                        }
 
-                    // Get Penumbra meta manipulations (mod configurations)
-                    if (IsPenumbraAvailable)
-                    {
-                        playerInfo.ManipulationData = GetMetaManipulations();
-                    }
+                        // Get Penumbra meta manipulations (mod configurations)
+                        if (IsPenumbraAvailable)
+                        {
+                            playerInfo.ManipulationData = GetMetaManipulations();
+                        }
 
-                    // Get other plugin data
-                    if (IsCustomizePlusAvailable && targetCharacter != null)
-                    {
-                        playerInfo.CustomizePlusData = await GetCustomizePlusData(targetCharacter);
-                    }
+                        // Get other plugin data
+                        if (IsCustomizePlusAvailable && targetCharacter != null)
+                        {
+                            playerInfo.CustomizePlusData = await GetCustomizePlusData(targetCharacter);
+                        }
 
-                    // Only read Simple Heels offset for the local player
-                    if (IsHeelsAvailable && _objectTable.LocalPlayer != null && targetCharacter?.ObjectIndex == _objectTable.LocalPlayer.ObjectIndex)
-                    {
-                        playerInfo.SimpleHeelsOffset = GetHeelsOffset();
-                    }
+                        // Only read Simple Heels offset for the local player
+                        if (IsHeelsAvailable && _objectTable.LocalPlayer != null && targetCharacter?.ObjectIndex == _objectTable.LocalPlayer.ObjectIndex)
+                        {
+                            playerInfo.SimpleHeelsOffset = GetHeelsOffset();
+                        }
 
-                    // Only read Honorific title for the local player
-                    if (IsHonorificAvailable && _objectTable.LocalPlayer != null && targetCharacter?.ObjectIndex == _objectTable.LocalPlayer.ObjectIndex)
-                    {
-                        playerInfo.HonorificTitle = GetLocalHonorificTitle();
-                    }
+                        // Only read Honorific title for the local player
+                        if (IsHonorificAvailable && _objectTable.LocalPlayer != null && targetCharacter?.ObjectIndex == _objectTable.LocalPlayer.ObjectIndex)
+                        {
+                            playerInfo.HonorificTitle = GetLocalHonorificTitle();
+                        }
+                    });
 
                     return playerInfo;
                 });
