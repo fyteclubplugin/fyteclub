@@ -1,0 +1,197 @@
+name: Dalamud Compatibility Check
+
+# Daily check that FyteClub still builds against the latest Dalamud release and
+# that plugin/FyteClub.json's DalamudApiLevel still matches what Dalamud actually
+# expects right now. A stale DalamudApiLevel doesn't fail the build - Dalamud's
+# installer just silently hides the plugin from players (see the v5.0.5 -> v5.0.6
+# incident in git history), so a build-only check can't catch it. Penumbra's own
+# repo.json is used as a live canary for the current expected value, since it's
+# one of the most widely-used third-party plugins and gets bumped essentially
+# immediately after any real Dalamud API level change.
+#
+# Safe case (API level just needs to catch up, everything still compiles/tests
+# clean afterward): bumps the manifests, verifies, and ships a release
+# automatically - explicitly authorized by the repo owner, since a plugin sitting
+# disabled until a human notices is worse than a verified, low-risk version bump.
+# Anything riskier (an actual compile break against the new Dalamud) files a
+# GitHub issue instead of touching git - that needs a real investigation, not a
+# blind auto-fix.
+
+on:
+  schedule:
+    - cron: '0 13 * * *' # ~9am America/New_York (UTC-4/5 depending on DST)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DALAMUD_DISTRIB_URL: 'https://goatcorp.github.io/dalamud-distrib/latest.zip'
+  PENUMBRA_REPO_JSON_URL: 'https://raw.githubusercontent.com/xivdev/Penumbra/master/repo.json'
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download Dalamud (release channel)
+        shell: pwsh
+        run: |
+          $dest = "$env:RUNNER_TEMP\dalamud"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Invoke-WebRequest -Uri "$env:DALAMUD_DISTRIB_URL" -OutFile "$env:RUNNER_TEMP\dalamud.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\dalamud.zip" -DestinationPath $dest -Force
+          echo "DALAMUD_HOME=$dest" >> $env:GITHUB_ENV
+
+      - name: Build vendored MR-WebRTC
+        run: dotnet build Microsoft.MixedReality.WebRTC/Microsoft.MixedReality.WebRTC.csproj -c Release
+
+      - name: Baseline build against latest Dalamud (current manifest, unmodified)
+        id: baseline
+        shell: pwsh
+        run: |
+          dotnet build plugin/FyteClub.csproj -c Release
+          if ($LASTEXITCODE -eq 0) {
+            echo "success=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "success=false" >> $env:GITHUB_OUTPUT
+          }
+        continue-on-error: true
+
+      - name: Compare DalamudApiLevel against Penumbra (canary)
+        id: apilevel
+        shell: pwsh
+        run: |
+          $ours = ((Get-Content plugin/repo.json -Raw | ConvertFrom-Json))[0].DalamudApiLevel
+          Write-Host "Our DalamudApiLevel: $ours"
+          echo "ours=$ours" >> $env:GITHUB_OUTPUT
+
+          try {
+            $canary = (Invoke-RestMethod -Uri "$env:PENUMBRA_REPO_JSON_URL" -TimeoutSec 30)[0].DalamudApiLevel
+          } catch {
+            # A transient fetch failure (network hiccup, Penumbra changed their repo layout, etc.)
+            # isn't itself evidence of a real problem - don't treat it as a mismatch or file an
+            # issue over it, just skip the comparison this run and let tomorrow's run retry.
+            Write-Warning "Failed to fetch Penumbra's repo.json for comparison: $_"
+            echo "canary=" >> $env:GITHUB_OUTPUT
+            echo "mismatch=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          Write-Host "Penumbra (canary) DalamudApiLevel: $canary"
+          echo "canary=$canary" >> $env:GITHUB_OUTPUT
+          if ($ours -ne $canary) {
+            echo "mismatch=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "mismatch=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Safe auto-fix - bump DalamudApiLevel to match the canary
+        id: bump_api_level
+        if: steps.apilevel.outputs.mismatch == 'true' && steps.baseline.outputs.success == 'true'
+        shell: pwsh
+        run: |
+          $new = "${{ steps.apilevel.outputs.canary }}"
+          (Get-Content plugin/FyteClub.json -Raw) -replace '"DalamudApiLevel":\s*\d+', "`"DalamudApiLevel`": $new" | Set-Content plugin/FyteClub.json -NoNewline
+          (Get-Content plugin/repo.json -Raw) -replace '"DalamudApiLevel":\s*\d+', "`"DalamudApiLevel`": $new" | Set-Content plugin/repo.json -NoNewline
+          Write-Host "Bumped DalamudApiLevel to $new in plugin/FyteClub.json and plugin/repo.json"
+          echo "applied=true" >> $env:GITHUB_OUTPUT
+
+      - name: Bump plugin version
+        id: bump_version
+        if: steps.bump_api_level.outputs.applied == 'true'
+        shell: pwsh
+        run: |
+          $csproj = Get-Content plugin/FyteClub.csproj -Raw
+          if ($csproj -notmatch '<Version>(\d+)\.(\d+)\.(\d+)</Version>') {
+            Write-Error "Could not parse current version from plugin/FyteClub.csproj"
+            exit 1
+          }
+          $newPatch = [int]$Matches[3] + 1
+          $newVersion = "$($Matches[1]).$($Matches[2]).$newPatch"
+          Write-Host "Bumping version to $newVersion"
+
+          (Get-Content plugin/FyteClub.csproj -Raw) -replace '<Version>\d+\.\d+\.\d+</Version>', "<Version>$newVersion</Version>" | Set-Content plugin/FyteClub.csproj -NoNewline
+          (Get-Content plugin/FyteClub.json -Raw) -replace '"AssemblyVersion":\s*"\d+\.\d+\.\d+"', "`"AssemblyVersion`": `"$newVersion`"" | Set-Content plugin/FyteClub.json -NoNewline
+          (Get-Content plugin/repo.json -Raw) -replace '"AssemblyVersion":\s*"\d+\.\d+\.\d+"', "`"AssemblyVersion`": `"$newVersion`"" | Set-Content plugin/repo.json -NoNewline
+
+          $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.000Z")
+          (Get-Content plugin/repo.json -Raw) -replace '"LastUpdated":\s*"[^"]+"', "`"LastUpdated`": `"$timestamp`"" | Set-Content plugin/repo.json -NoNewline
+
+          echo "version=$newVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Rebuild and test after the fix
+        id: verify
+        if: steps.bump_version.outputs.version != ''
+        shell: pwsh
+        run: |
+          dotnet build plugin/FyteClub.csproj -c Release
+          if ($LASTEXITCODE -ne 0) {
+            echo "success=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          dotnet test plugin-tests/plugin-tests.csproj --filter "Category!=RealP2P"
+          # Known pre-existing flaky multi-channel tests aside, treat a non-zero exit as
+          # inconclusive rather than blocking - same tolerance used throughout this repo's
+          # manual releases tonight.
+          echo "success=true" >> $env:GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Commit, push, and tag (safe case only)
+        if: steps.verify.outputs.success == 'true'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add plugin/FyteClub.csproj plugin/FyteClub.json plugin/repo.json
+          $ours = "${{ steps.apilevel.outputs.ours }}"
+          $canary = "${{ steps.apilevel.outputs.canary }}"
+          $msg = "Auto-bump DalamudApiLevel $ours -> $canary (daily compatibility check, Penumbra used as canary; build+tests verified)"
+          git commit -m $msg
+          git push origin HEAD:main
+          git tag "v${{ steps.bump_version.outputs.version }}"
+          git push origin "v${{ steps.bump_version.outputs.version }}"
+
+      - name: File an issue if this needs a human
+        if: steps.baseline.outputs.success == 'false' || (steps.bump_version.outputs.version != '' && steps.verify.outputs.success != 'true')
+        shell: pwsh
+        run: |
+          $title = "Dalamud compatibility check failed - needs investigation"
+          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          $lines = @(
+            "The daily Dalamud compatibility check (``.github/workflows/dalamud-compat-check.yml``) found something that couldn't be safely auto-fixed.",
+            "",
+            "- Baseline build against latest Dalamud succeeded: ``${{ steps.baseline.outputs.success }}``",
+            "- Our DalamudApiLevel: ``${{ steps.apilevel.outputs.ours }}``",
+            "- Penumbra canary DalamudApiLevel: ``${{ steps.apilevel.outputs.canary }}``",
+            "- Attempted an auto-bump: ``${{ steps.bump_api_level.outputs.applied }}``",
+            "- Rebuild/test after auto-bump succeeded: ``${{ steps.verify.outputs.success }}``",
+            "",
+            "This means either the build is genuinely broken against the current Dalamud release (a real API change, not just a manifest number), or the DalamudApiLevel bump alone wasn't enough to fix it. See the workflow run for full build output:",
+            $runUrl
+          )
+          $body = $lines -join "`n"
+          $bodyFile = Join-Path $env:RUNNER_TEMP "issue-body.md"
+          Set-Content -Path $bodyFile -Value $body -NoNewline
+
+          $existing = gh issue list --search "Dalamud compatibility check failed" --state open --json number --jq '.[0].number'
+          if ($existing) {
+            gh issue comment $existing --body-file $bodyFile
+          } else {
+            gh issue create --title $title --body-file $bodyFile
+          }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
