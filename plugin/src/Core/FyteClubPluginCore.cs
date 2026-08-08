@@ -39,6 +39,7 @@ namespace FyteClub.Core
         private readonly IClientState _clientState;
         public readonly IFramework _framework;
         public readonly IPluginLog _pluginLog;
+        private readonly IGameGui _gameGui;
         
         // Core services
         private readonly FyteClubMediator _mediator = new();
@@ -46,6 +47,7 @@ namespace FyteClub.Core
         private readonly HttpClient _httpClient = new();
         private WindowSystem? _windowSystem;
         private ConfigWindow? _configWindow;
+        private FyteClub.UI.TransferProgressOverlay? _transferProgressOverlay;
         private Action? _openConfigUiHandler;
         private readonly CancellationTokenSource _cancellationTokenSource = new();
 
@@ -83,7 +85,8 @@ namespace FyteClub.Core
             IObjectTable objectTable,
             IClientState clientState,
             IPluginLog pluginLog,
-            IFramework framework)
+            IFramework framework,
+            IGameGui gameGui)
         {
             _pluginInterface = pluginInterface;
             _commandManager = commandManager;
@@ -91,6 +94,7 @@ namespace FyteClub.Core
             _clientState = clientState;
             _framework = framework;
             _pluginLog = pluginLog;
+            _gameGui = gameGui;
 
             InitializeCore();
             InitializeServices();
@@ -201,6 +205,9 @@ namespace FyteClub.Core
             // a freshly-written lambda creates a different delegate and silently no-ops.
             _openConfigUiHandler = () => _configWindow.Toggle();
             _pluginInterface.UiBuilder.OpenConfigUi += _openConfigUiHandler;
+
+            _transferProgressOverlay = new FyteClub.UI.TransferProgressOverlay(this, _objectTable, _gameGui);
+            _pluginInterface.UiBuilder.Draw += _transferProgressOverlay.Draw;
         }
 
         private void InitializeEventHandlers()
@@ -599,6 +606,7 @@ namespace FyteClub.Core
         public IClientState ClientState => _clientState;
         public IObjectTable ObjectTable => _objectTable;
         public IFramework Framework => _framework;
+        public FyteClub.ModSync.Orchestration.TransferProgress? GetActiveTransferProgress() => _modSyncOrchestrator?.GetActiveTransferProgress();
         
         // Public method for UI to force cache local mods
         public async Task ForceCacheLocalPlayerMods(string playerName)
@@ -621,6 +629,10 @@ namespace FyteClub.Core
                 if (_configWindow != null && _openConfigUiHandler != null)
                 {
                     _pluginInterface.UiBuilder.OpenConfigUi -= _openConfigUiHandler;
+                }
+                if (_transferProgressOverlay != null)
+                {
+                    _pluginInterface.UiBuilder.Draw -= _transferProgressOverlay.Draw;
                 }
                 _commandManager.RemoveHandler(CommandName);
 

@@ -2820,7 +2820,24 @@ namespace FyteClub.ModSync.Orchestration
         private Timer? _completionCheckTimer;
         private bool _isApplyingMods = false; // Flag to prevent duplicate mod application
         private readonly object _fileTrackingLock = new(); // Lock for thread-safe access to file tracking collections
-        
+
+        /// <summary>
+        /// Snapshot of the currently in-flight inbound file transfer, if any, for UI display.
+        /// Only one transfer is tracked at a time by this orchestrator.
+        /// </summary>
+        public TransferProgress? GetActiveTransferProgress()
+        {
+            lock (_fileTrackingLock)
+            {
+                if (string.IsNullOrEmpty(_currentTransferPlayerName) || _expectedFiles.Count == 0)
+                {
+                    return null;
+                }
+
+                return new TransferProgress(_currentTransferPlayerName, _completedFiles.Count, _expectedFiles.Count);
+            }
+        }
+
         /// <summary>
         /// Check if all files for a player transfer are complete and trigger mod application
         /// </summary>
@@ -3328,6 +3345,14 @@ namespace FyteClub.ModSync.Orchestration
         Cancelled
     }
     
+    /// <summary>
+    /// Snapshot of an in-flight inbound mod transfer for a single player, for UI display.
+    /// </summary>
+    public readonly record struct TransferProgress(string PlayerName, int FilesCompleted, int FilesTotal)
+    {
+        public float Fraction => FilesTotal > 0 ? (float)FilesCompleted / FilesTotal : 0f;
+    }
+
     /// <summary>
     /// File metadata for streaming transfers
     /// </summary>
