@@ -22,6 +22,12 @@ namespace FyteClub.Syncshells
         {
             _configPath = Path.Combine(configDirectory, "syncshells.json");
             _pluginLog = pluginLog;
+            // Dalamud doesn't guarantee this directory exists - without this, every SaveConfig()
+            // throws DirectoryNotFoundException (caught and logged, not surfaced), so syncshells
+            // never actually persist. Confirmed live: pluginConfigs\FyteClub\ never existed on
+            // either test client, so every syncshell created this session only ever lived in
+            // memory and vanished on plugin reload.
+            Directory.CreateDirectory(configDirectory);
             LoadConfig();
         }
 
