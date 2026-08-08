@@ -210,18 +210,22 @@ namespace FyteClub.ModSync.Transfer
 
             var effectiveTotalChunks = EnsureValidTotalChunks(chunk);
 
-            if (!_activeSessions.TryGetValue(sessionId, out var session))
+            // GetOrAdd is atomic: concurrent chunks for the same file (fired from separate WebRTC
+            // data-channel callbacks) always converge on one TransferSession. A prior
+            // TryGetValue-then-index-set here let two racing threads each create their own session,
+            // silently orphaning whichever one lost - that transfer would then stall forever one
+            // chunk short, since the sender never resends a chunk it already sent.
+            var createdSession = new Lazy<TransferSession>(() => new TransferSession
             {
-                // Start new receive session using sanitized metadata
-                session = new TransferSession
-                {
-                    SessionId = sessionId,
-                    FileName = chunk.FileName,
-                    TotalChunks = effectiveTotalChunks,
-                    FileData = AllocateBuffer(effectiveTotalChunks, chunk)
-                };
-                _activeSessions[sessionId] = session;
+                SessionId = sessionId,
+                FileName = chunk.FileName,
+                TotalChunks = effectiveTotalChunks,
+                FileData = AllocateBuffer(effectiveTotalChunks, chunk)
+            });
+            var session = _activeSessions.GetOrAdd(sessionId, _ => createdSession.Value);
 
+            if (createdSession.IsValueCreated && ReferenceEquals(session, createdSession.Value))
+            {
                 _pluginLog.Info($"[ProgressiveTransfer] Starting receive: {chunk.FileName} ({effectiveTotalChunks} chunks)");
             }
             else

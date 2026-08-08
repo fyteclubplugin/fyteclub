@@ -294,17 +294,15 @@ namespace FyteClub.UI
             }
             
             ImGui.Separator();
-            if (ImGui.Button("Resync Mods"))
-            {
-                _plugin.RequestAllPlayerMods();
-            }
-            
-            ImGui.SameLine();
-            if (ImGui.Button("Resync My Appearance"))
+            if (ImGui.Button("Push My Mods"))
             {
                 _plugin.ShareMods();
             }
-            
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Re-sends your current appearance to all connected syncshell peers");
+            }
+
             ImGui.SameLine();
             if (ImGui.Button("Discover Peers"))
             {

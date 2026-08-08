@@ -39,29 +39,6 @@ namespace FyteClub.Core
             });
         }
 
-        public void RequestAllPlayerMods()
-        {
-            _framework.RunOnFrameworkThread(() =>
-            {
-                var localPlayer = _objectTable.LocalPlayer;
-                var localPlayerName = localPlayer?.Name?.TextValue;
-                if (string.IsNullOrEmpty(localPlayerName)) return;
-
-                var capturedPlayerName = localPlayerName;
-                _ = SafeTask.Run(async () =>
-                {
-                    try
-                    {
-                        await SharePlayerModsToSyncshells(capturedPlayerName);
-                    }
-                    catch (Exception ex)
-                    {
-                        FyteLog.Error(LogModule.ModSync, "Manual mod upload failed: {0}", ex.Message);
-                    }
-                }, LogModule.ModSync);
-            });
-        }
-
         private async Task SharePlayerModsToSyncshells(string playerName)
         {
             if (_modSystemIntegration == null || _modSyncOrchestrator == null) return;
