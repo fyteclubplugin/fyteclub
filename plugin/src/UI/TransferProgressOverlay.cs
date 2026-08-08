@@ -4,6 +4,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Objects;
 using Dalamud.Plugin.Services;
 using FyteClub.Core;
+using FyteClub.Core.Logging;
 
 namespace FyteClub.UI
 {
@@ -16,6 +17,9 @@ namespace FyteClub.UI
         private readonly FyteClubPlugin _plugin;
         private readonly IObjectTable _objectTable;
         private readonly IGameGui _gameGui;
+        // Edge-tracking only, so this logs once per state change instead of once per frame
+        // (this runs every ImGui frame - unconditional per-frame logging would flood dalamud.log).
+        private string? _lastLoggedState;
 
         private const float BarWidth = 160f;
         private const float BarHeight = 18f;
@@ -28,25 +32,40 @@ namespace FyteClub.UI
             _gameGui = gameGui;
         }
 
+        private void LogStateChange(string state)
+        {
+            if (_lastLoggedState == state)
+            {
+                return;
+            }
+            _lastLoggedState = state;
+            FyteLog.Info(LogModule.UI, "[TransferProgressOverlay] {0}", state);
+        }
+
         public void Draw()
         {
             var progress = _plugin.GetActiveTransferProgress();
             if (progress == null)
             {
+                LogStateChange("No active transfer");
                 return;
             }
 
             var character = FindCharacterByName(progress.Value.PlayerName);
             if (character == null)
             {
+                LogStateChange($"Progress active for {progress.Value.PlayerName} ({progress.Value.FilesCompleted}/{progress.Value.FilesTotal}) but character not found in object table - not drawing");
                 return;
             }
 
             var worldPos = character.Position with { Y = character.Position.Y + HeightAboveHead };
             if (!_gameGui.WorldToScreen(worldPos, out var screenPos))
             {
+                LogStateChange($"Progress active for {progress.Value.PlayerName} ({progress.Value.FilesCompleted}/{progress.Value.FilesTotal}), character found, but WorldToScreen failed - off-screen or behind camera");
                 return;
             }
+
+            LogStateChange($"Drawing bar for {progress.Value.PlayerName} at screen ({screenPos.X:F0},{screenPos.Y:F0})");
 
             var topLeft = new Vector2(screenPos.X - BarWidth / 2, screenPos.Y - BarHeight / 2);
             var bottomRight = topLeft + new Vector2(BarWidth, BarHeight);
