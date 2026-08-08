@@ -19,8 +19,13 @@ namespace FyteClub.Core.Logging
 
         private static readonly Regex ControlCharSanitizer = new(@"[\r\n\t]", RegexOptions.Compiled);
         // Emoji / pictographic / symbol ranges commonly found in this codebase's log strings.
+        // CAUTION: this pattern mixes literal Unicode range characters with \u-escaped
+        // surrogates. A routine edit previously mangled the literal-character ranges into "--",
+        // turning this into a near-universal character class that silently ate almost all log
+        // text (garbled/blank log lines, not just missing emoji). Verify with a regex test
+        // against plain ASCII text before touching this line again.
         private static readonly Regex EmojiSanitizer = new(
-            @"[←-⇿--\uD83C-􏰀-\uDFFF]+\s*",
+            "[←-⇿⌀-➿⬀-⯿️\uD800-\uDFFF]+\\s*",
             RegexOptions.Compiled);
         private static readonly Regex SecretSanitizer = new(
             @"(?i)\b(password|passwd|secret|token|apikey|api_key|encryptionkey|privatekey)\b\s*[=:]\s*\S+",
