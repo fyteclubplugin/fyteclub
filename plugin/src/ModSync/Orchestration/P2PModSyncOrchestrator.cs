@@ -2707,9 +2707,12 @@ namespace FyteClub.ModSync.Orchestration
         {
             try
             {
-                // Compute hash for the file
-                using var sha256 = System.Security.Cryptography.SHA256.Create();
-                var hashBytes = sha256.ComputeHash(fileContent);
+                // Compute hash for the file - must match FileTransferSystem/FyteClubModIntegration's
+                // ComputeFileHash (SHA1), since that's the hash the sender puts in "gamePath|CACHED:hash"
+                // mod entries. This previously used SHA256, so every hash here was different from what
+                // the sender referenced - GetCachedFile(hash) missed on every single received file.
+                using var sha1 = System.Security.Cryptography.SHA1.Create();
+                var hashBytes = sha1.ComputeHash(fileContent);
                 var hash = Convert.ToHexString(hashBytes);
                 
                 // Get file extension from game path
