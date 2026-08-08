@@ -44,6 +44,25 @@ namespace FyteClub.UI
 
         public void Draw()
         {
+            // Two live tests showed provably-active transfer data in the orchestrator (MOD
+            // COMPLETION log lines incrementing normally) while this method logged zero state
+            // changes for the entire transfer window - meaning either GetActiveTransferProgress()
+            // never returned non-null here, or something after that throws before reaching the
+            // log calls below. A try/catch around the whole body rules out the second case:
+            // if Dalamud is silently swallowing an exception from this Draw handler, this makes
+            // it show up in dalamud.log instead of vanishing.
+            try
+            {
+                DrawInternal();
+            }
+            catch (Exception ex)
+            {
+                LogStateChange($"EXCEPTION: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        private void DrawInternal()
+        {
             var progress = _plugin.GetActiveTransferProgress();
             if (progress == null)
             {
