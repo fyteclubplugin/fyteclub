@@ -54,6 +54,7 @@ namespace FyteClub.Syncshells
             _uptimeTimer = new Timer(UpdateUptimeCounters, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
             _connectionTimeoutTimer = new Timer(CheckConnectionTimeouts, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
             InitializeRosterManagement();
+            OnPeerDisconnected += HandlePeerDisconnectedForRoster;
         }
 
         public SyncshellManager(object config)
@@ -62,6 +63,7 @@ namespace FyteClub.Syncshells
             _uptimeTimer = new Timer(UpdateUptimeCounters, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
             _connectionTimeoutTimer = new Timer(CheckConnectionTimeouts, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
             InitializeRosterManagement();
+            OnPeerDisconnected += HandlePeerDisconnectedForRoster;
         }
 
         private void CheckConnectionTimeouts(object? state)

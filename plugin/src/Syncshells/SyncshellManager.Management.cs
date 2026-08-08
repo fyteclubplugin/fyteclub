@@ -17,6 +17,23 @@ namespace FyteClub.Syncshells
             FyteLog.Info(LogModule.Syncshells, "Removed {0} syncshells with ID '{1}'", removed, syncshellId);
         }
 
+        /// <summary>
+        /// Reflects a peer disconnect in the displayed roster. OnPeerDisconnected only carries
+        /// the syncshellId - the connection layer doesn't track which specific peer identity
+        /// owned the connection that dropped - so this only handles the unambiguous case of a
+        /// 2-member syncshell (you + one other) losing its one peer. A 3+-member syncshell is
+        /// left alone rather than guessing which member to remove, since dropping the whole
+        /// roster to just "You" would be wrong there.
+        /// </summary>
+        internal void HandlePeerDisconnectedForRoster(string syncshellId)
+        {
+            var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
+            if (syncshell?.Members != null && syncshell.Members.Count == 2)
+            {
+                ClearSyncshellMembers(syncshellId);
+            }
+        }
+
         public void ClearSyncshellMembers(string syncshellId)
         {
             var syncshell = _syncshells.FirstOrDefault(s => s.Id == syncshellId);
