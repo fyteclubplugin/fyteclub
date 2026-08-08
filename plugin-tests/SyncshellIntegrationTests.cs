@@ -26,7 +26,7 @@ namespace FyteClub.Tests
     ///
     /// Requires real internet access and hits public infrastructure, so it's tagged RealP2P
     /// like LocalTwoPeerConnectionTests and excluded from the default filtered run. Run with:
-    ///   dotnet test --filter "FullyQualifiedName~SyncshellIntegrationTests"
+    /// dotnet test --filter "FullyQualifiedName~SyncshellIntegrationTests"
     /// </summary>
     [Trait("Category", "RealP2P")]
     public class SyncshellIntegrationTests

@@ -20,7 +20,7 @@ namespace FyteClub.Core.Logging
         private static readonly Regex ControlCharSanitizer = new(@"[\r\n\t]", RegexOptions.Compiled);
         // Emoji / pictographic / symbol ranges commonly found in this codebase's log strings.
         private static readonly Regex EmojiSanitizer = new(
-            @"[←-⇿⌀-➿⬀-⯿\uD83C-􏰀-\uDFFF️]+\s*",
+            @"[←-⇿--\uD83C-􏰀-\uDFFF]+\s*",
             RegexOptions.Compiled);
         private static readonly Regex SecretSanitizer = new(
             @"(?i)\b(password|passwd|secret|token|apikey|api_key|encryptionkey|privatekey)\b\s*[=:]\s*\S+",

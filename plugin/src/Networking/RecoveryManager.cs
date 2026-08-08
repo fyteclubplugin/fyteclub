@@ -212,7 +212,7 @@ namespace FyteClub.Networking
 
                     if (connection != null && connection.IsConnected)
                     {
-                        _pluginLog.Info($"[Recovery] ✅ Reconnection successful for {key} on attempt {attempt}");
+                        _pluginLog.Info($"[Recovery] Reconnection successful for {key} on attempt {attempt}");
                         session.IsRetrying = false;
                         TransitionState(key, RecoveryState.Connected);
                         OnRecoverySuccess?.Invoke(key);
@@ -239,7 +239,7 @@ namespace FyteClub.Networking
 
             // All automatic retries exhausted
             session.IsRetrying = false;
-            _pluginLog.Warning($"[Recovery] ❌ Auto-retry exhausted for {key} after {MAX_RETRY_ATTEMPTS} attempts");
+            _pluginLog.Warning($"[Recovery] Auto-retry exhausted for {key} after {MAX_RETRY_ATTEMPTS} attempts");
             OnRecoveryFailed?.Invoke(key);
 
             return false;

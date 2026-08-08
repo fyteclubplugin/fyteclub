@@ -80,7 +80,7 @@ namespace FyteClub.Networking
                     bool isHealthy = connection.IsConnected || connection.IsEstablishing() || connection.IsTransferring();
                     if (isHealthy)
                     {
-                        FyteLog.Info(LogModule.Syncshells, "✅ Existing connection for key {0} is healthy (IsConnected={1}, IsEstablishing={2}, IsTransferring={3})",
+                        FyteLog.Info(LogModule.Syncshells, " Existing connection for key {0} is healthy (IsConnected={1}, IsEstablishing={2}, IsTransferring={3})",
                             key, connection.IsConnected, connection.IsEstablishing(), connection.IsTransferring());
                     }
                     return isHealthy;
@@ -104,31 +104,31 @@ namespace FyteClub.Networking
                 {
                     try
                     {
-                        FyteLog.Info(LogModule.Syncshells, "🔍 ReplaceWebRTCConnection for key {0}: oldConnection.IsConnected={1}, IsTransferring={2}, IsEstablishing={3}",
+                        FyteLog.Info(LogModule.Syncshells, " ReplaceWebRTCConnection for key {0}: oldConnection.IsConnected={1}, IsTransferring={2}, IsEstablishing={3}",
                             key, oldConnection.IsConnected, oldConnection.IsTransferring(), oldConnection.IsEstablishing());
 
                         if (oldConnection.IsTransferring())
                         {
-                            FyteLog.Warn(LogModule.Syncshells, "⚠️ BLOCKED: Cannot replace WebRTC connection for key {0} - active transfer in progress! Keeping existing connection.", key);
+                            FyteLog.Warn(LogModule.Syncshells, " BLOCKED: Cannot replace WebRTC connection for key {0} - active transfer in progress! Keeping existing connection.", key);
                             newConnection?.Dispose();
                             return;
                         }
 
                         if (oldConnection.IsEstablishing())
                         {
-                            FyteLog.Warn(LogModule.Syncshells, "⚠️ BLOCKED: Cannot replace WebRTC connection for key {0} - connection still establishing! Keeping existing connection.", key);
+                            FyteLog.Warn(LogModule.Syncshells, " BLOCKED: Cannot replace WebRTC connection for key {0} - connection still establishing! Keeping existing connection.", key);
                             newConnection?.Dispose();
                             return;
                         }
 
                         if (oldConnection.IsConnected)
                         {
-                            FyteLog.Warn(LogModule.Syncshells, "⚠️ BLOCKED: Cannot replace WebRTC connection for key {0} - existing connection is still CONNECTED and healthy! Keeping existing connection.", key);
+                            FyteLog.Warn(LogModule.Syncshells, " BLOCKED: Cannot replace WebRTC connection for key {0} - existing connection is still CONNECTED and healthy! Keeping existing connection.", key);
                             newConnection?.Dispose();
                             return;
                         }
 
-                        FyteLog.Info(LogModule.Syncshells, "✅ Disposing old WebRTC connection for key: {0} (connection is disconnected, not transferring, and not establishing)", key);
+                        FyteLog.Info(LogModule.Syncshells, " Disposing old WebRTC connection for key: {0} (connection is disconnected, not transferring, and not establishing)", key);
                         oldConnection.Dispose();
                     }
                     catch (Exception ex)
@@ -138,7 +138,7 @@ namespace FyteClub.Networking
                 }
 
                 _connections[key] = newConnection;
-                FyteLog.Info(LogModule.Syncshells, "✅ Replaced WebRTC connection for key: {0}", key);
+                FyteLog.Info(LogModule.Syncshells, " Replaced WebRTC connection for key: {0}", key);
             }
         }
 
@@ -171,12 +171,12 @@ namespace FyteClub.Networking
             {
                 if (connection.IsTransferring())
                 {
-                    FyteLog.Info(LogModule.Syncshells, "⏸️ Deferring disconnect for {0} - connection has active transfer", key);
+                    FyteLog.Info(LogModule.Syncshells, " Deferring disconnect for {0} - connection has active transfer", key);
                     continue;
                 }
                 if (connection.IsEstablishing())
                 {
-                    FyteLog.Info(LogModule.Syncshells, "⏸️ Deferring disconnect for {0} - connection still establishing", key);
+                    FyteLog.Info(LogModule.Syncshells, " Deferring disconnect for {0} - connection still establishing", key);
                     continue;
                 }
 
@@ -200,12 +200,12 @@ namespace FyteClub.Networking
 
             if (connection.IsTransferring())
             {
-                FyteLog.Info(LogModule.Syncshells, "⏸️ Deferring disconnect for {0} - transfer in progress", key);
+                FyteLog.Info(LogModule.Syncshells, " Deferring disconnect for {0} - transfer in progress", key);
                 return false;
             }
             if (connection.IsEstablishing())
             {
-                FyteLog.Info(LogModule.Syncshells, "⏸️ Deferring disconnect for {0} - connection still establishing", key);
+                FyteLog.Info(LogModule.Syncshells, " Deferring disconnect for {0} - connection still establishing", key);
                 return false;
             }
 

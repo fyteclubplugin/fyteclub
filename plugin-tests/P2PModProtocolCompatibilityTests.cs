@@ -22,13 +22,13 @@ namespace FyteClub.Tests
     ///
     /// The bug had two layers, both now fixed:
     /// 1. P2PModMessageType had no JsonStringEnumConverter, so ANY string-typed "type" field
-    ///    failed to deserialize into a concrete message class — including exact enum-name
-    ///    matches, not just legacy aliases.
+    /// failed to deserialize into a concrete message class — including exact enum-name
+    /// matches, not just legacy aliases.
     /// 2. Even with the converter, the compatibility switch resolves legacy aliases (e.g.
-    ///    "member_list_request") to the right enum value for *routing*, but the JSON string
-    ///    itself still contains the alias text, which JsonStringEnumConverter cannot match —
-    ///    it only recognizes exact enum member names. Fixed by normalizing the "type" field to
-    ///    its numeric form immediately after alias resolution, before any further parsing.
+    /// "member_list_request") to the right enum value for *routing*, but the JSON string
+    /// itself still contains the alias text, which JsonStringEnumConverter cannot match —
+    /// it only recognizes exact enum member names. Fixed by normalizing the "type" field to
+    /// its numeric form immediately after alias resolution, before any further parsing.
     ///
     /// Before this fix, HandleModData (SyncshellManager) was the only functional handler for
     /// all four legacy onboarding message types — confirmed empirically, not assumed from

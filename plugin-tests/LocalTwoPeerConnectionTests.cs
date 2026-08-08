@@ -35,7 +35,7 @@ namespace FyteClub.Tests
     /// Requires real internet access and takes tens of seconds (real relay round-trips +
     /// ICE negotiation), so it is excluded from the default filtered test run exactly like
     /// the other RealP2P-tagged tests. Run explicitly with:
-    ///   dotnet test --filter "FullyQualifiedName~LocalTwoPeerConnectionTests"
+    /// dotnet test --filter "FullyQualifiedName~LocalTwoPeerConnectionTests"
     /// </summary>
     [Trait("Category", "RealP2P")]
     public class LocalTwoPeerConnectionTests

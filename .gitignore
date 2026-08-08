@@ -3,7 +3,6 @@
 # Large external repositories that shouldn't be committed
 FFXIV-ProximityVoiceChat/
 webrtc-checkout/
-.zencoder/
 MareClient/
 LightlessServer/
 
@@ -70,8 +69,3 @@ TestResults/
 # Documentation builds
 docs/_build/
 site/
-
-# Internal planning/research docs - not meant to be public
-docs/PLAN.md
-docs/VISION.md
-plugin/research/

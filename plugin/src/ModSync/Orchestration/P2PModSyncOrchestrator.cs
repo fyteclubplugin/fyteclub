@@ -43,7 +43,7 @@ namespace FyteClub.ModSync.Orchestration
         private readonly ConcurrentDictionary<string, string> _myPeerIdCache = new(); // Cache for peer IDs
         
         // Active sync sessions
-        private readonly ConcurrentDictionary<string, EnhancedSyncSession> _activeSessions = new();
+        private readonly ConcurrentDictionary<string, SyncSession> _activeSessions = new();
         private readonly object _sessionLock = new();
         
         // Performance tracking
@@ -3298,7 +3298,7 @@ namespace FyteClub.ModSync.Orchestration
     /// <summary>
     /// Enhanced sync session with cancellation support
     /// </summary>
-    public class EnhancedSyncSession
+    public class SyncSession
     {
         public string SessionId { get; set; } = string.Empty;
         public string PeerId { get; set; } = string.Empty;

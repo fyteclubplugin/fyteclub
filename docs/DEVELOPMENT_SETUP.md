@@ -47,8 +47,9 @@ dotnet test plugin-tests/plugin-tests.csproj --filter "Category!=RealP2P"
 
 ## Where things live
 
-See [REPOSITORY_STRUCTURE.md](REPOSITORY_STRUCTURE.md) for the folder/namespace layout, and
-[PLAN.md](PLAN.md) for the current roadmap and what's actually been verified vs. aspirational.
+`plugin/src/Core` is plugin lifecycle and Dalamud wiring, `Syncshells` is group/membership state,
+`Networking` is the transport layer, `ModSync` is protocol + sync orchestration, `Security` is the
+Ed25519 identity stack. `native/` is a legacy C++ wrapper attempt, not part of the current build.
 
 ## Testing & troubleshooting
 
