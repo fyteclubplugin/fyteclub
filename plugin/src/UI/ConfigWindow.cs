@@ -76,10 +76,19 @@ namespace FyteClub.UI
 
         private void DrawSyncshellsTab()
         {
+            var transferProgress = _plugin.GetActiveTransferProgress();
+            if (transferProgress != null)
+            {
+                ImGui.TextColored(new Vector4(0.4f, 0.85f, 1f, 1f),
+                    $"Syncing mods from {transferProgress.Value.PlayerName}: {transferProgress.Value.FilesCompleted}/{transferProgress.Value.FilesTotal} files");
+                ImGui.ProgressBar(transferProgress.Value.Fraction, new Vector2(-1, 0));
+                ImGui.Separator();
+            }
+
             var syncshells = _plugin.GetSyncshells();
             var activeSyncshells = syncshells.Count(s => s.IsActive);
-            
-            ImGui.TextColored(activeSyncshells > 0 ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1), 
+
+            ImGui.TextColored(activeSyncshells > 0 ? new Vector4(0, 1, 0, 1) : new Vector4(1, 0, 0, 1),
                 $"Active Syncshells: {activeSyncshells}/{syncshells.Count}");
             
             var staleSyncshells = syncshells.Where(s => s.IsStale).ToList();
