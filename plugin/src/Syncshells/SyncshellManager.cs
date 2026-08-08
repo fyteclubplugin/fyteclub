@@ -176,6 +176,11 @@ namespace FyteClub.Syncshells
                 // Stop timers first to prevent new operations
                 _uptimeTimer?.Dispose();
                 _connectionTimeoutTimer?.Dispose();
+                foreach (var pendingTimer in _pendingRosterDropTimers.Values)
+                {
+                    pendingTimer.Dispose();
+                }
+                _pendingRosterDropTimers.Clear();
 
                 // Force dispose all WebRTC connections immediately
                 _connections.DisposeAllImmediate();
