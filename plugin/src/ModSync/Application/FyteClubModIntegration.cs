@@ -920,10 +920,19 @@ namespace FyteClub.ModSync.Application
                             if (assignResult == PenumbraApiEc.Success)
                             {
                                 _pluginLog.Debug($"Successfully assigned Penumbra collection to {chara.Name}");
-                                
-                                // Skip immediate redraw during mod application - will redraw at end
-                                // _penumbraRedraw?.Invoke(chara.ObjectIndex, RedrawType.Redraw);
-                                _pluginLog.Debug($"Skipped immediate Penumbra redraw for {chara.Name} - will redraw at end");
+
+                                // Redraw immediately using this exact chara.ObjectIndex - the same one
+                                // the collection was just assigned to. The alternative (deferring to
+                                // P2PModSyncOrchestrator.TriggerPlayerRedraw, called later from a
+                                // completely separate FindCharacterByName lookup) re-resolves the
+                                // target from scratch, with no guarantee it lands on the same
+                                // object-table slot if the character briefly left and re-entered
+                                // render range in between - a real risk in a crowded zone. That gap
+                                // matched the exact symptom reported: redraw visibly happens, but the
+                                // assigned collection never shows, because the redraw and the
+                                // assignment ended up targeting different slots.
+                                _penumbraRedraw?.Invoke(chara.ObjectIndex, RedrawType.Redraw);
+                                _pluginLog.Debug($"Triggered immediate Penumbra redraw for {chara.Name} at the same object index the collection was assigned to");
                             }
                             else
                             {
