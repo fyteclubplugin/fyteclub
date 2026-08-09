@@ -34,7 +34,7 @@ namespace FyteClub.ModSync.Application
 {
     public partial class FyteClubModIntegration
     {
-        private async Task ApplyGlamourerData(ICharacter character, string glamourerData)
+        private async Task ApplyGlamourerData(ICharacter character, string glamourerData, string? expectedPlayerName = null)
         {
             try
             {
@@ -72,10 +72,22 @@ namespace FyteClub.ModSync.Application
                 try
                 {
                     var applicationId = Guid.NewGuid();
+                    var expectedName = expectedPlayerName?.Split('@')[0].Trim();
                     await _redrawManager.RedrawInternalAsync(character, applicationId, (chara) =>
                     {
                         try
                         {
+                            // See the matching guard in ApplyPenumbraMods for why this check exists -
+                            // object-table slots get reused as characters leave/enter render range,
+                            // so the character reference resolved when this apply started may no
+                            // longer be the intended target by the time this callback actually runs.
+                            var actualName = chara.Name?.TextValue?.Split('@')[0].Trim();
+                            if (!string.IsNullOrEmpty(expectedName) && !string.Equals(actualName, expectedName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                _pluginLog.Warning($"Aborting Glamourer apply: object slot {chara.ObjectIndex} now holds '{actualName}', expected '{expectedName}' - character reference went stale mid-apply");
+                                return;
+                            }
+
                             _glamourerApplyAll?.Invoke(glamourerData, chara.ObjectIndex, FYTECLUB_GLAMOURER_LOCK);
                             _pluginLog.Debug($" [GLAMOURER API] ApplyState(data={glamourerData.Length}chars, objectIndex={chara.ObjectIndex}, lock=0x{FYTECLUB_GLAMOURER_LOCK:X}) -> SUCCESS");
                             

@@ -808,7 +808,7 @@ namespace FyteClub.ModSync.Application
                 // Apply Glamourer FIRST - this sets the base character appearance
                 if (IsGlamourerAvailable && !string.IsNullOrEmpty(playerInfo.GlamourerData))
                 {
-                    await ApplyGlamourerData(character, playerInfo.GlamourerData);
+                    await ApplyGlamourerData(character, playerInfo.GlamourerData, playerInfo.PlayerName);
                 }
                 
                 // Apply Penumbra mods AFTER Glamourer (texture/model replacements)
@@ -877,10 +877,28 @@ namespace FyteClub.ModSync.Application
                 try
                 {
                     var applicationId = Guid.NewGuid();
+                    var expectedName = playerInfo.PlayerName?.Split('@')[0].Trim();
                     await _redrawManager.RedrawInternalAsync(character, applicationId, (chara) =>
                     {
                         try
                         {
+                            // FFXIV reuses object-table slots as characters enter/leave render range.
+                            // character.IsValid() (checked by the caller before this action runs) only
+                            // confirms the slot is populated - not that it's still the same person we
+                            // resolved by name when this apply started. Multiple awaits/semaphores sit
+                            // between that resolution and this callback actually running, so in a busy
+                            // zone the slot can legitimately belong to someone else by now. Applying
+                            // there would silently misattribute mods to the wrong character - confirmed
+                            // live as the likely cause of "redraw happens but mods never show": the
+                            // redraw was real, just on whoever now occupies that slot, not the intended
+                            // target.
+                            var actualName = chara.Name?.TextValue?.Split('@')[0].Trim();
+                            if (!string.IsNullOrEmpty(expectedName) && !string.Equals(actualName, expectedName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                _pluginLog.Warning($"Aborting Penumbra apply: object slot {chara.ObjectIndex} now holds '{actualName}', expected '{expectedName}' - character reference went stale mid-apply");
+                                return;
+                            }
+
                             var collectionId = Guid.Empty;
                             var createResult = _penumbraCreateTemporaryCollection?.Invoke("FyteClub", collectionName, out collectionId);
                             
