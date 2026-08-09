@@ -551,16 +551,35 @@ namespace FyteClub.ModSync.Application
         {
             _penumbraRemoveTemporaryMod?.Invoke("FyteClub_Files", collectionId, 0);
             _penumbraRemoveTemporaryMod?.Invoke("FyteClub_Meta", collectionId, 0);
-            
+
+            // Both calls below previously discarded their PenumbraApiEc return value entirely -
+            // if Penumbra rejected the file/meta entries (bad game path, etc.), the collection
+            // would still get created and assigned successfully with nothing actually in it,
+            // and nobody would ever know why. Confirmed live: repeated tests showed a clean
+            // "collection created -> assigned -> redraw completed" log trail with mods never
+            // visually applying, and this was the one step in that chain with zero visibility
+            // into whether it actually succeeded.
             if (fileReplacements.Count > 0)
             {
-                _penumbraAddTemporaryMod?.Invoke("FyteClub_Files", collectionId, fileReplacements, string.Empty, 0);
+                var addFilesResult = _penumbraAddTemporaryMod?.Invoke("FyteClub_Files", collectionId, fileReplacements, string.Empty, 0);
+                if (addFilesResult != PenumbraApiEc.Success)
+                {
+                    _pluginLog.Warning($"Failed to add {fileReplacements.Count} Penumbra file overrides to collection {collectionId}: {addFilesResult}");
+                }
+                else
+                {
+                    _pluginLog.Debug($"Added {fileReplacements.Count} Penumbra file overrides to collection {collectionId}");
+                }
             }
-            
+
             if (metaManipulations.Count > 0)
             {
                 var metaString = string.Join("\n", metaManipulations);
-                _penumbraAddTemporaryMod?.Invoke("FyteClub_Meta", collectionId, new Dictionary<string, string>(), metaString, 0);
+                var addMetaResult = _penumbraAddTemporaryMod?.Invoke("FyteClub_Meta", collectionId, new Dictionary<string, string>(), metaString, 0);
+                if (addMetaResult != PenumbraApiEc.Success)
+                {
+                    _pluginLog.Warning($"Failed to add {metaManipulations.Count} Penumbra meta manipulations to collection {collectionId}: {addMetaResult}");
+                }
             }
         }
 
