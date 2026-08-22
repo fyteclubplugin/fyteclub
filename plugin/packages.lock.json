@@ -28,9 +28,9 @@
       },
       "NNostr.Client": {
         "type": "Direct",
-        "requested": "[0.0.54, )",
-        "resolved": "0.0.54",
-        "contentHash": "wN/7Thnu7g0l7LedUcO7DzXinw3bu9C5nKn2p6VZSNG3vymRuyH35VG64Qr63wEM+bHfPuxrQ9IyQNOwwKl4Mg==",
+        "requested": "[0.0.55, )",
+        "resolved": "0.0.55",
+        "contentHash": "Vd6qx0FoYWt54e9HLqUXbJq3iEphRYYLB3PJnp+y+3wyvdg5bi0G5qd+DTTx/mlglKAWvDT9H+GFhRvubwLbMQ==",
         "dependencies": {
           "LibChaCha20": "1.0.1",
           "LinqKit.Core": "1.2.5",
